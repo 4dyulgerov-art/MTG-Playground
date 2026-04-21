@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#050a12" />
+    <meta name="description" content="MTG Playground — free browser-based Magic: The Gathering playtester. 2-4 players online." />
+    <title>MTG Playground v7</title>
+    <style>
+      html, body, #root { height: 100%; margin: 0; background: #050a12; }
+      body { font-family: "Crimson Text", Georgia, serif; color: #e8e2d0; overscroll-behavior: none; }
+      /* Initial skeleton while JS loads */
+      .boot-skeleton {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        flex-direction: column; gap: 12px; background: #050a12; color: #c8a870;
+        font-family: Georgia, serif; letter-spacing: .15em;
+      }
+      .boot-skeleton .mark { font-size: 32px; opacity: .9; animation: floaty 2s ease-in-out infinite; }
+      @keyframes floaty { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot-skeleton">
+        <div class="mark">⚔</div>
+        <div>MTG PLAYGROUND</div>
+        <div style="font-size:10px;opacity:.5">entering the multiverse…</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

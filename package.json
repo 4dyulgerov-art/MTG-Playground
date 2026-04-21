@@ -1,0 +1,24 @@
+{
+  "name": "mtg-playground-v7",
+  "private": true,
+  "version": "7.0.0",
+  "type": "module",
+  "description": "Browser-based Magic: The Gathering playtester. Fast, free, no download. 2-4 player online or local.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .js,.jsx"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.1"
+  }
+}
