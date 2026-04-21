@@ -1,44 +1,35 @@
-/*  src/lib/netSync.js
+/*  src/lib/netSync.js — v7.4
     ─────────────────────────────────────────────────────────────────────────
-    Game-state sync over Supabase Realtime.
-    Designed to hook into v6's existing centralized `updatePlayer` /
-    `updateGame` functions with MINIMAL intrusion.
+    Game-state sync + event log over Supabase Realtime.
 
-    Model (Phase 1):
-      - One row in `game_state` per room (upsert). Whole game state as JSON.
-      - Any player in the room can write. Last-write-wins.
-      - Every write increments `version` and sets `last_writer`.
-      - Every client subscribes to UPDATEs and applies them if
-        version > localVersion AND last_writer !== me.
-      - Local writes are optimistic: apply to React state instantly,
-        then broadcast. If a remote write lands first, we accept it.
-      - Debounced at 80ms so rapid taps don't spam the server.
-
-    Known limitations (Phase 2 targets):
-      - True conflict resolution (two players touching the same card
-        within 80ms window → last-write-wins truncates one action).
-      - Selective per-zone authority (each player "owns" their own zones).
-      - CRDT or OT for eventually-consistent merges.
+    v7.4 additions:
+      - loadHistory(): SELECT recent game_events on join (so chat+log persist
+        across rejoin for everyone).
+      - events now carry user_id and alias so the UI always attributes them
+        to the correct username (never "Opponent").
+      - hand-request / hand-reveal / hand-deny helpers built on game_events.
+      - game-start sync flag stored in game_state so the shuffle+draw-7
+        animation fires exactly once per seat.
     ─────────────────────────────────────────────────────────────────────────
 */
 
 import { supabase } from './supabase';
 
 export class NetSync {
-  constructor({ roomId, userId, onRemoteState }) {
+  constructor({ roomId, userId, alias, onRemoteState }) {
     this.roomId        = roomId;
     this.userId        = userId;
+    this.alias         = alias || 'Player';
     this.onRemoteState = onRemoteState;
     this.version       = 0;
     this.channel       = null;
+    this.evtChannel    = null;
     this.pending       = null;
     this.flushTimer    = null;
     this.closed        = false;
   }
 
-  // Call once after construction.
   async start() {
-    // 1. Fetch initial state if any.
     const { data } = await supabase
       .from('game_state').select('*').eq('room_id', this.roomId).maybeSingle();
     if (data) {
@@ -46,7 +37,6 @@ export class NetSync {
       this.onRemoteState(data.state, { initial: true });
     }
 
-    // 2. Subscribe to UPDATEs.
     this.channel = supabase
       .channel(`gs:${this.roomId}`)
       .on('postgres_changes', {
@@ -63,8 +53,8 @@ export class NetSync {
     const row = payload.new || payload.record;
     if (!row) return;
     const ver = Number(row.version) || 0;
-    if (ver <= this.version) return;       // stale
-    if (row.last_writer === this.userId) { // echo of our own write
+    if (ver <= this.version) return;
+    if (row.last_writer === this.userId) {
       this.version = ver;
       return;
     }
@@ -72,8 +62,6 @@ export class NetSync {
     this.onRemoteState(row.state, { initial: false });
   }
 
-  // Call from v6's updatePlayer/updateGame after local state has updated.
-  // `state` is the whole gameState object we want persisted.
   broadcast(state) {
     if (this.closed) return;
     this.pending = state;
@@ -98,15 +86,31 @@ export class NetSync {
     else console.warn('[netSync.flush]', error);
   }
 
-  // Append to the room event log (for chat and action log).
+  // Append an event (chat, action log, hand-request, hand-reveal, etc.).
+  // Every payload is stamped with user_id + alias so UI attribution works.
   async appendEvent(kind, payload) {
     if (this.closed) return;
+    const stamped = { ...(payload || {}), user_id: this.userId, alias: this.alias };
     const { error } = await supabase.from('game_events').insert({
       room_id: this.roomId,
       user_id: this.userId,
-      kind, payload,
+      kind,
+      payload: stamped,
     });
     if (error) console.warn('[netSync.appendEvent]', error);
+  }
+
+  // v7.4: pull the last N events (chronological) for replay on rejoin.
+  async loadHistory({ limit = 200 } = {}) {
+    if (this.closed) return [];
+    const { data, error } = await supabase
+      .from('game_events')
+      .select('*')
+      .eq('room_id', this.roomId)
+      .order('id', { ascending: true })
+      .limit(limit);
+    if (error) { console.warn('[netSync.loadHistory]', error); return []; }
+    return data || [];
   }
 
   subscribeEvents(onEvent) {
@@ -119,6 +123,7 @@ export class NetSync {
         filter: `room_id=eq.${this.roomId}`,
       }, (payload) => onEvent(payload.new))
       .subscribe();
+    this.evtChannel = ch;
     return () => supabase.removeChannel(ch);
   }
 
@@ -126,5 +131,6 @@ export class NetSync {
     this.closed = true;
     if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
     if (this.channel)    { await supabase.removeChannel(this.channel); this.channel = null; }
+    if (this.evtChannel) { await supabase.removeChannel(this.evtChannel); this.evtChannel = null; }
   }
 }

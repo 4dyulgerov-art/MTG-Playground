@@ -1123,7 +1123,7 @@ function SoundSettings({onClose}){
 
 
 
-const CARD_BACK="https://cards.scryfall.io/normal/back/0/0/0aeebaf5-8c7d-4636-9e82-8c27447861f8.jpg";
+const CARD_BACK="https://backs.scryfall.io/large/2/2/222b7a3b-2321-4d4c-af19-19338b134971.jpg?1677416389";
 const PHASES=["Untap","Upkeep","Draw","Main 1","Combat","Main 2","End"];
 const PHASE_CLR=["#7c3aed","#2563eb","#059669","#d97706","#dc2626","#d97706","#6b7280"];
 const PHASE_ICONS=["⟳","⬆","🎴","🔮","⚔","🔮","🌙"];
@@ -2102,25 +2102,64 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
   ]);
   const [input,setInput]=useState("");
   const bottomRef=useRef(null);
-  // v2 fix (bug #2): merge remote action-log events into a shared log stream
-  // that's displayed alongside our local log.
+  // v7.4: unified remote log — every action from any seat lives here, tagged
+  // with author alias. Replayed from game_events on rejoin so nothing is lost.
   const [remoteLog,setRemoteLog]=useState([]);
+  const seenEvtIds=useRef(new Set());
 
   useEffect(()=>{
     if(isOpen) bottomRef.current?.scrollIntoView({behavior:"smooth"});
   },[messages,isOpen]);
 
-  // v2 fix (bug #2): subscribe to remote chat messages and remote log entries.
+  // v7.4: on mount, pull last 200 events so rejoining players see full history.
+  // Also re-pull whenever netSync instance is (re-)attached.
+  useEffect(()=>{
+    let cancelled=false;
+    const loadOnce=async()=>{
+      const net=window.__MTG_V7__?.netSync;
+      if(!net)return;
+      try{
+        const history=await net.loadHistory({limit:200});
+        if(cancelled||!Array.isArray(history))return;
+        const chatMsgs=[];
+        const logEntries=[];
+        for(const ev of history){
+          if(seenEvtIds.current.has(ev.id))continue;
+          seenEvtIds.current.add(ev.id);
+          const p=ev.payload||{};
+          if(ev.kind==="chat"&&p.text){
+            chatMsgs.push({id:p.id||`h${ev.id}`,sender:p.alias||p.sender||"Player",avatar:p.avatar||"🧙",text:p.text,ts:p.ts||Date.parse(ev.created_at)||Date.now()});
+          } else if(ev.kind==="action"&&p.text){
+            const alias=p.alias||p.sender||"Player";
+            logEntries.push(`${alias}: ${p.text}`);
+          }
+        }
+        if(chatMsgs.length) setMessages(ms=>[...ms,...chatMsgs]);
+        if(logEntries.length) setRemoteLog(l=>[...logEntries.reverse(),...l].slice(0,120));
+      }catch(e){/* silent */}
+    };
+    loadOnce();
+    // Re-attempt when netSync instance becomes available (startGame is async)
+    const t=setInterval(loadOnce,800);
+    const stop=setTimeout(()=>clearInterval(t),6000);
+    return()=>{cancelled=true;clearInterval(t);clearTimeout(stop);};
+  },[]);
+
+  // v7.4: subscribe to incoming remote events (live). No "Opponent" fallback —
+  // always use the event's stamped alias.
   useEffect(()=>{
     const onChat=(e)=>{
       const m=e.detail||{};
       if(!m.text)return;
-      setMessages(ms=>[...ms,{id:m.id||uid(),sender:m.sender||"Opponent",avatar:m.avatar||"🧙",text:m.text,ts:m.ts||Date.now()}]);
+      if(m.id&&seenEvtIds.current.has(m.id))return;
+      if(m.id)seenEvtIds.current.add(m.id);
+      setMessages(ms=>[...ms,{id:m.id||uid(),sender:m.alias||m.sender||"Player",avatar:m.avatar||"🧙",text:m.text,ts:m.ts||Date.now()}]);
     };
     const onAct=(e)=>{
       const m=e.detail||{};
       if(!m.text)return;
-      setRemoteLog(l=>[m.text,...l].slice(0,80));
+      const alias=m.alias||m.sender||"Player";
+      setRemoteLog(l=>[`${alias}: ${m.text}`,...l].slice(0,120));
     };
     window.addEventListener("mtg:remote-chat",onChat);
     window.addEventListener("mtg:remote-action",onAct);
@@ -2135,24 +2174,25 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
     const text=input.trim();
     const msg={id:uid(),sender:playerName,avatar,text,ts:Date.now()};
     setMessages(m=>[...m,msg]);
+    if(msg.id)seenEvtIds.current.add(msg.id);
     setInput("");
-    // v2 fix (bug #2): broadcast to remote peers via netSync.
     const net=window.__MTG_V7__?.netSync;
     if(net){
       try{net.appendEvent("chat",{sender:playerName,avatar,text,ts:msg.ts,id:msg.id});}catch(e){}
     }
   };
 
-  // Quick reactions
   const REACTIONS=["👍","👎","⚡","🔮","🃏","🐉","💀","😂","🤔","😤","🎲","✨"];
 
-  // v2 fix: interleave remote log entries with local ones for display.
+  // v7.4: log display = remote-attributed entries only (local entries are
+  // also broadcast via appendEvent("action") so they come back through the
+  // same stream with their alias tag).
   const combinedLog = useMemo(()=>{
     const local = Array.isArray(log) ? log : [];
-    // Simple concat then cap — most-recent at the top for both arrays.
-    const all = [...local, ...remoteLog];
-    return all.slice(0, 80);
-  },[log,remoteLog]);
+    // Local log may lack alias prefix — prepend player name so it matches format
+    const localTagged = local.map(e=>typeof e==="string"&&e.includes(": ")?e:`${playerName}: ${e}`);
+    return [...localTagged, ...remoteLog].slice(0, 120);
+  },[log,remoteLog,playerName]);
 
   return(
     <div style={{position:"fixed",top:50,left:8,zIndex:9994}}>
@@ -3184,6 +3224,12 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   const [mySeat,setMySeat]=useState(null);
   const [waitingMeta,setWaitingMeta]=useState(null); // v7: live meta for progress bar
   const [gamemode,setGamemode]=useState("standard");
+  // v7.4: when joining another host's room, we can pick our deck from our
+  // own library OR from the host's library (the host publishes their decks
+  // alongside their player row).
+  const [deckSource,setDeckSource]=useState("mine"); // "mine" | "host"
+  const [hostDecks,setHostDecks]=useState([]); // host's published deck library
+  const isJoinedGuest = myRoomId && mySeat && mySeat > 0;
 
   const loadRooms=async()=>{
     try{const keys=await storage.list("room_",true);
@@ -3195,19 +3241,21 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   const createRoom=async()=>{
     if(!roomName.trim())return;setLoading(true);
     const id=uid();
-    const meta={id,name:roomName.trim(),host:profile.alias,hostAvatar:profile.avatar,maxPlayers:maxP,gamemode,players:[{alias:profile.alias,avatar:profile.avatar,ready:false}],status:"waiting",created:Date.now()};
-    try{await storage.set(`room_${id}_meta`,JSON.stringify(meta),true);await storage.set(`room_${id}_player_0`,JSON.stringify({profile,deckId:selDeckId,ready:false}),true);setMyRoomId(id);setMySeat(0);setWaitingMeta(meta);}catch{alert("Could not create room");}
+    // v7.4: host publishes their entire deck library so guests can pick from it
+    const meta={id,name:roomName.trim(),host:profile.alias,hostAvatar:profile.avatar,maxPlayers:maxP,gamemode,players:[{alias:profile.alias,avatar:profile.avatar,ready:false}],status:"waiting",created:Date.now(),hostDecks:decks};
+    try{await storage.set(`room_${id}_meta`,JSON.stringify(meta),true);await storage.set(`room_${id}_player_0`,JSON.stringify({profile,deckId:selDeckId,deck:decks.find(d=>d.id===selDeckId)||null,ready:false,decks}),true);setMyRoomId(id);setMySeat(0);setWaitingMeta(meta);}catch{alert("Could not create room");}
     setLoading(false);};
 
   const joinRoom=async(roomId)=>{
     setLoading(true);
     try{const r=await storage.get(`room_${roomId}_meta`,true);if(!r){alert("Room not found");setLoading(false);return;}
       const meta=JSON.parse(r.value);const pIdx=meta.players.length;if(pIdx>=meta.maxPlayers){alert("Room is full");setLoading(false);return;}
+      // v7.4: fetch host's deck library so we can show the "Host's Decks" tab
+      const hostLib = Array.isArray(meta.hostDecks) ? meta.hostDecks : [];
+      setHostDecks(hostLib);
       meta.players.push({alias:profile.alias,avatar:profile.avatar,ready:false});
       await storage.set(`room_${roomId}_meta`,JSON.stringify(meta),true);
-      await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:selDeckId,ready:false}),true);
-      // v7: don't auto-launch. Set myRoomId so the waiting-room UI + shared
-      // polling effect kicks in for 2p, 3p, and 4p alike.
+      await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:selDeckId,deck:decks.find(d=>d.id===selDeckId)||null,ready:false}),true);
       setMyRoomId(roomId);
       setMySeat(pIdx);
     }catch(e){alert("Error: "+e.message);}
@@ -3234,7 +3282,9 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           // My seat is whichever row matches our profile alias (falls back to 0)
           const seat=mySeat ?? playerRows.findIndex(pr=>pr?.profile?.alias===profile.alias);
           const mySeatIdx = seat>=0?seat:0;
-          const myDeck=decks.find(d=>d.id===selDeckId)||decks[0];
+          // v7.4: prefer the deck stored in my player_row (may be a host deck)
+          const myRow = playerRows[mySeatIdx];
+          const myDeck = myRow?.deck || decks.find(d=>d.id===selDeckId) || decks[0];
           // Primary opponent = next seat
           const oppSeat=(mySeatIdx+1)%meta.maxPlayers;
           const oppRow=playerRows[oppSeat];
@@ -3282,13 +3332,47 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
 
         <div style={{marginBottom:16,background:`${T.bg}cc`,border:`1px solid ${T.border}30`,borderRadius:8,padding:14}}>
           <div style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>Your Deck</div>
+          {/* v7.4: when joining someone else's room, let the guest pick from host's deck library too */}
+          {isJoinedGuest && hostDecks.length>0 && (
+            <div style={{display:"flex",gap:4,marginBottom:8}}>
+              <button onClick={()=>setDeckSource("mine")}
+                style={{...btn(deckSource==="mine"?`${T.accent}1a`:`${T.panel}60`,deckSource==="mine"?T.accent:"#6a7a8a",
+                  {border:`1px solid ${deckSource==="mine"?T.accent:"#1e3a5f30"}`,fontSize:10,flex:1})}}
+                onMouseOver={hov} onMouseOut={uhov}>Play with my deck</button>
+              <button onClick={()=>setDeckSource("host")}
+                style={{...btn(deckSource==="host"?`${T.accent}1a`:`${T.panel}60`,deckSource==="host"?T.accent:"#6a7a8a",
+                  {border:`1px solid ${deckSource==="host"?T.accent:"#1e3a5f30"}`,fontSize:10,flex:1})}}
+                onMouseOver={hov} onMouseOut={uhov}>Play with opponent's deck</button>
+            </div>
+          )}
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-            {decks.map(d=>(
-              <button key={d.id} onClick={()=>setSelDeckId(d.id)}
+            {(deckSource==="host"?hostDecks:decks).map(d=>(
+              <button key={`${deckSource}-${d.id}`} onClick={async()=>{
+                setSelDeckId(d.id);
+                // v7.4: if host-deck chosen, update our player_row's `deck` field immediately
+                if(deckSource==="host" && myRoomId && mySeat!=null){
+                  try{
+                    const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                    const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                    obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
+                    await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                  }catch{}
+                } else if(myRoomId && mySeat!=null){
+                  try{
+                    const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                    const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                    obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
+                    await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                  }catch{}
+                }
+              }}
                 style={{...btn(d.id===selDeckId?`${T.accent}1a`:`${T.panel}99`,d.id===selDeckId?T.accent:"#6a7a8a",
                   {border:`1px solid ${d.id===selDeckId?T.accent:"#1e3a5f30"}`,fontSize:10})}}
-                onMouseOver={hov} onMouseOut={uhov}>{d.name}</button>
+                onMouseOver={hov} onMouseOut={uhov}>{d.name}{deckSource==="host"?" ⚔":""}</button>
             ))}
+            {deckSource==="host" && hostDecks.length===0 && (
+              <span style={{fontSize:9,color:"#6a7a8a",fontStyle:"italic"}}>Host hasn't published any decks yet</span>
+            )}
           </div>
         </div>
 
@@ -4619,7 +4703,7 @@ function OpponentTile({opp, seat, isActive, onPromote}){
 }
 
 
-function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdatePlayer,onUpdateGame,onExit,onSwitchPlayer,onReset,onChangeDeck,isTwoPlayer,roomId,isOnline,onTheme,decks=[]}){
+function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdatePlayer,onUpdateGame,onExit,onSwitchPlayer,onReset,onChangeDeck,isTwoPlayer,roomId,isOnline,onTheme,decks=[],authUser=null}){
   const [selected,setSelected]=useState(new Set()); // Set of iids
   const [selZone,setSelZone]=useState("battlefield"); // zone of selection
   // Selection rect state
@@ -4690,6 +4774,11 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   const [oppHandAccess,setOppHandAccess]=useState(false);
   const [oppLibAccess,setOppLibAccess]=useState(false);
   const [oppAccessRequest,setOppAccessRequest]=useState(null);
+  // v7.4: hand-request flow
+  const [handRequestPending,setHandRequestPending]=useState(null); // I asked someone, waiting
+  const [incomingHandRequest,setIncomingHandRequest]=useState(null); // someone asked me
+  const [revealedOppHand,setRevealedOppHand]=useState({cards:null,userId:null,ts:0});
+  const [handRequestStatus,setHandRequestStatus]=useState(null); // "denied" | "timeout" | null
   const [showGraveViewer,setShowGraveViewer]=useState(false);
   const [showExileViewer,setShowExileViewer]=useState(false);
   const [sfxMuted,setSfxMuted]=useState(()=>{
@@ -4732,6 +4821,51 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
     const net=window.__MTG_V7__?.netSync;
     if(net){try{net.appendEvent("action",{text:`T${turn}:${msg}`,ts:Date.now()});}catch(e){}}
   },[upd,turn]);
+
+  // v7.4: hand-request flow event listeners
+  useEffect(()=>{
+    const onReq=(e)=>{
+      const d=e.detail||{};
+      setIncomingHandRequest({requesterUserId:d.user_id,requesterAlias:d.alias||"Someone",ts:Date.now()});
+    };
+    const onReveal=(e)=>{
+      const d=e.detail||{};
+      setHandRequestPending(null);
+      setHandRequestStatus(null);
+      setRevealedOppHand({cards:d.cards||[],userId:d.revealerUserId,ts:Date.now()});
+      // Auto-hide after 10s
+      setTimeout(()=>setRevealedOppHand(curr=>curr.ts===d.ts?{cards:null,userId:null,ts:0}:curr),10000);
+    };
+    const onDeny=(e)=>{
+      const d=e.detail||{};
+      setHandRequestPending(null);
+      setHandRequestStatus({type:"denied",alias:d.alias||"Opponent"});
+      setTimeout(()=>setHandRequestStatus(null),4000);
+    };
+    window.addEventListener("mtg:hand-request",onReq);
+    window.addEventListener("mtg:hand-reveal",onReveal);
+    window.addEventListener("mtg:hand-deny",onDeny);
+    return()=>{
+      window.removeEventListener("mtg:hand-request",onReq);
+      window.removeEventListener("mtg:hand-reveal",onReveal);
+      window.removeEventListener("mtg:hand-deny",onDeny);
+    };
+  },[]);
+
+  // v7.4: 30s timeout on outgoing hand request → "no response"
+  useEffect(()=>{
+    if(!handRequestPending)return;
+    const t=setTimeout(()=>{
+      setHandRequestPending(null);
+      setHandRequestStatus({type:"timeout",alias:handRequestPending.targetAlias});
+      setTimeout(()=>setHandRequestStatus(null),4000);
+    },30000);
+    return()=>clearTimeout(t);
+  },[handRequestPending]);
+
+  // v7.4 game-start state (effect is defined further down after drawOne)
+  const [startAnimPhase,setStartAnimPhase]=useState("idle"); // idle|shuffle|drawing|done
+  const startedRef=useRef(false);
 
   // Flip a DFC card between its two faces, swapping all face-specific data
   // Scryfall DFC URL pattern: front/.../UUID.jpg → back/.../UUID.jpg
@@ -4886,6 +5020,45 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   },[upd,turn]);
 
   const shuffle=useCallback(()=>{SFX.playAction("shuffle");upd(p=>({...p,library:shuffleArr(p.library),log:[`T${turn}:🔀 Shuffled`,...p.log].slice(0,80)}));},[upd,turn]);
+
+  // v7.4: Game-start shuffle + staggered draw-7 animation.
+  // Fires when: my seat isn't in startedSeats AND my board is empty AND
+  // library has 7+ cards. Once started, mark this seat in startedSeats so
+  // it won't re-trigger unless the seat is reset (which clears startedSeats).
+  useEffect(()=>{
+    if(!isOnline&&!isTwoPlayer)return; // single-player: skip auto-animation
+    if(startedRef.current)return;
+    if(startAnimPhase!=="idle")return;
+    const startedSeats = onUpdateGame._lastGame?.startedSeats || [];
+    if(startedSeats.includes(playerIdx))return;
+    const isBoardEmpty = (player.hand?.length||0)===0
+      && (player.battlefield?.length||0)===0
+      && (player.graveyard?.length||0)===0
+      && (player.exile?.length||0)===0;
+    if(!isBoardEmpty)return;
+    if((player.library?.length||0) < 7)return;
+
+    startedRef.current=true;
+    setStartAnimPhase("shuffle");
+    SFX.playAction("shuffle");
+    upd(p=>({...p,library:shuffleArr(p.library)}));
+    const shuffleTimeout=setTimeout(()=>{
+      setStartAnimPhase("drawing");
+      for(let i=0;i<7;i++){
+        setTimeout(()=>drawOne(),i*180);
+      }
+      setTimeout(()=>{
+        setStartAnimPhase("done");
+        const prev = onUpdateGame._lastGame?.startedSeats || [];
+        if(!prev.includes(playerIdx)){
+          onUpdateGame({startedSeats:[...prev,playerIdx]});
+        }
+        addLog("🎴 Opening hand drawn");
+      },7*180+400);
+    },900);
+    return()=>clearTimeout(shuffleTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[startAnimPhase,playerIdx,player.hand?.length,player.battlefield?.length,player.graveyard?.length,player.exile?.length,player.library?.length]);
 
   // v7 Phase 2: change deck mid-game. Scoops all zones, builds a fresh library
   // from the chosen deck, deals an opening hand. Life/turn/phase preserved.
@@ -6208,14 +6381,52 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
               {opponent.poison>0&&<span style={{fontSize:10,color:"#a78bfa"}}>☠{opponent.poison}</span>}
               <div style={{flex:1}}/>
               <span style={{fontSize:9,color:"#3a5a7a"}}>📚{opponent.library.length}</span>
-              {/* Opponent hand — face down, using their chosen sleeve */}
-              <div style={{display:"flex",gap:2,alignItems:"center"}}>
-                {opponent.hand.map((_,i)=>(
-                  <div key={i} style={{width:28,height:39,borderRadius:3,overflow:"hidden",
-                    border:"1px solid #2a3a5a",boxShadow:"0 2px 6px rgba(0,0,0,.6)",flexShrink:0}}>
-                    <img src={opponent.deck?.sleeveUri||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                  </div>
-                ))}
+              {/* Opponent hand — face down, using their chosen sleeve; right-click to request reveal */}
+              <div
+                onContextMenu={e=>{
+                  e.preventDefault();e.stopPropagation();
+                  const oppUid=opponent.profile?.userId;
+                  const oppAlias=opponent.profile?.alias||"Opponent";
+                  if(!oppUid){addLog(`⚠ Cannot request hand — opponent has no user id`);return;}
+                  const net=window.__MTG_V7__?.netSync;
+                  if(!net){addLog(`⚠ Offline — no opponent to ask`);return;}
+                  setCtxMenu({
+                    x:e.clientX,y:e.clientY,card:null,zone:"opp_hand",
+                    items:[
+                      {label:`👁 Request to see ${oppAlias}'s hand`,action:()=>{
+                        try{net.appendEvent("hand_request",{targetUserId:oppUid,requesterUserId:authUser?.id});}catch{}
+                        addLog(`👁 Requested ${oppAlias}'s hand`);
+                        setHandRequestPending({targetAlias:oppAlias,ts:Date.now()});
+                        // 30s auto-timeout
+                        setTimeout(()=>{
+                          setHandRequestPending(curr=>{
+                            if(!curr||curr.ts!==undefined&&Date.now()-curr.ts<29000)return curr;
+                            return null;
+                          });
+                        },30500);
+                      }},
+                      {label:"✕ Cancel",action:()=>setCtxMenu(null)},
+                    ]
+                  });
+                }}
+                style={{display:"flex",gap:2,alignItems:"center",cursor:"context-menu"}}
+                title="Right-click to request to see this hand"
+              >
+                {(revealedOppHand.cards && revealedOppHand.userId === opponent.profile?.userId)
+                  ? revealedOppHand.cards.map((c,i)=>(
+                      <div key={`r${i}`} onMouseEnter={()=>setHovered(c)} onMouseLeave={()=>setHovered(null)}
+                        style={{width:28,height:39,borderRadius:3,overflow:"hidden",
+                          border:"1px solid #fbbf24",boxShadow:"0 0 8px rgba(251,191,36,.6)",flexShrink:0}}>
+                        <img src={getImg(c)||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                      </div>
+                    ))
+                  : opponent.hand.map((_,i)=>(
+                      <div key={i} style={{width:28,height:39,borderRadius:3,overflow:"hidden",
+                        border:"1px solid #2a3a5a",boxShadow:"0 2px 6px rgba(0,0,0,.6)",flexShrink:0}}>
+                        <img src={opponent.deck?.sleeveUri||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                      </div>
+                    ))
+                }
                 {opponent.hand.length===0&&<span style={{fontSize:9,color:"#2a3a5a",fontStyle:"italic"}}>empty hand</span>}
               </div>
               <span style={{fontSize:9,color:"#3a5a7a"}}>✋{opponent.hand.length}</span>
@@ -6691,6 +6902,61 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
               style={{...btn("rgba(248,113,113,.1)","#f87171",{border:"1px solid rgba(248,113,113,.2)",padding:"6px 14px"})}}
               onMouseOver={hov} onMouseOut={uhov}>✕ Deny</button>
           </div>
+        </div>
+      )}
+
+      {/* v7.4: Incoming hand-reveal request */}
+      {incomingHandRequest&&(
+        <div className="slide-in" style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",
+          zIndex:25001,background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+          border:"1px solid #a78bfa60",borderRadius:10,padding:"14px 20px",
+          boxShadow:"0 12px 40px rgba(0,0,0,.9)",textAlign:"center",minWidth:300}}>
+          <div style={{fontSize:11,color:"#a78bfa",fontFamily:"Cinzel,serif",marginBottom:6}}>
+            👁 {incomingHandRequest.requesterAlias} wants to see your hand
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+            <button onClick={()=>{
+              const net=window.__MTG_V7__?.netSync;
+              if(net){
+                try{net.appendEvent("hand_reveal",{
+                  requesterUserId:incomingHandRequest.requesterUserId,
+                  revealerUserId:authUser?.id,
+                  cards:player.hand,
+                  ts:Date.now()
+                });}catch{}
+              }
+              addLog(`👁 Revealed hand to ${incomingHandRequest.requesterAlias}`);
+              setIncomingHandRequest(null);
+            }} style={{...btn("rgba(74,222,128,.15)","#4ade80",{border:"1px solid rgba(74,222,128,.3)",padding:"6px 16px",fontFamily:"Cinzel,serif"})}}
+            onMouseOver={hov} onMouseOut={uhov}>✓ Show</button>
+            <button onClick={()=>{
+              const net=window.__MTG_V7__?.netSync;
+              if(net){try{net.appendEvent("hand_deny",{requesterUserId:incomingHandRequest.requesterUserId,ts:Date.now()});}catch{}}
+              setIncomingHandRequest(null);
+            }} style={{...btn("rgba(248,113,113,.1)","#f87171",{border:"1px solid rgba(248,113,113,.2)",padding:"6px 14px"})}}
+              onMouseOver={hov} onMouseOut={uhov}>✕ Deny</button>
+          </div>
+        </div>
+      )}
+
+      {/* v7.4: Outgoing hand-request status (pending / denied / timeout) */}
+      {handRequestPending&&(
+        <div style={{position:"fixed",top:120,right:20,zIndex:24000,
+          background:`linear-gradient(160deg,${T.panel}e0,${T.bg}e0)`,
+          border:"1px solid #a78bfa40",borderRadius:8,padding:"10px 14px",
+          fontSize:10,color:"#a78bfa",fontFamily:"Cinzel,serif"}}>
+          👁 Waiting for {handRequestPending.targetAlias}…
+        </div>
+      )}
+      {handRequestStatus&&(
+        <div style={{position:"fixed",top:120,right:20,zIndex:24000,
+          background:`linear-gradient(160deg,${T.panel}e0,${T.bg}e0)`,
+          border:`1px solid ${handRequestStatus.type==="denied"?"#f87171":"#fbbf24"}60`,
+          borderRadius:8,padding:"10px 14px",
+          fontSize:10,color:handRequestStatus.type==="denied"?"#f87171":"#fbbf24",fontFamily:"Cinzel,serif"}}>
+          {handRequestStatus.type==="denied"
+            ? `✕ ${handRequestStatus.alias} denied the request`
+            : `⏱ No response from ${handRequestStatus.alias}`}
         </div>
       )}
 
@@ -8087,19 +8353,40 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   const saveDeck=deck=>{persist(decks.some(d=>d.id===deck.id)?decks.map(d=>d.id===deck.id?deck:d):[...decks,deck]);setView("menu");};
 
   // v7: after a local state change, broadcast to peers if an online session is active.
-  // Privacy: we mask private zones (hand + library) for EVERY seat before
-  // broadcasting, so even my own hand contents don't cross the wire. Each peer
-  // will then overlay their own seat's authoritative data locally.
+  // v7.4 Privacy: Only hand CARDS are masked to opponents. Library, graveyard,
+  // exile, command zone, battlefield, playermat, sleeve URI, topRevealed flag
+  // and hand COUNT all stay visible. Each peer still overlays their own seat's
+  // authoritative data locally (see onRemoteState merge).
+  //
+  // Additionally: opponents see a face-down stub per card in library (respecting
+  // the seat's sleeve URI) so they know the count + see the correct sleeve.
+  // If topRevealed is on for that seat, the first library card stays unmasked.
   const maskPrivateZones = useCallback((gs)=>{
     if(!gs || !Array.isArray(gs.players)) return gs;
-    const stubCard = (c)=>({iid:c?.iid||uid(),faceDown:true,_masked:true});
     return {
       ...gs,
-      players: gs.players.map((p,idx)=>({
-        ...p,
-        hand:    (p.hand    || []).map(stubCard),
-        library: (p.library || []).map(stubCard),
-      })),
+      players: gs.players.map((p,idx)=>{
+        const handStub = (c)=>({iid:c?.iid||uid(),faceDown:true,_masked:"hand"});
+        const libStub  = (c)=>({iid:c?.iid||uid(),faceDown:true,_masked:"library"});
+        const lib = p.library || [];
+        // Preserve top card if the seat has topRevealed (or per-iid reveal) set.
+        const topRevealedId = p.revealTopOnce;
+        let maskedLib;
+        if (p.revealTop && lib.length > 0) {
+          maskedLib = [lib[0], ...lib.slice(1).map(libStub)];
+        } else if (topRevealedId && lib.length > 0 && lib[0]?.iid === topRevealedId) {
+          maskedLib = [lib[0], ...lib.slice(1).map(libStub)];
+        } else {
+          maskedLib = lib.map(libStub);
+        }
+        return {
+          ...p,
+          hand:    (p.hand || []).map(handStub),
+          library: maskedLib,
+          // graveyard, exile, battlefield, commandZone, playermat, deck (for sleeve), etc
+          // are passed through unchanged → opponents see them fully.
+        };
+      }),
     };
   },[]);
 
@@ -8126,8 +8413,10 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     // Dandan: both players get dandan deck
     const d1=fmt==="dandan"?DANDAN_DECK:deck;
     const d2=fmt==="dandan"?DANDAN_DECK:(otherDeck||deck);
-    const p1=initPlayer(d1,profile,life);
-    const p2=initPlayer(d2,isTwoPlayer||isOnline?(extraProfiles?.[0]||{alias:"Opponent",avatar:"🧙",gamemat:GAMEMATS[0].bg}):profile,life);
+    // v7.4: always stamp my own userId on my profile so opponents can target hand-reveal requests.
+    const myProfile = {...profile, userId: authUser?.id};
+    const p1=initPlayer(d1,myProfile,life);
+    const p2=initPlayer(d2,isTwoPlayer||isOnline?(extraProfiles?.[0]||{alias:"Opponent",avatar:"🧙",gamemat:GAMEMATS[0].bg}):myProfile,life);
     // v7: support 3 or 4 players. extraDecks/extraProfiles arrays hold the
     // additional seats. p3/p4 are only added when an array entry exists.
     const extra=[];
@@ -8151,6 +8440,7 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       const sync=new NetSync({
         roomId,
         userId:authUser.id,
+        alias: profile?.alias || authUser?.user_metadata?.alias || "Player",
         onRemoteState:(remoteState /*, info */)=>{
           // v2 fix (bug #2): when a remote update lands, we MERGE instead of
           // replacing wholesale. Specifically, the remote peer owns their own
@@ -8186,12 +8476,26 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       // messages).
       sync.subscribeEvents((ev)=>{
         if (!ev) return;
-        // Ignore our own echoes
-        if (ev.user_id === authUser.id) return;
+        if (ev.user_id === authUser.id) return; // skip echoes
+        const p = ev.payload || {};
         if (ev.kind === 'chat') {
-          window.dispatchEvent(new CustomEvent('mtg:remote-chat', { detail: ev.payload }));
+          window.dispatchEvent(new CustomEvent('mtg:remote-chat', { detail: p }));
         } else if (ev.kind === 'action') {
-          window.dispatchEvent(new CustomEvent('mtg:remote-action', { detail: ev.payload }));
+          window.dispatchEvent(new CustomEvent('mtg:remote-action', { detail: p }));
+        } else if (ev.kind === 'hand_request') {
+          // Someone is asking to see MY hand (target=me) — surface a prompt.
+          if (p.targetUserId === authUser.id) {
+            window.dispatchEvent(new CustomEvent('mtg:hand-request', { detail: p }));
+          }
+        } else if (ev.kind === 'hand_reveal') {
+          // Someone approved a reveal — if I requested it, show their hand.
+          if (p.requesterUserId === authUser.id) {
+            window.dispatchEvent(new CustomEvent('mtg:hand-reveal', { detail: p }));
+          }
+        } else if (ev.kind === 'hand_deny') {
+          if (p.requesterUserId === authUser.id) {
+            window.dispatchEvent(new CustomEvent('mtg:hand-deny', { detail: p }));
+          }
         }
       });
     }
@@ -8337,6 +8641,7 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
         onSwitchPlayer={isTwoPlayer?switchPlayer:null}
         onReset={resetGame} onChangeDeck={()=>setView("menu")}
         isTwoPlayer={isTwoPlayer} isOnline={isOnline} roomId={roomId} decks={decks}
+        authUser={authUser}
         onTheme={()=>setShowThemePicker(true)}/>
       {/* v7 Phase 2: extra opponent tiles for 3p (1 tile) and 4p (2 tiles).
           Tiles float on the right edge, overlaying the sidebar area but
