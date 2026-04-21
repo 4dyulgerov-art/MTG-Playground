@@ -1,6 +1,8 @@
-# Deploying MTG Playground v7
+# Deploying MTG Playground v7.2
 
 This gets you from nothing to a live shareable URL you can playtest with 4 friends on different computers. **Total time: ~10 minutes.** Free tier everywhere.
+
+> **Already on v7 or v7.1?** Jump to the [upgrade section](#upgrading-from-v7-or-v71) at the bottom — no full redeploy needed.
 
 ---
 
@@ -186,3 +188,40 @@ delete from public.rooms;
 ```
 
 To nuke all user accounts too: Supabase dashboard → **Authentication → Users → delete**.
+
+---
+
+## Upgrading from v7 or v7.1
+
+If you already deployed v7 and want to pull in Phase 2 (privacy, change-deck, 3p/4p tiles):
+
+### 1. Database
+If you're on v7 (pre v7.1), run `supabase/schema-patch-v7.1.sql` in the Supabase SQL editor — adds the `profile jsonb` column to `room_players`.
+
+If you're already on v7.1, **no database changes are needed** for v7.2.
+
+### 2. Code
+```bash
+# extract the v7.2 zip over your existing project
+git add .
+git commit -m "v7.2: Phase 2 — privacy, change-deck, 3p/4p tiles, 2p layout fix"
+git push
+```
+
+Vercel auto-redeploys within ~60 seconds.
+
+### 3. Clear stale rooms (recommended)
+Data model for rooms is unchanged, but stale rooms from earlier versions may have mismatched player data. Clean slate:
+```sql
+delete from public.game_events;
+delete from public.game_state;
+delete from public.room_players;
+delete from public.rooms;
+```
+
+### 4. Regression test
+- 1p solo from main menu → unchanged
+- 2p hotseat local → opponent strip now visible on top ✅ (previously broken)
+- 2p online → opponent strip visible with their real alias + sleeve
+- Right-click deck pile → "⇄ Change Deck…" item appears in the menu
+- 3p/4p → opponent tiles appear on the right edge; click to swap primary

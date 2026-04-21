@@ -66,13 +66,16 @@ create table if not exists public.room_players (
   user_id     uuid not null references auth.users(id) on delete cascade,
   seat        int  not null check (seat between 0 and 3),
   ready       boolean default false,
-  deck        jsonb,                              -- selected deck snapshot
+  deck        jsonb,                              -- selected deck snapshot (full card list)
+  profile     jsonb,                              -- full profile object (alias, avatar, gamemat, etc.)
   alias       text,
   avatar      text,
   joined_at   timestamptz default now(),
   primary key (room_id, user_id),
   unique (room_id, seat)
 );
+-- For existing v7 deployments, also add the profile column if missing:
+alter table public.room_players add column if not exists profile jsonb;
 create index if not exists room_players_room_idx on public.room_players(room_id);
 
 -- ─── game_state ────────────────────────────────────────────────────────────

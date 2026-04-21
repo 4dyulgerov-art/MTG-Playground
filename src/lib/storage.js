@@ -77,12 +77,21 @@ const shared = {
         const { data, error } = await supabase
           .from('room_players').select('*').eq('room_id', id).eq('seat', seat).maybeSingle();
         if (error || !data) return null;
+        // v2 fix (bug #1): we now persist the FULL profile object and FULL deck
+        // object, so each peer reconstructs opponents verbatim — with their real
+        // alias, avatar, gamemat, and chosen deck.
+        const profile = (data.profile && typeof data.profile === 'object' && data.profile.alias)
+          ? data.profile
+          : { alias: data.alias, avatar: data.avatar, avatarImg: '', gamematIdx: 3 };
+        const deck = (data.deck && typeof data.deck === 'object' && Array.isArray(data.deck.cards))
+          ? data.deck
+          : null;
         return { value: JSON.stringify({
-          profile: { alias: data.alias, avatar: data.avatar },
-          deckId:  data.deck?.id || null,
-          deck:    data.deck || null,
-          ready:   data.ready,
-          userId:  data.user_id,
+          profile,
+          deckId: deck?.id || data.deck?.id || null,
+          deck,
+          ready:  data.ready,
+          userId: data.user_id,
         })};
       }
       return null;
@@ -101,7 +110,14 @@ const shared = {
       const m1 = key.match(ROOM_META_RE);
       if (m1) {
         const id = m1[1];
-        // Upsert room row
+        // v2 fix: joiners also call set('room_<id>_meta') in v6's flow, but
+        // they shouldn't own the room row (RLS blocks non-hosts from updating).
+        // Check if a row already exists — if yes and we're not the host, skip.
+        const { data: existing } = await supabase.from('rooms').select('host_id').eq('id', id).maybeSingle();
+        if (existing && existing.host_id !== me) {
+          // Joiner — meta already owned by host. Their own row is written via room_players.
+          return { value };
+        }
         const row = {
           id,
           name: parsed.name,
@@ -119,12 +135,25 @@ const shared = {
       const m2 = key.match(ROOM_PLAYER_RE);
       if (m2) {
         const id = m2[1]; const seat = +m2[2];
+        // v2 fix (bug #1): if caller only passes deckId, look up the full deck
+        // from their local decks in localStorage and include it verbatim.
+        let fullDeck = parsed.deck || null;
+        if (!fullDeck && parsed.deckId) {
+          try {
+            const decksRaw = localStorage.getItem('mtg_decks_v3');
+            if (decksRaw) {
+              const decks = JSON.parse(decksRaw);
+              fullDeck = decks.find(d => d.id === parsed.deckId) || null;
+            }
+          } catch {}
+        }
         const row = {
           room_id: id,
           user_id: me,
           seat,
           ready:  !!parsed.ready,
-          deck:   parsed.deck || null,
+          deck:   fullDeck,
+          profile: parsed.profile || null,   // full profile JSONB
           alias:  parsed.profile?.alias || '',
           avatar: parsed.profile?.avatar || '🧙',
         };
@@ -161,9 +190,24 @@ const shared = {
     try {
       // v6 calls storage.list("room_", true) to enumerate waiting rooms
       if (prefix === 'room_' || prefix === '') {
-        const { data } = await supabase
-          .from('rooms').select('id').eq('status', 'waiting').order('created_at', { ascending: false }).limit(50);
-        const keys = (data || []).map(r => `room_${r.id}_meta`);
+        // v2 fix (bug #3): join room_players to count actual occupants, and
+        // filter out rooms that are full or abandoned (0 players = host left).
+        // We also auto-close rooms older than 2 hours to prevent dead rooms.
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const { data, error } = await supabase
+          .from('rooms')
+          .select('id, max_players, created_at, room_players(user_id)')
+          .eq('status', 'waiting')
+          .gte('created_at', twoHoursAgo)
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (error) { console.warn('[rooms.list]', error); return { keys: [] }; }
+        const keys = (data || [])
+          .filter(r => {
+            const n = (r.room_players || []).length;
+            return n > 0 && n < r.max_players;
+          })
+          .map(r => `room_${r.id}_meta`);
         return { keys };
       }
       return { keys: [] };
@@ -178,5 +222,30 @@ export const storage = {
   async delete(key, isShared = false)       { return (isShared ? shared : local).delete(key); },
   async list(prefix = '', isShared = false) { return (isShared ? shared : local).list(prefix); },
 };
+
+// v2 fix (bug #3): explicit leaveRoom — removes own row from room_players
+// so the seat frees up. If the caller is the host, also closes the room
+// so it disappears from the lobby list.
+export async function leaveRoom(roomId) {
+  try {
+    const { data: u } = await supabase.auth.getUser();
+    const me = u?.user?.id; if (!me || !roomId) return;
+    // Get room to check if I'm host
+    const { data: room } = await supabase.from('rooms').select('host_id, status').eq('id', roomId).maybeSingle();
+    // Delete my seat
+    await supabase.from('room_players').delete().eq('room_id', roomId).eq('user_id', me);
+    // If host, close the room so it's removed from listings
+    if (room && room.host_id === me) {
+      await supabase.from('rooms').update({ status: 'closed' }).eq('id', roomId);
+    } else if (room) {
+      // If non-host left, check whether any players remain; if 0, close.
+      const { count } = await supabase
+        .from('room_players').select('*', { count: 'exact', head: true }).eq('room_id', roomId);
+      if ((count || 0) === 0) {
+        await supabase.from('rooms').update({ status: 'closed' }).eq('id', roomId);
+      }
+    }
+  } catch (e) { console.warn('[leaveRoom]', e); }
+}
 
 export default storage;

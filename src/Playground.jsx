@@ -2110,19 +2110,57 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
   ]);
   const [input,setInput]=useState("");
   const bottomRef=useRef(null);
+  // v2 fix (bug #2): merge remote action-log events into a shared log stream
+  // that's displayed alongside our local log.
+  const [remoteLog,setRemoteLog]=useState([]);
 
   useEffect(()=>{
     if(isOpen) bottomRef.current?.scrollIntoView({behavior:"smooth"});
   },[messages,isOpen]);
 
+  // v2 fix (bug #2): subscribe to remote chat messages and remote log entries.
+  useEffect(()=>{
+    const onChat=(e)=>{
+      const m=e.detail||{};
+      if(!m.text)return;
+      setMessages(ms=>[...ms,{id:m.id||uid(),sender:m.sender||"Opponent",avatar:m.avatar||"🧙",text:m.text,ts:m.ts||Date.now()}]);
+    };
+    const onAct=(e)=>{
+      const m=e.detail||{};
+      if(!m.text)return;
+      setRemoteLog(l=>[m.text,...l].slice(0,80));
+    };
+    window.addEventListener("mtg:remote-chat",onChat);
+    window.addEventListener("mtg:remote-action",onAct);
+    return()=>{
+      window.removeEventListener("mtg:remote-chat",onChat);
+      window.removeEventListener("mtg:remote-action",onAct);
+    };
+  },[]);
+
   const send=()=>{
     if(!input.trim())return;
-    setMessages(m=>[...m,{id:uid(),sender:playerName,avatar,text:input.trim(),ts:Date.now()}]);
+    const text=input.trim();
+    const msg={id:uid(),sender:playerName,avatar,text,ts:Date.now()};
+    setMessages(m=>[...m,msg]);
     setInput("");
+    // v2 fix (bug #2): broadcast to remote peers via netSync.
+    const net=window.__MTG_V7__?.netSync;
+    if(net){
+      try{net.appendEvent("chat",{sender:playerName,avatar,text,ts:msg.ts,id:msg.id});}catch(e){}
+    }
   };
 
   // Quick reactions
   const REACTIONS=["👍","👎","⚡","🔮","🃏","🐉","💀","😂","🤔","😤","🎲","✨"];
+
+  // v2 fix: interleave remote log entries with local ones for display.
+  const combinedLog = useMemo(()=>{
+    const local = Array.isArray(log) ? log : [];
+    // Simple concat then cap — most-recent at the top for both arrays.
+    const all = [...local, ...remoteLog];
+    return all.slice(0, 80);
+  },[log,remoteLog]);
 
   return(
     <div style={{position:"fixed",top:50,left:8,zIndex:9994}}>
@@ -2170,7 +2208,11 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
           <div style={{display:"flex",flexWrap:"wrap",gap:2,padding:"4px 8px",borderTop:`1px solid ${T.border}20`}}>
             {REACTIONS.map(r=>(
               <button key={r} onClick={()=>{
-                setMessages(m=>[...m,{id:uid(),sender:playerName,avatar,text:r,ts:Date.now()}]);
+                const msg={id:uid(),sender:playerName,avatar,text:r,ts:Date.now()};
+                setMessages(m=>[...m,msg]);
+                // v2 fix (bug #2): reactions also broadcast.
+                const net=window.__MTG_V7__?.netSync;
+                if(net){try{net.appendEvent("chat",msg);}catch(e){}}
               }} style={{fontSize:14,background:"transparent",border:"none",cursor:"pointer",
                 padding:"1px 2px",borderRadius:3,transition:"transform .1s"}}
                 onMouseOver={e=>e.currentTarget.style.transform="scale(1.3)"}
@@ -2202,8 +2244,8 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
           borderRadius:"0 0 8px 8px",padding:"6px 10px",
           maxHeight:150,overflowY:"auto"}}>
           <div style={{fontSize:7,color:T.accent,fontFamily:"Cinzel,serif",letterSpacing:".12em",marginBottom:4}}>📜 GAME LOG</div>
-          {(!log||log.length===0)&&<div style={{fontSize:8,color:"#2a3a5a",fontStyle:"italic"}}>No events yet</div>}
-          {(log||[]).map((e,i)=>(
+          {(!combinedLog||combinedLog.length===0)&&<div style={{fontSize:8,color:"#2a3a5a",fontStyle:"italic"}}>No events yet</div>}
+          {(combinedLog||[]).map((e,i)=>(
             <div key={i} style={{fontSize:8,color:i===0?T.accent:"#3a5a7a",padding:"1px 0",borderBottom:"1px solid #0d1f3c15",lineHeight:1.4}}>{e}</div>
           ))}
         </div>
@@ -3306,7 +3348,11 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
               <div style={{animation:"pulse 1.5s ease-in-out infinite",fontSize:10,color:T.accent,fontFamily:"Cinzel, serif"}}>
                 {curr>=max?"✦ All players ready — launching…":"⏳ Share the Room ID above with friends"}
               </div>
-              <button onClick={()=>{setMyRoomId(null);setMySeat(null);setWaitingMeta(null);}}
+              <button onClick={async()=>{
+                const id=myRoomId;
+                setMyRoomId(null);setMySeat(null);setWaitingMeta(null);
+                try{ const { leaveRoom } = await import("./lib/storage"); await leaveRoom(id); }catch(e){ console.warn("[leaveRoom]",e); }
+              }}
                 style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:10,padding:"5px 10px"})}}
                 onMouseOver={hov} onMouseOut={uhov}>Leave Room</button>
             </div>
@@ -4481,7 +4527,107 @@ function FlyingCardAnim({cards,onDone}){
 }
 
 
-function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdatePlayer,onUpdateGame,onExit,onSwitchPlayer,onReset,onChangeDeck,isTwoPlayer,roomId,isOnline,onTheme}){
+/* ─── OpponentTile (v7 Phase 2) ───────────────────────────────────────
+   Compact read-only view of a non-primary opponent. Shown for 3p/4p games.
+   Displays their avatar, alias, life, library count, battlefield mini,
+   and hand-as-sleeves. Click to promote them to "primary opponent" (the
+   one whose strip appears at the top of the main GameBoard).
+   ─────────────────────────────────────────────────────────────────── */
+function OpponentTile({opp, seat, isActive, onPromote}){
+  if (!opp) return null;
+  const life = opp.life ?? 20;
+  const lifeColor = life<=5?"#f87171":life<=10?"#fbbf24":"#e8e2d0";
+  const sleeve = opp.deck?.sleeveUri || CARD_BACK;
+  return (
+    <div onClick={onPromote}
+      style={{
+        pointerEvents:"auto",
+        background:`linear-gradient(165deg, ${T.panel}f2, ${T.bg}fc)`,
+        border:`1px solid ${isActive?T.accent:T.border}60`,
+        borderRadius:8,
+        padding:"8px 10px",
+        cursor:"pointer",
+        boxShadow: isActive
+          ? `0 0 20px ${T.accent}30, 0 4px 12px rgba(0,0,0,.5)`
+          : "0 4px 12px rgba(0,0,0,.5)",
+        transition:"all .2s ease",
+        display:"flex",flexDirection:"column",gap:6,
+        fontFamily:"Crimson Text,serif",
+      }}
+      onMouseOver={e=>{e.currentTarget.style.borderColor=T.accent+"a0";e.currentTarget.style.transform="translateX(-3px)";}}
+      onMouseOut={e=>{e.currentTarget.style.borderColor=(isActive?T.accent:T.border)+"60";e.currentTarget.style.transform="none";}}
+      title="Click to view this opponent on the main board"
+    >
+      {/* Header row: avatar + alias + life */}
+      <div style={{display:"flex",alignItems:"center",gap:6}}>
+        {opp.profile?.avatarImg
+          ? <img src={opp.profile.avatarImg} alt="" style={{width:22,height:22,borderRadius:"50%",objectFit:"cover",border:`1px solid ${T.accent}40`}}/>
+          : <span style={{fontSize:16,filter:`drop-shadow(0 0 4px ${T.accent}60)`}}>{opp.profile?.avatar||"🧙"}</span>}
+        <div style={{flex:1,minWidth:0,overflow:"hidden"}}>
+          <div style={{fontSize:11,color:T.text,fontFamily:"Cinzel,serif",letterSpacing:".03em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+            {opp.profile?.alias||`Player ${seat+1}`}
+          </div>
+          <div style={{fontSize:8,color:"#6a7a8a",letterSpacing:".08em",fontFamily:"Cinzel,serif",textTransform:"uppercase"}}>
+            Seat {seat+1} {isActive && <span style={{color:T.accent}}>· ACTIVE</span>}
+          </div>
+        </div>
+        <div style={{
+          fontFamily:"Cinzel Decorative,serif",fontSize:15,color:lifeColor,
+          textShadow:life<=5?"0 0 10px #f87171":"none",
+        }}>♥{life}</div>
+      </div>
+
+      {/* Battlefield mini */}
+      <div style={{
+        background:"rgba(3,6,12,.55)",
+        border:`1px solid ${T.border}20`,borderRadius:5,
+        padding:4,minHeight:52,maxHeight:80,
+        display:"flex",flexWrap:"wrap",gap:2,overflow:"hidden",alignContent:"flex-start",
+      }}>
+        {(opp.battlefield||[]).length===0
+          ? <div style={{fontSize:8,color:"#2a3a5a",fontStyle:"italic",alignSelf:"center",margin:"auto"}}>— empty —</div>
+          : (opp.battlefield||[]).slice(0,12).map(c=>(
+              <div key={c.iid} style={{
+                width:18,height:26,borderRadius:2,overflow:"hidden",
+                border:"1px solid rgba(200,168,112,.15)",flexShrink:0,
+                transform:c.tapped?"rotate(12deg)":"none",
+                opacity:c.tapped?.75:1,
+              }}>
+                <img src={(c.imageUri||c.image_uris?.small||getImg(c))||CARD_BACK} alt=""
+                  style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+              </div>
+            ))}
+        {(opp.battlefield||[]).length>12 && (
+          <div style={{fontSize:7,color:T.accent,fontFamily:"Cinzel,serif",alignSelf:"center",padding:"0 3px"}}>
+            +{opp.battlefield.length-12}
+          </div>
+        )}
+      </div>
+
+      {/* Hand-as-sleeves + counts */}
+      <div style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:"#6a7a8a"}}>
+        <span title="Library">📚{(opp.library||[]).length}</span>
+        <span title="Graveyard">☠{(opp.graveyard||[]).length}</span>
+        <span title="Exile">✦{(opp.exile||[]).length}</span>
+        <div style={{flex:1}}/>
+        <div style={{display:"flex",gap:1}}>
+          {(opp.hand||[]).slice(0,6).map((_,i)=>(
+            <div key={i} style={{
+              width:14,height:20,borderRadius:2,overflow:"hidden",
+              border:"1px solid #2a3a5a",flexShrink:0,
+            }}>
+              <img src={sleeve} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            </div>
+          ))}
+        </div>
+        <span style={{fontSize:9}}>✋{(opp.hand||[]).length}</span>
+      </div>
+    </div>
+  );
+}
+
+
+function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdatePlayer,onUpdateGame,onExit,onSwitchPlayer,onReset,onChangeDeck,isTwoPlayer,roomId,isOnline,onTheme,decks=[]}){
   const [selected,setSelected]=useState(new Set()); // Set of iids
   const [selZone,setSelZone]=useState("battlefield"); // zone of selection
   // Selection rect state
@@ -4517,6 +4663,8 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   const [showCustom,setShowCustom]=useState(false);
   const [showLog,setShowLog]=useState(false);
   const [showDeckViewer,setShowDeckViewer]=useState(false);
+  // v7 Phase 2: change-deck modal
+  const [showChangeDeck,setShowChangeDeck]=useState(false);
   const [scryData,setScryData]=useState(null); // {cards:[]}
   const [libDropPrompt,setLibDropPrompt]=useState(null);
   const [sparks,setSparks]=useState([]);
@@ -4586,7 +4734,12 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
 
   // upd and addLog must be declared first — many hooks depend on them
   const upd=useCallback(fn=>onUpdatePlayer(playerIdx,fn),[onUpdatePlayer,playerIdx]);
-  const addLog=useCallback(msg=>upd(p=>({...p,log:[`T${turn}:${msg}`,...p.log].slice(0,80)})),[upd,turn]);
+  const addLog=useCallback(msg=>{
+    upd(p=>({...p,log:[`T${turn}:${msg}`,...p.log].slice(0,80)}));
+    // v2 fix (bug #2): broadcast our action-log entries so opponents see them.
+    const net=window.__MTG_V7__?.netSync;
+    if(net){try{net.appendEvent("action",{text:`T${turn}:${msg}`,ts:Date.now()});}catch(e){}}
+  },[upd,turn]);
 
   // Flip a DFC card between its two faces, swapping all face-specific data
   // Scryfall DFC URL pattern: front/.../UUID.jpg → back/.../UUID.jpg
@@ -4741,6 +4894,40 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   },[upd,turn]);
 
   const shuffle=useCallback(()=>{SFX.playAction("shuffle");upd(p=>({...p,library:shuffleArr(p.library),log:[`T${turn}:🔀 Shuffled`,...p.log].slice(0,80)}));},[upd,turn]);
+
+  // v7 Phase 2: change deck mid-game. Scoops all zones, builds a fresh library
+  // from the chosen deck, deals an opening hand. Life/turn/phase preserved.
+  const swapDeck = useCallback((newDeck)=>{
+    if(!newDeck || !Array.isArray(newDeck.cards)) return;
+    SFX.playAction("shuffle");
+    upd(p=>{
+      // Build library from deck cards, respecting card counts.
+      const lib = [];
+      for (const entry of newDeck.cards) {
+        const n = entry.count || 1;
+        for (let i=0; i<n; i++) lib.push(mkCard(entry,"library"));
+      }
+      const shuffled = shuffleArr(lib);
+      // Opening hand size by format (commander = 7 standard)
+      const handSize = 7;
+      const hand = shuffled.slice(0, handSize).map(c=>({...c, zone:"hand"}));
+      const library = shuffled.slice(handSize);
+      return {
+        ...p,
+        deck: newDeck,
+        library,
+        hand,
+        battlefield: [],
+        graveyard: [],
+        exile: [],
+        command: newDeck.commander ? [mkCard({...newDeck.commander, isCommander:true}, "command")] : [],
+        log: [`T${turn}:⇄ Changed to ${newDeck.name}`, ...p.log].slice(0,80),
+      };
+    });
+    // Broadcast a log entry so opponent sees the deck change too.
+    const net = window.__MTG_V7__?.netSync;
+    if (net) { try { net.appendEvent("action", {text:`T${turn}:⇄ ${player.profile?.alias||"Opponent"} changed deck to ${newDeck.name}`, ts:Date.now()}); } catch {} }
+  },[upd,turn,player.profile]);
   const untapAll=useCallback(()=>{SFX.playAction("untapAll");upd(p=>({...p,battlefield:p.battlefield.map(c=>({...c,tapped:false})),log:[`T${turn}:⟳ Untapped all`,...p.log].slice(0,80)}));},[upd,turn]);
 
   const moveCard=useCallback((card,from,to,pos="bottom",skipCmdCheck=false)=>{
@@ -5444,6 +5631,9 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       items.push({icon:"✦",label:"Mill 1 → Exile",action:()=>millExile(1),color:"#60a5fa"});
       items.push({icon:"✦",label:"Mill 3 → Exile",action:()=>millExile(3),color:"#60a5fa"});
       items.push({icon:"✦",label:"Mill X… → Exile",action:()=>{setMillTarget("exile");setShowMillPrompt(true);},color:"#60a5fa"});
+      items.push("---");
+      // v7 Phase 2: change deck mid-game (scoops current zones, opens picker).
+      items.push({icon:"⇄",label:"Change Deck…",action:()=>setShowChangeDeck(true),color:T.accent});
     }else if(zone==="command"){
       const cc=card.castCount||0;
       const isAway=card.status==="away"||card.status==="dead"||card.status==="exiled";
@@ -5524,6 +5714,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         if(showExileViewer)  { setShowExileViewer(false);    return; }
         if(showSearchLib)    { setShowSearchLib(false);      return; }
         if(showDeckViewer)   { setShowDeckViewer(false);     return; }
+        if(showChangeDeck)   { setShowChangeDeck(false);      return; }
         if(showRevealHand)   { setShowRevealHand(false);     return; }
         if(showPlanechase)   { setShowPlanechase(false);     return; }
         if(showScry)         { setShowScry(false);           return; }
@@ -6025,12 +6216,12 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
               {opponent.poison>0&&<span style={{fontSize:10,color:"#a78bfa"}}>☠{opponent.poison}</span>}
               <div style={{flex:1}}/>
               <span style={{fontSize:9,color:"#3a5a7a"}}>📚{opponent.library.length}</span>
-              {/* Opponent hand — face down */}
+              {/* Opponent hand — face down, using their chosen sleeve */}
               <div style={{display:"flex",gap:2,alignItems:"center"}}>
                 {opponent.hand.map((_,i)=>(
                   <div key={i} style={{width:28,height:39,borderRadius:3,overflow:"hidden",
                     border:"1px solid #2a3a5a",boxShadow:"0 2px 6px rgba(0,0,0,.6)",flexShrink:0}}>
-                    <img src={CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                    <img src={opponent.deck?.sleeveUri||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                   </div>
                 ))}
                 {opponent.hand.length===0&&<span style={{fontSize:9,color:"#2a3a5a",fontStyle:"italic"}}>empty hand</span>}
@@ -6039,7 +6230,6 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             </div>
           </div>
         )}
-          </div>
 
 {/* ── DIVIDER / CENTER LINE ── */}
         <div style={{height:2,background:`linear-gradient(90deg,transparent,${currentPhaseColor}50,transparent)`,
@@ -6131,6 +6321,49 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
                 onClose={()=>setShowDeckViewer(false)}
                 onCtx={handleCtx} onHover={setHovered} onHoverEnd={()=>setHovered(null)} onDragStart={startFloatDrag}
                 onDraw={()=>draw(1)} onShuffle={shuffle}/>
+            )}
+            {showChangeDeck&&(
+              <div onClick={()=>setShowChangeDeck(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:9996,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}}>
+                <div onClick={e=>e.stopPropagation()} className="fade-in" style={{
+                  background:`linear-gradient(160deg,${T.panel}fa,${T.bg}fd)`,
+                  border:`1px solid ${T.accent}50`,borderRadius:12,padding:24,
+                  width:520,maxWidth:"92vw",maxHeight:"88vh",overflowY:"auto",
+                  boxShadow:"0 32px 100px rgba(0,0,0,.95)"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                    <h3 className="shimmer-text" style={{fontFamily:"Cinzel Decorative,serif",fontSize:16,letterSpacing:".06em"}}>⇄ Change Deck</h3>
+                    <button onClick={()=>setShowChangeDeck(false)}
+                      style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:10,padding:"4px 10px"})}}
+                      onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+                  </div>
+                  <div style={{fontSize:11,color:"#6a7a8a",fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:16,padding:"8px 10px",borderRadius:6,background:"rgba(220,38,38,.06)",border:"1px solid rgba(220,38,38,.15)"}}>
+                    ⚠ This will scoop all your current cards (battlefield, hand, graveyard, exile, command)
+                    and replace them with a fresh shuffled library + opening hand from the chosen deck.
+                    Life, turn number, and phase are preserved.
+                  </div>
+                  {(!decks || decks.length===0)?(
+                    <div style={{color:T.border,fontSize:12,textAlign:"center",padding:"24px 12px",fontStyle:"italic"}}>
+                      No decks available. Go back to the menu and create one first.
+                    </div>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {decks.map(d=>(
+                        <button key={d.id} onClick={()=>{swapDeck(d);setShowChangeDeck(false);}}
+                          style={{...btn(d.id===player.deck?.id?`${T.accent}1a`:`${T.panel}aa`,
+                            d.id===player.deck?.id?T.accent:T.text,
+                            {textAlign:"left",padding:"10px 14px",border:`1px solid ${d.id===player.deck?.id?T.accent+"60":T.border+"30"}`,display:"flex",justifyContent:"space-between",alignItems:"center"})}}
+                          onMouseOver={hov} onMouseOut={uhov}>
+                          <span style={{fontFamily:"Cinzel,serif",fontSize:12}}>
+                            {d.id===player.deck?.id?"◉ ":""}{d.name}
+                          </span>
+                          <span style={{fontSize:10,color:"#6a7a8a"}}>
+                            {(d.cards||[]).reduce((s,c)=>s+(c.count||1),0)} cards · {d.format||"standard"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 
@@ -7810,6 +8043,9 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   const [showThemePicker,setShowThemePicker]=useState(false);
   // v7: net sync handle (created when entering an online game)
   const netRef = useRef(null);
+  // v7 Phase 2: which opponent seat index is currently "primary" (rendered by GameBoard).
+  // Null = auto-pick first non-me seat.
+  const [primaryOppIdx, setPrimaryOppIdx] = useState(null);
 
   useEffect(()=>{
     (async()=>{
@@ -7841,11 +8077,27 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   const saveDeck=deck=>{persist(decks.some(d=>d.id===deck.id)?decks.map(d=>d.id===deck.id?deck:d):[...decks,deck]);setView("menu");};
 
   // v7: after a local state change, broadcast to peers if an online session is active.
+  // Privacy: we mask private zones (hand + library) for EVERY seat before
+  // broadcasting, so even my own hand contents don't cross the wire. Each peer
+  // will then overlay their own seat's authoritative data locally.
+  const maskPrivateZones = useCallback((gs)=>{
+    if(!gs || !Array.isArray(gs.players)) return gs;
+    const stubCard = (c)=>({iid:c?.iid||uid(),faceDown:true,_masked:true});
+    return {
+      ...gs,
+      players: gs.players.map((p,idx)=>({
+        ...p,
+        hand:    (p.hand    || []).map(stubCard),
+        library: (p.library || []).map(stubCard),
+      })),
+    };
+  },[]);
+
   const broadcastIfOnline = useCallback((nextGS)=>{
     if(nextGS?.isOnline && netRef.current){
-      try{ netRef.current.broadcast(nextGS); }catch(e){ console.warn("[netSync.broadcast]",e); }
+      try{ netRef.current.broadcast(maskPrivateZones(nextGS)); }catch(e){ console.warn("[netSync.broadcast]",e); }
     }
-  },[]);
+  },[maskPrivateZones]);
 
   const updatePlayer=useCallback((idx,fn)=>setGameState(gs=>{
     const next = {...gs,players:gs.players.map((p,i)=>i===idx?fn(p):p)};
@@ -7890,19 +8142,48 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
         roomId,
         userId:authUser.id,
         onRemoteState:(remoteState /*, info */)=>{
-          // Replace local state but keep our own seat's UI-preferences (e.g. hoverState) untouched.
-          // For Phase 1 we just accept the whole remote state.
+          // v2 fix (bug #2): when a remote update lands, we MERGE instead of
+          // replacing wholesale. Specifically, the remote peer owns their own
+          // seat's `log` and `player.*` state; our local seat is authoritative
+          // for our own data. Without this, each broadcast would clobber our
+          // local log and chat state written by addLog between broadcasts.
           setGameState(gs=>{
             if(!gs) return remoteState;
-            return {...remoteState, myPlayerIdx:gs.myPlayerIdx};
+            const mine = gs.myPlayerIdx ?? 0;
+            const merged = {...remoteState, myPlayerIdx: mine};
+            // Keep OUR seat's latest state; accept REMOTE for all other seats.
+            if (Array.isArray(gs.players) && Array.isArray(remoteState.players)) {
+              merged.players = remoteState.players.map((p, i) => i === mine ? gs.players[i] : p);
+            }
+            return merged;
           });
         },
       });
       netRef.current=sync;
+      // v2 fix (bug #2): expose netSync on a global so InGameChat and
+      // other deep components can broadcast events without prop drilling.
+      window.__MTG_V7__ = window.__MTG_V7__ || {};
+      window.__MTG_V7__.netSync = sync;
+      window.__MTG_V7__.mySeat = playerIdx;
       sync.start().then(()=>{
-        // Seed remote with our initial state if it's empty
-        sync.broadcast(initial);
+        // Seed remote with our initial state if it's empty (masked for privacy)
+        sync.broadcast(maskPrivateZones(initial));
       }).catch(e=>console.warn("[netSync.start]",e));
+
+      // v2 fix (bug #2): subscribe to chat + action-log events and dispatch
+      // DOM events that InGameChat + the log UI listen for. Keeps the event
+      // flow isolated from gameState (prevents last-write-wins from nuking
+      // messages).
+      sync.subscribeEvents((ev)=>{
+        if (!ev) return;
+        // Ignore our own echoes
+        if (ev.user_id === authUser.id) return;
+        if (ev.kind === 'chat') {
+          window.dispatchEvent(new CustomEvent('mtg:remote-chat', { detail: ev.payload }));
+        } else if (ev.kind === 'action') {
+          window.dispatchEvent(new CustomEvent('mtg:remote-action', { detail: ev.payload }));
+        }
+      });
     }
   };
 
@@ -7911,6 +8192,7 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     if(view!=="game" && netRef.current){
       netRef.current.stop().catch(()=>{});
       netRef.current=null;
+      if (window.__MTG_V7__) window.__MTG_V7__.netSync = null;
     }
     return ()=>{}; // cleanup on unmount handled elsewhere
   },[view]);
@@ -8011,19 +8293,56 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     //     In hotseat, "me" is activePlayer (current-turn seat).
     const myIdx = isOnline ? (myPlayerIdx ?? activePlayer) : activePlayer;
     const player = players[myIdx] || players[0];
-    // For multi-opponent games, pick the first other player as the primary
-    // opponent rendered by GameBoard. Other opponents are tracked in state
-    // and can be viewed via the future multi-opponent sidebar (see README).
-    const opponent = players.find((_,i)=>i!==myIdx) || players[0];
+
+    // v7 Phase 2: compute all opponents (indices + player objects).
+    const allOppIndices = players.map((_,i)=>i).filter(i=>i!==myIdx);
+    const primaryIdx = (primaryOppIdx!=null && allOppIndices.includes(primaryOppIdx))
+      ? primaryOppIdx
+      : allOppIndices[0];
+    const opponent = players[primaryIdx] || players[0];
+    const extraOpponents = allOppIndices.filter(i=>i!==primaryIdx).map(i=>({seat:i,player:players[i]}));
+
+    // v7 Phase 2: layout mode based on total player count.
+    // 2p  → no extra tiles (v6's native mirrored layout handles it)
+    // 3p  → 2 opponent tiles stacked on the right (one is primary=GameBoard-strip, one is OpponentTile)
+    // 4p  → 3 opponent tiles in quadrants
+    const nPlayers = players.length;
     const{gamemode:gm}=gameState;
-    return<><WeatherCanvas weather={weather}/>{showThemePicker&&<ThemePicker current={theme} weather={weather} onTheme={setTheme} onWeather={setWeather} onClose={()=>setShowThemePicker(false)}/>}<GameBoard
-      playerIdx={myIdx} player={player} opponent={opponent}
-      phase={phase} turn={turn} stack={stack} gamemode={gm}
-      onUpdatePlayer={updatePlayer} onUpdateGame={updateGame}
-      onExit={()=>{ if(netRef.current){netRef.current.stop().catch(()=>{});netRef.current=null;} setView("menu"); }}
-      onSwitchPlayer={isTwoPlayer?switchPlayer:null}
-      onReset={resetGame} onChangeDeck={()=>setView("menu")}
-      isTwoPlayer={isTwoPlayer} isOnline={isOnline} roomId={roomId} onTheme={()=>setShowThemePicker(true)}/></>
+
+    return<>
+      <WeatherCanvas weather={weather}/>
+      {showThemePicker&&<ThemePicker current={theme} weather={weather} onTheme={setTheme} onWeather={setWeather} onClose={()=>setShowThemePicker(false)}/>}
+      <GameBoard
+        playerIdx={myIdx} player={player} opponent={opponent}
+        phase={phase} turn={turn} stack={stack} gamemode={gm}
+        onUpdatePlayer={updatePlayer} onUpdateGame={updateGame}
+        onExit={async()=>{
+          if(isOnline && roomId){
+            try{ const { leaveRoom } = await import("./lib/storage"); await leaveRoom(roomId); }catch(e){ console.warn("[leaveRoom]",e); }
+          }
+          if(netRef.current){ netRef.current.stop().catch(()=>{}); netRef.current=null; }
+          setPrimaryOppIdx(null);
+          setView("menu");
+        }}
+        onSwitchPlayer={isTwoPlayer?switchPlayer:null}
+        onReset={resetGame} onChangeDeck={()=>setView("menu")}
+        isTwoPlayer={isTwoPlayer} isOnline={isOnline} roomId={roomId} decks={decks}
+        onTheme={()=>setShowThemePicker(true)}/>
+      {/* v7 Phase 2: extra opponent tiles for 3p (1 tile) and 4p (2 tiles).
+          Tiles float on the right edge, overlaying the sidebar area but
+          non-blocking (pointer-events auto only on their content). Clicking
+          a tile promotes that opponent to be the primary (GameBoard target). */}
+      {extraOpponents.length>0 && (
+        <div style={{position:"fixed",top:40,right:196,bottom:160,width:220,
+          display:"flex",flexDirection:"column",gap:8,padding:"8px 0",zIndex:500,
+          pointerEvents:"none"}}>
+          {extraOpponents.map(({seat,player:opp},idx)=>(
+            <OpponentTile key={seat} opp={opp} seat={seat} isActive={activePlayer===seat}
+              onPromote={()=>setPrimaryOppIdx(seat)}/>
+          ))}
+        </div>
+      )}
+    </>;
   }
 
   return<><WeatherCanvas weather={weather}/>{showThemePicker&&<ThemePicker current={theme} weather={weather} onTheme={setTheme} onWeather={setWeather} onClose={()=>setShowThemePicker(false)}/>}<MainMenu decks={decks} profile={profile} onTheme={()=>setShowThemePicker(true)}
