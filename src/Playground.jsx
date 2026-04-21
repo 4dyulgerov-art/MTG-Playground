@@ -2184,13 +2184,17 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
 
   const REACTIONS=["👍","👎","⚡","🔮","🃏","🐉","💀","😂","🤔","😤","🎲","✨"];
 
-  // v7.4: log display = remote-attributed entries only (local entries are
+  // v7.5: log display = remote-attributed entries only (local entries are
   // also broadcast via appendEvent("action") so they come back through the
-  // same stream with their alias tag).
+  // same stream with their alias tag). Local entries get prefixed with the
+  // player's own name so every line always shows WHO did the action.
   const combinedLog = useMemo(()=>{
     const local = Array.isArray(log) ? log : [];
-    // Local log may lack alias prefix — prepend player name so it matches format
-    const localTagged = local.map(e=>typeof e==="string"&&e.includes(": ")?e:`${playerName}: ${e}`);
+    const localTagged = local.map(e=>{
+      if(typeof e !== "string") return e;
+      if(e.startsWith(`${playerName}:`)) return e;
+      return `${playerName}: ${e}`;
+    });
     return [...localTagged, ...remoteLog].slice(0, 120);
   },[log,remoteLog,playerName]);
 
@@ -3272,13 +3276,19 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
         const meta=JSON.parse(r.value);
         setWaitingMeta(meta); // v7: drive the waiting-room UI
         if(meta.players.length>=meta.maxPlayers){
-          clearInterval(t);
-          // Fetch all player rows in seat order
-          const playerRows=[];
+          // v7.5: enforce every seat has actually picked a deck before auto-starting
+          const playerRowsProbe=[];
           for(let i=0;i<meta.maxPlayers;i++){
             const pd=await storage.get(`room_${myRoomId}_player_${i}`,true).catch(()=>null);
-            playerRows.push(pd?JSON.parse(pd.value):null);
+            playerRowsProbe.push(pd?JSON.parse(pd.value):null);
           }
+          const everyoneHasDeck = playerRowsProbe.every(pr => pr?.deck || pr?.deckId);
+          if(!everyoneHasDeck){
+            // Don't start yet; keep polling
+            return;
+          }
+          clearInterval(t);
+          const playerRows = playerRowsProbe;
           // My seat is whichever row matches our profile alias (falls back to 0)
           const seat=mySeat ?? playerRows.findIndex(pr=>pr?.profile?.alias===profile.alias);
           const mySeatIdx = seat>=0?seat:0;
@@ -4697,6 +4707,239 @@ function OpponentTile({opp, seat, isActive, onPromote}){
           ))}
         </div>
         <span style={{fontSize:9}}>✋{(opp.hand||[]).length}</span>
+      </div>
+    </div>
+  );
+}
+
+
+/* ─── OpponentBoard (v7.5) ─────────────────────────────────────────────
+   Full mirrored view of a single opponent. Renders the same structural
+   pieces as a player's own GameBoard (playmat, battlefield, zones row,
+   hand sleeves, command zone, sidebar) but rotated 180° so it looks like
+   we're sitting across a table from them.
+
+   READ-ONLY: all interaction is disabled except:
+     - Right-click opponent's hand to request reveal (already wired)
+     - Right-click opponent's graveyard/exile to request view access
+   ─────────────────────────────────────────────────────────────────── */
+function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
+  if (!opp) return null;
+  const life       = opp.life ?? 20;
+  const lifeColor  = life<=5?"#f87171":life<=10?"#fbbf24":"#e8e2d0";
+  const sleeve     = opp.deck?.sleeveUri || CARD_BACK;
+  const playmat    = opp.profile?.gamemat || GAMEMATS[0].bg;
+  const isRevealed = revealedHand?.cards && revealedHand?.userId === opp.profile?.userId;
+
+  // The ENTIRE opponent half is wrapped in rotate(180deg) so cards face the
+  // local player across the "table". Inner content is rendered in the normal
+  // reading direction within that rotated frame.
+  return (
+    <div style={{
+      height:"100%",width:"100%",position:"relative",
+      transform:"rotate(180deg)",transformOrigin:"center center",
+      display:"flex",flexDirection:"column",overflow:"hidden",
+      background:"#030608",
+    }}>
+      {/* Playmat backdrop */}
+      <div style={{
+        position:"absolute",inset:0,background:playmat,
+        backgroundSize:"cover",backgroundPosition:"center",
+        opacity:.85,pointerEvents:"none",
+      }}/>
+      <div style={{
+        position:"absolute",inset:0,
+        background:"radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(2,4,10,.55) 100%)",
+        pointerEvents:"none",
+      }}/>
+
+      {/* Top identification strip (with life + phase indicator) */}
+      <div style={{
+        display:"flex",alignItems:"center",gap:8,padding:"4px 10px",
+        background:"linear-gradient(90deg,rgba(3,6,12,.85),rgba(3,6,12,.4),rgba(3,6,12,.85))",
+        borderBottom:"1px solid rgba(248,113,113,.18)",flexShrink:0,zIndex:2,
+      }}>
+        {opp.profile?.avatarImg
+          ? <img src={opp.profile.avatarImg} alt="" style={{width:22,height:22,borderRadius:"50%",objectFit:"cover",border:"1px solid rgba(248,113,113,.3)"}}/>
+          : <span style={{fontSize:14}}>{opp.profile?.avatar||"🧙"}</span>}
+        <span style={{fontSize:11,color:"#c8a870",fontFamily:"Cinzel,serif",letterSpacing:".05em"}}>
+          {opp.profile?.alias||"Opponent"}
+        </span>
+        <span style={{fontSize:15,fontFamily:"Cinzel Decorative,serif",
+          color:lifeColor,textShadow:life<=5?"0 0 12px #f87171":"none"}}>♥{life}</span>
+        {opp.poison>0&&<span style={{fontSize:11,color:"#a78bfa"}}>☠{opp.poison}</span>}
+        <div style={{flex:1}}/>
+        <span style={{fontSize:9,color:"#6a7a8a"}}>📚 {opp.library.length}</span>
+        <span style={{fontSize:9,color:"#a78bfa"}}>☠ {opp.graveyard.length}</span>
+        <span style={{fontSize:9,color:"#60a5fa"}}>✦ {opp.exile.length}</span>
+      </div>
+
+      {/* Main area: battlefield (large) + zones column on right */}
+      <div style={{flex:1,display:"flex",position:"relative",overflow:"hidden",minHeight:0,zIndex:1}}>
+        {/* Opponent's battlefield — full half of the screen */}
+        <div style={{
+          flex:1,position:"relative",overflow:"hidden",
+          display:"flex",flexWrap:"wrap",gap:4,padding:"8px 10px",
+          alignContent:"flex-start",
+        }}>
+          {opp.battlefield.length===0 && (
+            <div style={{
+              position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
+              color:"rgba(200,168,112,.12)",fontFamily:"Cinzel,serif",fontSize:11,pointerEvents:"none",
+            }}>— battlefield empty —</div>
+          )}
+          {opp.battlefield.map(c=>{
+            // Damage + counter badges for full visibility (Q6 — user wants all state visible)
+            const dmg = c.damage||0;
+            const counterEntries = Object.entries(c.counters||{}).filter(([,v])=>v>0);
+            return (
+              <div key={c.iid} style={{
+                position:"relative",width:66,height:92,borderRadius:3,overflow:"visible",flexShrink:0,
+                transform:c.tapped?"rotate(90deg)":"none",
+                transition:"transform .22s cubic-bezier(.34,1.4,.64,1)",
+                filter:c.tapped?"brightness(.9)":"none",
+              }}>
+                <img src={(c.imageUri||c.image_uris?.small||getImg(c))||CARD_BACK}
+                  alt={c.name||""} style={{
+                    width:"100%",height:"100%",objectFit:"cover",borderRadius:3,
+                    border:"1px solid rgba(200,168,112,.25)",
+                    boxShadow:c.tapped?"0 2px 4px rgba(0,0,0,.4)":"0 4px 10px rgba(0,0,0,.55)",
+                  }}/>
+                {dmg>0 && (
+                  <span style={{position:"absolute",top:-4,right:-4,background:"#7f1d1d",color:"#fecaca",
+                    fontFamily:"Cinzel Decorative,serif",fontSize:9,padding:"1px 5px",borderRadius:8,
+                    border:"1px solid #fca5a5",boxShadow:"0 1px 4px rgba(0,0,0,.6)"}}>-{dmg}</span>
+                )}
+                {counterEntries.map(([k,v],i)=>(
+                  <span key={k} style={{position:"absolute",bottom:-4,left:-4+(i*14),
+                    background:k.startsWith("+")?"#1e7a3f":"#7a1e3f",color:"#fff",
+                    fontFamily:"Cinzel,serif",fontSize:8,padding:"1px 4px",borderRadius:8,
+                    border:"1px solid rgba(255,255,255,.3)",boxShadow:"0 1px 3px rgba(0,0,0,.5)"}}>{k}{v}</span>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Opponent's sidebar — their RIGHT, which from 180° perspective shows on local viewer's LEFT */}
+        <div style={{
+          flex:"0 0 72px",display:"flex",flexDirection:"column",gap:4,padding:"6px 4px",
+          background:"linear-gradient(180deg,rgba(3,6,12,.85),rgba(5,10,18,.95))",
+          borderLeft:"1px solid rgba(200,168,112,.15)",flexShrink:0,
+        }}>
+          {/* Library (top card or sleeve) */}
+          <div style={{
+            width:64,height:88,borderRadius:3,overflow:"hidden",
+            border:"1px solid rgba(200,168,112,.3)",
+            boxShadow:"0 4px 12px rgba(0,0,0,.6)",
+            position:"relative",
+          }} title={`${opp.profile?.alias||"Opponent"}'s library — ${opp.library.length} cards`}>
+            {opp.revealTop && opp.library[0]
+              ? <img src={getImg(opp.library[0])||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              : <img src={sleeve} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>}
+            <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#c8a870",
+              fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
+              {opp.library.length}
+            </span>
+          </div>
+          {/* Graveyard */}
+          <div style={{
+            width:64,height:88,borderRadius:3,overflow:"hidden",
+            border:"1px solid rgba(167,139,250,.3)",
+            background:"rgba(3,6,12,.6)",
+            position:"relative",cursor:"context-menu",
+          }} title={`${opp.profile?.alias||"Opponent"}'s graveyard`}>
+            {opp.graveyard.length>0 ? (
+              <img src={getImg(opp.graveyard[opp.graveyard.length-1])||CARD_BACK}
+                alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            ) : (
+              <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",
+                color:"rgba(167,139,250,.25)",fontSize:18}}>☠</div>
+            )}
+            <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#a78bfa",
+              fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
+              {opp.graveyard.length}
+            </span>
+          </div>
+          {/* Exile */}
+          <div style={{
+            width:64,height:88,borderRadius:3,overflow:"hidden",
+            border:"1px solid rgba(96,165,250,.3)",
+            background:"rgba(3,6,12,.6)",
+            position:"relative",cursor:"context-menu",
+          }} title={`${opp.profile?.alias||"Opponent"}'s exile`}>
+            {opp.exile.length>0 ? (
+              <img src={getImg(opp.exile[opp.exile.length-1])||CARD_BACK}
+                alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            ) : (
+              <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",
+                color:"rgba(96,165,250,.25)",fontSize:18}}>✦</div>
+            )}
+            <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#60a5fa",
+              fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
+              {opp.exile.length}
+            </span>
+          </div>
+          {/* Command zone */}
+          {(opp.command||[]).length>0 && (
+            <div style={{
+              width:64,height:88,borderRadius:3,overflow:"hidden",
+              border:"1px solid rgba(200,168,112,.4)",
+              background:"rgba(200,168,112,.08)",
+              boxShadow:"0 0 10px rgba(200,168,112,.2)",
+              position:"relative",
+            }} title="Command zone">
+              <img src={getImg(opp.command[0])||CARD_BACK} alt=""
+                style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#c8a870",
+                fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
+                ⚔{opp.command.length}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom strip: opponent's hand sleeves */}
+      <div
+        onContextMenu={e=>{
+          e.preventDefault();e.stopPropagation();
+          if(onRequestHand) onRequestHand(e, opp);
+        }}
+        style={{
+          display:"flex",alignItems:"center",gap:3,padding:"4px 8px",minHeight:56,
+          background:"linear-gradient(90deg,rgba(3,6,12,.9),rgba(5,10,18,.7),rgba(3,6,12,.9))",
+          borderTop:"1px solid rgba(248,113,113,.15)",flexShrink:0,zIndex:2,
+          cursor:"context-menu",
+        }}
+        title="Right-click to request to see this hand"
+      >
+        <span style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel,serif",flexShrink:0,marginRight:4}}>
+          ✋ {opp.hand.length}
+        </span>
+        {isRevealed
+          ? revealedHand.cards.map((c,i)=>(
+              <div key={`r${i}`} style={{
+                width:36,height:50,borderRadius:3,overflow:"hidden",flexShrink:0,
+                border:"1px solid #fbbf24",boxShadow:"0 0 10px rgba(251,191,36,.6)",
+              }}>
+                <img src={getImg(c)||CARD_BACK} alt=""
+                  style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              </div>
+            ))
+          : opp.hand.map((_,i)=>(
+              <div key={i} style={{
+                width:36,height:50,borderRadius:3,overflow:"hidden",flexShrink:0,
+                border:"1px solid #2a3a5a",boxShadow:"0 2px 6px rgba(0,0,0,.6)",
+              }}>
+                <img src={sleeve} alt=""
+                  style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              </div>
+            ))
+        }
+        {opp.hand.length===0 && (
+          <span style={{fontSize:10,color:"#2a3a5a",fontStyle:"italic",marginLeft:6}}>— empty hand —</span>
+        )}
       </div>
     </div>
   );
@@ -6340,97 +6583,35 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       {/* ═══ MAIN AREA ═══ */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"visible",minHeight:0,position:"relative"}}>
 
-        {opponent&&(
-          <div style={{flex:"0 0 30%",background:"linear-gradient(180deg,#030608,#050a12)",
-            borderBottom:`1px solid ${currentPhaseColor}15`,position:"relative",overflow:"hidden",
-            display:"flex",flexDirection:"column"}}>
-            {/* Opponent BF */}
-            <div style={{flex:1,position:"relative",overflow:"hidden"}}>
-              {/* Dividing line label */}
-              <div style={{position:"absolute",top:4,left:10,fontSize:8,
-                color:"rgba(248,113,113,.3)",fontFamily:"Cinzel,serif",letterSpacing:".15em",pointerEvents:"none"}}>
-                {opponent.profile?.alias||"OPPONENT"} · {opponent.battlefield.length} permanents
-              </div>
-              {/* Opponent permanents — displayed mirrored (upside down feel) */}
-              <div style={{position:"absolute",inset:"18px 0 0 0",display:"flex",flexWrap:"wrap",
-                gap:4,padding:"4px 8px",alignContent:"flex-start",overflowY:"auto"}}>
-                {opponent.battlefield.map(c=>(
-                  <CardImg key={c.iid} card={c} tapped={c.tapped} faceDown={c.faceDown}
-                    size="xs" style={{pointerEvents:"none",opacity:.8}} noHover/>
-                ))}
-                {opponent.battlefield.length===0&&(
-                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
-                    color:"rgba(248,113,113,.12)",fontFamily:"Cinzel,serif",fontSize:10,pointerEvents:"none"}}>
-                    — opponent battlefield empty —
-                  </div>
-                )}
-              </div>
-            </div>
-            {/* Opponent status bar */}
-            <div style={{display:"flex",alignItems:"center",gap:8,padding:"3px 10px",
-              background:"rgba(3,6,12,.7)",borderTop:"1px solid #1e3a5f15",flexShrink:0}}>
-              {opponent.profile?.avatarImg?(
-                <img src={opponent.profile.avatarImg} alt="" style={{width:20,height:20,borderRadius:"50%",objectFit:"cover",border:"1px solid rgba(248,113,113,.3)",flexShrink:0}}/>
-              ):(
-                <span style={{fontSize:14}}>{opponent.profile?.avatar||"🧙"}</span>
-              )}
-              <span style={{fontSize:10,color:"#6a7a8a",fontFamily:"Cinzel,serif"}}>{opponent.profile?.alias||"Opponent"}</span>
-              <span style={{fontSize:15,fontFamily:"Cinzel Decorative,serif",
-                color:opponent.life<=5?"#f87171":opponent.life<=10?"#fbbf24":T.text,
-                textShadow:opponent.life<=5?"0 0 12px #f87171":"none"}}>♥{opponent.life}</span>
-              {opponent.poison>0&&<span style={{fontSize:10,color:"#a78bfa"}}>☠{opponent.poison}</span>}
-              <div style={{flex:1}}/>
-              <span style={{fontSize:9,color:"#3a5a7a"}}>📚{opponent.library.length}</span>
-              {/* Opponent hand — face down, using their chosen sleeve; right-click to request reveal */}
-              <div
-                onContextMenu={e=>{
-                  e.preventDefault();e.stopPropagation();
-                  const oppUid=opponent.profile?.userId;
-                  const oppAlias=opponent.profile?.alias||"Opponent";
-                  if(!oppUid){addLog(`⚠ Cannot request hand — opponent has no user id`);return;}
-                  const net=window.__MTG_V7__?.netSync;
-                  if(!net){addLog(`⚠ Offline — no opponent to ask`);return;}
-                  setCtxMenu({
-                    x:e.clientX,y:e.clientY,card:null,zone:"opp_hand",
-                    items:[
-                      {label:`👁 Request to see ${oppAlias}'s hand`,action:()=>{
-                        try{net.appendEvent("hand_request",{targetUserId:oppUid,requesterUserId:authUser?.id});}catch{}
-                        addLog(`👁 Requested ${oppAlias}'s hand`);
-                        setHandRequestPending({targetAlias:oppAlias,ts:Date.now()});
-                        // 30s auto-timeout
-                        setTimeout(()=>{
-                          setHandRequestPending(curr=>{
-                            if(!curr||curr.ts!==undefined&&Date.now()-curr.ts<29000)return curr;
-                            return null;
-                          });
-                        },30500);
-                      }},
-                      {label:"✕ Cancel",action:()=>setCtxMenu(null)},
-                    ]
-                  });
-                }}
-                style={{display:"flex",gap:2,alignItems:"center",cursor:"context-menu"}}
-                title="Right-click to request to see this hand"
-              >
-                {(revealedOppHand.cards && revealedOppHand.userId === opponent.profile?.userId)
-                  ? revealedOppHand.cards.map((c,i)=>(
-                      <div key={`r${i}`} onMouseEnter={()=>setHovered(c)} onMouseLeave={()=>setHovered(null)}
-                        style={{width:28,height:39,borderRadius:3,overflow:"hidden",
-                          border:"1px solid #fbbf24",boxShadow:"0 0 8px rgba(251,191,36,.6)",flexShrink:0}}>
-                        <img src={getImg(c)||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                      </div>
-                    ))
-                  : opponent.hand.map((_,i)=>(
-                      <div key={i} style={{width:28,height:39,borderRadius:3,overflow:"hidden",
-                        border:"1px solid #2a3a5a",boxShadow:"0 2px 6px rgba(0,0,0,.6)",flexShrink:0}}>
-                        <img src={opponent.deck?.sleeveUri||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                      </div>
-                    ))
-                }
-                {opponent.hand.length===0&&<span style={{fontSize:9,color:"#2a3a5a",fontStyle:"italic"}}>empty hand</span>}
-              </div>
-              <span style={{fontSize:9,color:"#3a5a7a"}}>✋{opponent.hand.length}</span>
-            </div>
+        {/* v7.5: Opponent's mirrored half — full board rotated 180° */}
+        {opponent && (
+          <div style={{flex:"0 0 50%",position:"relative",overflow:"hidden",
+            borderBottom:`2px solid ${currentPhaseColor}30`,
+            boxShadow:`0 2px 12px ${currentPhaseColor}20`}}>
+            <OpponentBoard
+              opp={opponent}
+              authUser={authUser}
+              revealedHand={revealedOppHand}
+              onRequestHand={(e,oppRef)=>{
+                const oppUid=oppRef?.profile?.userId;
+                const oppAlias=oppRef?.profile?.alias||"Opponent";
+                if(!oppUid){addLog("⚠ Cannot request hand — opponent has no user id");return;}
+                const net=window.__MTG_V7__?.netSync;
+                if(!net){addLog("⚠ Offline — no opponent to ask");return;}
+                setCtxMenu({
+                  x:e.clientX,y:e.clientY,card:null,zone:"opp_hand",
+                  items:[
+                    {label:`👁 Request to see ${oppAlias}'s hand`,action:()=>{
+                      try{net.appendEvent("hand_request",{targetUserId:oppUid,requesterUserId:authUser?.id});}catch{}
+                      addLog(`👁 Requested ${oppAlias}'s hand`);
+                      setHandRequestPending({targetAlias:oppAlias,ts:Date.now()});
+                      setCtxMenu(null);
+                    }},
+                    {label:"✕ Cancel",action:()=>setCtxMenu(null)},
+                  ]
+                });
+              }}
+            />
           </div>
         )}
 
