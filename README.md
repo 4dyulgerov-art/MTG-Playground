@@ -28,7 +28,6 @@ cp .env.example .env.local
 npm run dev
 ```
 
-
 Open `http://localhost:5173`.
 
 ---
