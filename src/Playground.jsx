@@ -731,14 +731,6 @@ const SFX = (() => {
     _ctx(){ return ac(); }, // exposed for catalog sound functions
     init(){ ac(); }, // unlock AudioContext on first user gesture
 
-    // Expose audition for any action+variant combo
-    auditionDirect(action, variant){
-      if(muted) return;
-      const a = ac(); if(!a) return;
-      const def = sounds[action];
-      if(!def) return;
-      try{ (def[variant]||def.natural)(a.currentTime); }catch{}
-    },
     // Custom library API
     getCustomLib(){ return [...customLib]; },
     saveCustomSound(sound){ // {id,name,params,assignedTo}
@@ -6573,6 +6565,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             )}
           </div>
         </div>
+      </div>
 
 
 
@@ -8055,7 +8048,20 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       if(!prof){
         try{const r=await storage.get("mtg_profile_v1");if(r)prof=JSON.parse(r.value);}catch{}
       }
-      try{const r=await storage.get("mtg_decks_v3");if(r)ds=JSON.parse(r.value);}catch{}
+      // v7.3: cloud decks. Try cloud first; fall back to localStorage.
+      try{
+        if(window.__MTG_V7__?.getDecks){
+          const cloud=await window.__MTG_V7__.getDecks();
+          if(Array.isArray(cloud)&&cloud.length>0) ds=cloud;
+          else {
+            try{const r=await storage.get("mtg_decks_v3");if(r)ds=JSON.parse(r.value);}catch{}
+          }
+        } else {
+          try{const r=await storage.get("mtg_decks_v3");if(r)ds=JSON.parse(r.value);}catch{}
+        }
+      }catch{
+        try{const r=await storage.get("mtg_decks_v3");if(r)ds=JSON.parse(r.value);}catch{}
+      }
       try{const r=await storage.get("mtg_custom_cards");if(r)cc=JSON.parse(r.value);}catch{}
       setProfile(prof);setDecks(ds);setCustomCards(cc);
       setView(prof?"menu":"profile");
@@ -8072,6 +8078,10 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
 
   const persist=async d=>{
     setDecks(d);
+    // v7.3: cloud-primary, local mirror (for offline + fast reload).
+    if(window.__MTG_V7__?.saveDecks){
+      try{ await window.__MTG_V7__.saveDecks(d); }catch(e){ console.warn("[persist cloud]",e); }
+    }
     try{await storage.set("mtg_decks_v3",JSON.stringify(d));}catch{}
   };
   const saveDeck=deck=>{persist(decks.some(d=>d.id===deck.id)?decks.map(d=>d.id===deck.id?deck:d):[...decks,deck]);setView("menu");};
