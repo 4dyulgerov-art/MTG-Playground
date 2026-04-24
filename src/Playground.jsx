@@ -1406,7 +1406,12 @@ const mkCard=(base,zone="library")=>({iid:uid(),...base,tapped:false,faceDown:fa
 
 const getStartingLife=(format)=>format==="commander"?40:format==="dandan"?20:20;
 const initPlayer=(deck,profile,life=20)=>({
-  profile:profile||{alias:"Player",avatar:"🧙",gamemat:GAMEMATS[0].bg,gamematCustom:""},
+  profile:(()=>{
+    const base = profile||{alias:"Player",avatar:"🧙",gamemat:GAMEMATS[0].bg,gamematCustom:""};
+    // v7.5.1: if the deck has its own playmat, use it (but don't overwrite profile object)
+    if(deck?.playmatUri) return {...base, gamemat: deck.playmatUri, gamematCustom: deck.playmatUri};
+    return base;
+  })(),
   deck,
   library:shuffleArr((deck?.cards||[]).flatMap(c=>Array.from({length:c.quantity},()=>mkCard(c,"library")))),
   hand:[],battlefield:[],graveyard:[],exile:[],
@@ -3221,7 +3226,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   const [creating,setCreating]=useState(false);
   const [roomName,setRoomName]=useState("");
   const [maxP,setMaxP]=useState(2);
-  const [selDeckId,setSelDeckId]=useState(decks[0]?.id||"");
+  const [selDeckId,setSelDeckId]=useState(""); // v7.5.1: empty by default — user MUST pick
   const [loading,setLoading]=useState(false);
   const [joinRoomId,setJoinRoomId]=useState("");
   const [myRoomId,setMyRoomId]=useState(null);
@@ -3243,7 +3248,9 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   useEffect(()=>{loadRooms();const t=setInterval(loadRooms,3000);return()=>clearInterval(t);},[]);
 
   const createRoom=async()=>{
-    if(!roomName.trim())return;setLoading(true);
+    if(!roomName.trim())return;
+    if(!selDeckId){alert("Please select a deck first");return;}
+    setLoading(true);
     const id=uid();
     // v7.4: host publishes their entire deck library so guests can pick from it
     const meta={id,name:roomName.trim(),host:profile.alias,hostAvatar:profile.avatar,maxPlayers:maxP,gamemode,players:[{alias:profile.alias,avatar:profile.avatar,ready:false}],status:"waiting",created:Date.now(),hostDecks:decks};
@@ -3259,9 +3266,11 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
       setHostDecks(hostLib);
       meta.players.push({alias:profile.alias,avatar:profile.avatar,ready:false});
       await storage.set(`room_${roomId}_meta`,JSON.stringify(meta),true);
-      await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:selDeckId,deck:decks.find(d=>d.id===selDeckId)||null,ready:false}),true);
+      // v7.5.1: write player row WITHOUT a deck — user must explicitly pick in waiting lobby
+      await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:null,deck:null,ready:false}),true);
       setMyRoomId(roomId);
       setMySeat(pIdx);
+      setSelDeckId(""); // force deck-pick prompt
     }catch(e){alert("Error: "+e.message);}
     setLoading(false);};
 
@@ -4723,7 +4732,7 @@ function OpponentTile({opp, seat, isActive, onPromote}){
      - Right-click opponent's hand to request reveal (already wired)
      - Right-click opponent's graveyard/exile to request view access
    ─────────────────────────────────────────────────────────────────── */
-function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
+function OpponentBoard({ opp, authUser, onRequestHand, revealedHand, onHover }){
   if (!opp) return null;
   const life       = opp.life ?? 20;
   const lifeColor  = life<=5?"#f87171":life<=10?"#fbbf24":"#e8e2d0";
@@ -4776,11 +4785,10 @@ function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
 
       {/* Main area: battlefield (large) + zones column on right */}
       <div style={{flex:1,display:"flex",position:"relative",overflow:"hidden",minHeight:0,zIndex:1}}>
-        {/* Opponent's battlefield — full half of the screen */}
+        {/* Opponent's battlefield — full half of the screen. Cards with bfX/bfY
+            are absolute-positioned to mirror the opponent's exact drag placement. */}
         <div style={{
           flex:1,position:"relative",overflow:"hidden",
-          display:"flex",flexWrap:"wrap",gap:4,padding:"8px 10px",
-          alignContent:"flex-start",
         }}>
           {opp.battlefield.length===0 && (
             <div style={{
@@ -4792,12 +4800,22 @@ function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
             // Damage + counter badges for full visibility (Q6 — user wants all state visible)
             const dmg = c.damage||0;
             const counterEntries = Object.entries(c.counters||{}).filter(([,v])=>v>0);
+            // v7.5.1: use opponent's own persisted position if present so cards
+            // appear exactly where they dragged them (not auto-flex-wrapped).
+            const hasPos = typeof c.bfX === "number" && typeof c.bfY === "number";
             return (
-              <div key={c.iid} style={{
-                position:"relative",width:66,height:92,borderRadius:3,overflow:"visible",flexShrink:0,
+              <div key={c.iid}
+                onMouseEnter={()=>onHover && onHover(c)}
+                onMouseLeave={()=>onHover && onHover(null)}
+                style={{
+                position:hasPos?"absolute":"relative",
+                left:hasPos?c.bfX:undefined,
+                top:hasPos?c.bfY:undefined,
+                width:66,height:92,borderRadius:3,overflow:"visible",flexShrink:0,
                 transform:c.tapped?"rotate(90deg)":"none",
                 transition:"transform .22s cubic-bezier(.34,1.4,.64,1)",
                 filter:c.tapped?"brightness(.9)":"none",
+                cursor:"pointer",
               }}>
                 <img src={(c.imageUri||c.image_uris?.small||getImg(c))||CARD_BACK}
                   alt={c.name||""} style={{
@@ -4828,11 +4846,14 @@ function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
           borderLeft:"1px solid rgba(200,168,112,.15)",flexShrink:0,
         }}>
           {/* Library (top card or sleeve) */}
-          <div style={{
+          <div
+            onMouseEnter={()=>opp.revealTop && opp.library[0] && onHover && onHover(opp.library[0])}
+            onMouseLeave={()=>onHover && onHover(null)}
+            style={{
             width:64,height:88,borderRadius:3,overflow:"hidden",
             border:"1px solid rgba(200,168,112,.3)",
             boxShadow:"0 4px 12px rgba(0,0,0,.6)",
-            position:"relative",
+            position:"relative",cursor:"pointer",
           }} title={`${opp.profile?.alias||"Opponent"}'s library — ${opp.library.length} cards`}>
             {opp.revealTop && opp.library[0]
               ? <img src={getImg(opp.library[0])||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
@@ -4843,7 +4864,10 @@ function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
             </span>
           </div>
           {/* Graveyard */}
-          <div style={{
+          <div
+            onMouseEnter={()=>opp.graveyard.length>0 && onHover && onHover(opp.graveyard[opp.graveyard.length-1])}
+            onMouseLeave={()=>onHover && onHover(null)}
+            style={{
             width:64,height:88,borderRadius:3,overflow:"hidden",
             border:"1px solid rgba(167,139,250,.3)",
             background:"rgba(3,6,12,.6)",
@@ -4862,7 +4886,10 @@ function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
             </span>
           </div>
           {/* Exile */}
-          <div style={{
+          <div
+            onMouseEnter={()=>opp.exile.length>0 && onHover && onHover(opp.exile[opp.exile.length-1])}
+            onMouseLeave={()=>onHover && onHover(null)}
+            style={{
             width:64,height:88,borderRadius:3,overflow:"hidden",
             border:"1px solid rgba(96,165,250,.3)",
             background:"rgba(3,6,12,.6)",
@@ -4882,12 +4909,15 @@ function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
           </div>
           {/* Command zone */}
           {(opp.command||[]).length>0 && (
-            <div style={{
+            <div
+              onMouseEnter={()=>onHover && onHover(opp.command[0])}
+              onMouseLeave={()=>onHover && onHover(null)}
+              style={{
               width:64,height:88,borderRadius:3,overflow:"hidden",
               border:"1px solid rgba(200,168,112,.4)",
               background:"rgba(200,168,112,.08)",
               boxShadow:"0 0 10px rgba(200,168,112,.2)",
-              position:"relative",
+              position:"relative",cursor:"pointer",
             }} title="Command zone">
               <img src={getImg(opp.command[0])||CARD_BACK} alt=""
                 style={{width:"100%",height:"100%",objectFit:"cover"}}/>
@@ -4919,9 +4949,13 @@ function OpponentBoard({ opp, authUser, onRequestHand, revealedHand }){
         </span>
         {isRevealed
           ? revealedHand.cards.map((c,i)=>(
-              <div key={`r${i}`} style={{
+              <div key={`r${i}`}
+                onMouseEnter={()=>onHover && onHover(c)}
+                onMouseLeave={()=>onHover && onHover(null)}
+                style={{
                 width:36,height:50,borderRadius:3,overflow:"hidden",flexShrink:0,
                 border:"1px solid #fbbf24",boxShadow:"0 0 10px rgba(251,191,36,.6)",
+                cursor:"pointer",
               }}>
                 <img src={getImg(c)||CARD_BACK} alt=""
                   style={{width:"100%",height:"100%",objectFit:"cover"}}/>
@@ -6592,6 +6626,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
               opp={opponent}
               authUser={authUser}
               revealedHand={revealedOppHand}
+              onHover={setHovered}
               onRequestHand={(e,oppRef)=>{
                 const oppUid=oppRef?.profile?.userId;
                 const oppAlias=oppRef?.profile?.alias||"Opponent";
@@ -6945,6 +6980,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
                 customMats={customMats}
                 onSelect={(bg,url,name,filterStr)=>{
                   upd(p=>({...p,profile:{...p.profile,gamemat:bg,gamematCustom:url||"",gamematFilter:filterStr||""}}));
+                  try{window.__MTG_V7__?.saveProfile?.({...player.profile, gamemat:bg, gamematCustom:url||"", gamematFilter:filterStr||""});}catch{}
                 }}
                 onSaveCustom={(bg,url,name,filterStr)=>{
                   const newMat={name,bg,url,filter:filterStr||""};
@@ -6952,6 +6988,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
                   setCustomMats(updated);
                   try{localStorage.setItem("mtg_custom_mats",JSON.stringify(updated));}catch{}
                   upd(p=>({...p,profile:{...p.profile,gamemat:bg,gamematCustom:url||"",gamematFilter:filterStr||""}}));
+                  try{window.__MTG_V7__?.saveProfile?.({...player.profile, gamemat:bg, gamematCustom:url||"", gamematFilter:filterStr||""});}catch{}
                 }}
                 onClose={()=>setShowGamematPicker(false)}/>
             )}
@@ -7313,7 +7350,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       )}
       <FloatingCard drag={floatDrag}/>
       {hovered&&<CardPreview card={hovered}/>}
-      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={buildCtx(ctxMenu.card,ctxMenu.zone,ctxMenu.counterKey||null)} onClose={()=>setCtxMenu(null)}/>}
+      {ctxMenu&&<ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items || buildCtx(ctxMenu.card,ctxMenu.zone,ctxMenu.counterKey||null)} onClose={()=>setCtxMenu(null)}/>}
       {showToken&&<TokenSearch onCreate={createToken} onClose={()=>setShowToken(false)}/>}
       {showCustom&&<CustomCardCreator onSave={card=>{createToken({...card,isToken:false});}} onClose={()=>setShowCustom(false)}/>}
       {showCounterPicker&&<CounterPicker
@@ -7431,6 +7468,7 @@ function BatchImporter({onImport, onClose}){
   const [status, setStatus] = useState(null); // {done,total,errors}
   const [importing, setImporting] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [partialResults, setPartialResults] = useState(null); // v7.5.1: holds results so user can retry failed
 
   const handlePreview = () => {
     const parsed = parseDecklist(text);
@@ -7450,23 +7488,105 @@ function BatchImporter({onImport, onClose}){
     setStatus({done:0,total:allEntries.length,errors:[]});
 
     const results = {main:[],side:[],tokens:[]};
-    const errors = [];
-    // Process in small batches to avoid rate limits
+    const failed = []; // entries that failed to fetch
+
+    // v7.5.1: Process in chunks of 10 cards with retry-on-fail.
+    // Scryfall has a soft rate limit ~10 req/s; we stay under that with 110ms delay.
+    // On failure (network/rate limit), retry once after 600ms before giving up.
+    const tryFetch = async (name) => {
+      let card = await sfNamed(name);
+      if (card) return card;
+      // Retry once after short delay
+      await new Promise(r => setTimeout(r, 600));
+      card = await sfNamed(name);
+      return card;
+    };
+
     for(let i=0; i<allEntries.length; i++){
       const {name,quantity,zone} = allEntries[i];
-      const card = await sfNamed(name);
+      const card = await tryFetch(name);
       if(card){
         const entry = {...buildDeckEntry(card), quantity};
         results[zone].push(entry);
       } else {
-        errors.push(name);
+        failed.push({name, quantity, zone});
       }
-      setStatus({done:i+1,total:allEntries.length,errors:[...errors]});
-      // Small delay to be nice to Scryfall API
+      setStatus({done:i+1,total:allEntries.length,errors:failed.map(f=>f.name)});
       if(i<allEntries.length-1) await new Promise(r=>setTimeout(r,110));
     }
+
+    // v7.5.1: Second retry pass on every failure with longer delay (rate limit recovery)
+    if(failed.length > 0){
+      setStatus(s=>({...s, retrying: true}));
+      const stillFailed = [];
+      for(let i=0; i<failed.length; i++){
+        const {name,quantity,zone} = failed[i];
+        await new Promise(r=>setTimeout(r,400));
+        const card = await sfNamed(name);
+        if(card){
+          const entry = {...buildDeckEntry(card), quantity};
+          results[zone].push(entry);
+        } else {
+          stillFailed.push({name,quantity,zone});
+        }
+      }
+      failed.length = 0;
+      failed.push(...stillFailed);
+    }
+
     setImporting(false);
-    onImport(results);
+    // Report final totals + failure list so user can retry
+    const importedTotal = results.main.reduce((s,c)=>s+c.quantity,0)
+      + results.side.reduce((s,c)=>s+c.quantity,0)
+      + results.tokens.reduce((s,c)=>s+c.quantity,0);
+    const expectedTotal = allEntries.reduce((s,e)=>s+e.quantity,0);
+    setStatus({
+      done: allEntries.length,
+      total: allEntries.length,
+      errors: failed.map(f=>`${f.quantity>1?f.quantity+'× ':''}${f.name}`),
+      importedTotal,
+      expectedTotal,
+      finishedAt: Date.now(),
+      failedEntries: failed, // for re-try
+    });
+    if(failed.length === 0){
+      onImport(results);
+    } else {
+      // Keep modal open with partial results + missing list. User clicks "Add what was found" to commit.
+      setPartialResults(results);
+    }
+  };
+
+  const retryFailed = async () => {
+    if(!status?.failedEntries || !partialResults) return;
+    setImporting(true);
+    const failed = [...status.failedEntries];
+    const stillFailed = [];
+    const results = {
+      main:[...(partialResults.main||[])],
+      side:[...(partialResults.side||[])],
+      tokens:[...(partialResults.tokens||[])],
+    };
+    for(let i=0;i<failed.length;i++){
+      const {name,quantity,zone} = failed[i];
+      await new Promise(r=>setTimeout(r,500));
+      const card = await sfNamed(name);
+      if(card){
+        results[zone].push({...buildDeckEntry(card), quantity});
+      } else {
+        stillFailed.push({name,quantity,zone});
+      }
+      setStatus(s=>({...s, done: partialResults.main.length + i+1,
+        errors: stillFailed.map(f=>f.name)}));
+    }
+    setImporting(false);
+    setPartialResults(results);
+    setStatus(s=>({...s, failedEntries: stillFailed, errors: stillFailed.map(f=>f.name)}));
+    if(stillFailed.length===0) onImport(results);
+  };
+
+  const commitPartial = () => {
+    if(partialResults) onImport(partialResults);
   };
 
   const parsed = preview || (text.trim() ? parseDecklist(text) : null);
@@ -7528,10 +7648,12 @@ function BatchImporter({onImport, onClose}){
               </div>
             ):(
               <div>
-                <span style={{color:"#4ade80"}}>✓ Done! {status.total - status.errors.length} cards imported.</span>
+                <span style={{color:status.errors.length===0?"#4ade80":"#fbbf24"}}>
+                  {status.errors.length===0?"✓ Done!":"⚠ Partial import —"} {status.importedTotal ?? (status.total - status.errors.length)} of {status.expectedTotal ?? status.total} cards imported.
+                </span>
                 {status.errors.length>0&&(
                   <div style={{marginTop:6,color:"#f87171",fontSize:9,background:"rgba(248,113,113,.08)",
-                    border:"1px solid rgba(248,113,113,.2)",borderRadius:4,padding:"6px 8px",maxHeight:80,overflowY:"auto"}}>
+                    border:"1px solid rgba(248,113,113,.2)",borderRadius:4,padding:"6px 8px",maxHeight:100,overflowY:"auto"}}>
                     <b>✗ {status.errors.length} card(s) not found:</b><br/>
                     {status.errors.map((e,i)=><span key={i} style={{display:"inline-block",margin:"1px 3px",
                       background:"rgba(248,113,113,.12)",padding:"0 4px",borderRadius:2}}>{e}</span>)}
@@ -7542,23 +7664,34 @@ function BatchImporter({onImport, onClose}){
           </div>
         )}
 
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={onClose}
-            style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,border:`1px solid ${T.border}`})}}
+            style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,minWidth:80,border:`1px solid ${T.border}`})}}
             onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
           {!importing && !status && (
             <button onClick={handlePreview}
-              style={{...btn("rgba(96,165,250,.1)","#60a5fa",{flex:1,border:"1px solid rgba(96,165,250,.25)"})}}
+              style={{...btn("rgba(96,165,250,.1)","#60a5fa",{flex:1,minWidth:80,border:"1px solid rgba(96,165,250,.25)"})}}
               onMouseOver={hov} onMouseOut={uhov}>Preview</button>
           )}
           {!importing && !status && (
             <button onClick={handleImport} disabled={!text.trim()}
-              style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700,border:`1px solid ${T.accent}60`})}}
+              style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,minWidth:140,fontFamily:"Cinzel, serif",fontWeight:700,border:`1px solid ${T.accent}60`})}}
               onMouseOver={hov} onMouseOut={uhov}>✦ Import List</button>
           )}
-          {status && !importing && (
+          {/* v7.5.1: When partial import, offer retry + commit-what-we-got */}
+          {status && !importing && status.errors.length>0 && partialResults && (
+            <>
+              <button onClick={retryFailed}
+                style={{...btn("rgba(251,191,36,.15)","#fbbf24",{flex:1,minWidth:100,border:"1px solid rgba(251,191,36,.3)"})}}
+                onMouseOver={hov} onMouseOut={uhov}>↻ Retry failed</button>
+              <button onClick={commitPartial}
+                style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:1,minWidth:140,fontFamily:"Cinzel, serif",fontWeight:700})}}
+                onMouseOver={hov} onMouseOut={uhov}>✓ Add found ({status.importedTotal||0})</button>
+            </>
+          )}
+          {status && !importing && status.errors.length===0 && (
             <button onClick={onClose}
-              style={{...btn("linear-gradient(135deg,#4ade80,#16a34a)",T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700})}}
+              style={{...btn("linear-gradient(135deg,#4ade80,#16a34a)",T.bg,{flex:2,minWidth:100,fontFamily:"Cinzel, serif",fontWeight:700})}}
               onMouseOver={hov} onMouseOut={uhov}>✓ Done</button>
           )}
         </div>
@@ -7576,6 +7709,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
     deck?.commanders || (deck?.commander ? [deck.commander] : [])
   );
   const [sleeveUri,setSleeveUri]=useState(deck?.sleeveUri||"");
+  const [playmatUri,setPlaymatUri]=useState(deck?.playmatUri||""); // v7.5.1: per-deck playmat
   const [format,setFormat]=useState(deck?.format||"standard");
   const [query,setQuery]=useState(""),[ results,setResults]=useState([]),[ loading,setLoading]=useState(false);
   const [hovered,setHovered]=useState(null),[error,setError]=useState("");
@@ -7818,7 +7952,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
               style={{...iS,flex:1,fontSize:14,fontFamily:"Cinzel, serif",color:T.accent,marginTop:0}}
               onFocus={e=>{e.target.style.borderColor=T.accent;}}
               onBlur={e=>{e.target.style.borderColor=T.border;}}/>
-            <button onClick={()=>onSave({id:deck?.id||uid(),name,cards,sideboard,tokens,commanders,commander:commanders[0]||null,format,sleeveUri:sleeveUri.trim()||undefined})}
+            <button onClick={()=>onSave({id:deck?.id||uid(),name,cards,sideboard,tokens,commanders,commander:commanders[0]||null,format,sleeveUri:sleeveUri.trim()||undefined,playmatUri:playmatUri.trim()||undefined})}
               style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{fontFamily:"Cinzel, serif",fontWeight:700,padding:"6px 14px"})}}
               onMouseOver={hov} onMouseOut={uhov}>✦ Save</button>
             <button onClick={exportDeck}
@@ -7842,6 +7976,13 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
             {sleeveUri&&<img src={sleeveUri} alt="sleeve" style={{width:18,height:25,borderRadius:2,objectFit:"cover",border:`1px solid ${T.border}`}} onError={e=>e.target.style.display="none"}/>}
             <input value={sleeveUri} onChange={e=>setSleeveUri(e.target.value)}
               placeholder="🎴 Sleeve image URL (optional)…"
+              style={{...iS,flex:1,fontSize:10,marginTop:0}}
+              onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+            {playmatUri&&<div style={{width:30,height:20,borderRadius:2,objectFit:"cover",border:`1px solid ${T.border}`,backgroundImage:`url(${playmatUri})`,backgroundSize:"cover",backgroundPosition:"center"}}/>}
+            <input value={playmatUri} onChange={e=>setPlaymatUri(e.target.value)}
+              placeholder="🖼 Playmat image URL for this deck (optional)…"
               style={{...iS,flex:1,fontSize:10,marginTop:0}}
               onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
           </div>
