@@ -1129,6 +1129,7 @@ const PHASE_CLR=["#7c3aed","#2563eb","#059669","#d97706","#dc2626","#d97706","#6
 const PHASE_ICONS=["⟳","⬆","🎴","🔮","⚔","🔮","🌙"];
 const CW=72,CH=Math.round(72*1.4),LAND_STEP=Math.round(CW*.52),LAND_Y=220;
 const HAND_H=160; // fixed hand strip height
+const NOOP=()=>{}; // v7.6: stable no-op for readOnly BoardSide mounts
 
 const autoPos=(bf,card)=>{
   if(isLand(card)){
@@ -3501,24 +3502,124 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           </div>
         ))}
       </div>
+
+      {/* v7.6 Phase 9: D1 deck-select popup. Opens immediately when the player
+          is in a room without a deck picked. Forces a selection before the
+          game can auto-launch (gated by `everyoneHasDeck` in the poller above).
+          No ✕ close — only "Leave Room" exits. Joined guests see a tab toggle
+          between their own library and the host's published deck library. */}
+      {myRoomId && !selDeckId && (
+        <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",
+          backdropFilter:"blur(6px)",zIndex:10000,display:"flex",
+          alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:T.panel,border:`2px solid ${T.accent}`,borderRadius:12,
+            padding:22,maxWidth:560,width:"100%",maxHeight:"85vh",overflowY:"auto",
+            boxShadow:`0 12px 48px ${T.accent}30, 0 0 0 1px ${T.accent}20`}}>
+            <div style={{color:T.accent,fontFamily:"Cinzel Decorative, serif",
+              fontSize:17,letterSpacing:".06em",textAlign:"center",marginBottom:5}}>
+              ⚔ Choose Your Deck
+            </div>
+            <div style={{color:"#8a99b0",fontSize:11,textAlign:"center",marginBottom:18,
+              fontStyle:"italic",fontFamily:"Crimson Text, serif"}}>
+              The game can't start until every player has selected a deck.
+            </div>
+
+            {/* Tab toggle for joined guests who can borrow host decks */}
+            {isJoinedGuest && hostDecks.length>0 && (
+              <div style={{display:"flex",gap:6,marginBottom:12}}>
+                <button onClick={()=>setDeckSource("mine")}
+                  style={{...btn(deckSource==="mine"?`${T.accent}22`:`${T.bg}90`,deckSource==="mine"?T.accent:"#8a99b0",
+                    {border:`1px solid ${deckSource==="mine"?T.accent:T.border}`,fontSize:11,flex:1,padding:"7px"})}}
+                  onMouseOver={hov} onMouseOut={uhov}>📖 My library</button>
+                <button onClick={()=>setDeckSource("host")}
+                  style={{...btn(deckSource==="host"?`${T.accent}22`:`${T.bg}90`,deckSource==="host"?T.accent:"#8a99b0",
+                    {border:`1px solid ${deckSource==="host"?T.accent:T.border}`,fontSize:11,flex:1,padding:"7px"})}}
+                  onMouseOver={hov} onMouseOut={uhov}>⚔ Host's decks</button>
+              </div>
+            )}
+
+            {/* Deck list — same click handler as main picker (writes to player_row) */}
+            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
+              {(deckSource==="host"?hostDecks:decks).length===0?(
+                <div style={{color:"#6a7a8a",fontSize:11,textAlign:"center",
+                  padding:16,fontStyle:"italic",
+                  border:`1px dashed ${T.border}`,borderRadius:6}}>
+                  {deckSource==="host"
+                    ? "Host hasn't published any decks yet — switch to your library or wait."
+                    : "You haven't built any decks yet. Leave the room and visit the Deckbuilder first."}
+                </div>
+              ):(deckSource==="host"?hostDecks:decks).map(d=>(
+                <button key={`popup-${deckSource}-${d.id}`} onClick={async()=>{
+                  setSelDeckId(d.id);
+                  if(deckSource==="host" && myRoomId && mySeat!=null){
+                    try{
+                      const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                      const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                      obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
+                      await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                    }catch{}
+                  } else if(myRoomId && mySeat!=null){
+                    try{
+                      const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                      const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                      obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
+                      await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                    }catch{}
+                  }
+                }}
+                  style={{...btn(`${T.bg}b0`,T.text,
+                    {border:`1px solid ${T.border}`,fontSize:12,padding:"10px 12px",
+                     textAlign:"left",fontFamily:"Cinzel, serif",transition:"all .15s"})}}
+                  onMouseOver={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.background=`${T.accent}12`;}}
+                  onMouseOut ={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=`${T.bg}b0`;}}>
+                  <span style={{color:T.accent,marginRight:8}}>✦</span>
+                  {d.name}
+                  {deckSource==="host" && <span style={{color:"#a855f7",marginLeft:6,fontSize:10}}>(borrowed)</span>}
+                  {Array.isArray(d.mainboard) && <span style={{color:"#6a7a8a",marginLeft:8,fontSize:10}}>· {d.mainboard.length} cards</span>}
+                </button>
+              ))}
+            </div>
+
+            {/* Escape hatch — leave room without picking */}
+            <button onClick={async()=>{
+              const id=myRoomId;
+              setMyRoomId(null);setMySeat(null);setWaitingMeta(null);
+              try{ const { leaveRoom } = await import("./lib/storage"); await leaveRoom(id); }catch(e){ console.warn("[leaveRoom]",e); }
+            }}
+              style={{...btn(`${T.panel}99`,"#8a99b0",{width:"100%",border:`1px solid ${T.border}`,fontSize:10,padding:"7px"})}}
+              onMouseOver={hov} onMouseOut={uhov}>← Leave Room</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ─── HandOverlay — cards rendered as position:fixed, no clipping ─── */
-function HandOverlay({hand,handRef,hovered,selected,setHovered,setSelected,setSelZone,startFloatDrag,handleCtx,floatDrag}){
+function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setSelected,setSelZone,startFloatDrag,handleCtx,floatDrag}){
   const [rect,setRect]=useState(null);
   useEffect(()=>{
     function update(){
-      if(handRef.current){
-        const r=handRef.current.getBoundingClientRect();
-        setRect(r);
+      // v7.6 Phase 2: coordinates are relative to `containerRef` (typically the
+      // BoardSide root) rather than the viewport. This lets HandOverlay survive
+      // transform:rotate(180deg) on its parent for the opponent's view.
+      if(handRef.current && containerRef?.current){
+        const handR=handRef.current.getBoundingClientRect();
+        const contR=containerRef.current.getBoundingClientRect();
+        setRect({
+          left:   handR.left   - contR.left,
+          top:    handR.top    - contR.top,
+          right:  handR.right  - contR.left,
+          bottom: handR.bottom - contR.top,
+          width:  handR.width,
+          height: handR.height,
+        });
       }
     }
     update();
     window.addEventListener("resize",update);
     return()=>window.removeEventListener("resize",update);
-  },[handRef,hand.length]);
+  },[handRef,containerRef,hand.length]);
 
   if(!rect||hand.length===0)return null;
 
@@ -3542,7 +3643,7 @@ function HandOverlay({hand,handRef,hovered,selected,setHovered,setSelected,setSe
   const hovIdx=hovered?hand.findIndex(c=>c.iid===hovered.iid):-1;
 
   return(
-    <div style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:500}}>
+    <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:500}}>
       {hand.map((card,idx)=>{
         const isHov=hovered?.iid===card.iid;
         const isSel=selected.has(card.iid);
@@ -3610,6 +3711,7 @@ function HandOverlay({hand,handRef,hovered,selected,setHovered,setSelected,setSe
             }}>
             <div style={{transform:"scale(0.88)",transformOrigin:"top left",width:CW,height:CH,animation:`handCard .3s cubic-bezier(0.34,1.3,0.64,1) ${idx*.04}s both`}}>
               <CardImg card={card} selected={isSel} size="md" noHover
+                faceDown={!!card.faceDown}
                 onCtx={e=>{
                   e.stopPropagation();
                   if(selected.size>1&&selected.has(card.iid)){
@@ -4722,263 +4824,437 @@ function OpponentTile({opp, seat, isActive, onPromote}){
 }
 
 
-/* ─── OpponentBoard (v7.5) ─────────────────────────────────────────────
-   Full mirrored view of a single opponent. Renders the same structural
-   pieces as a player's own GameBoard (playmat, battlefield, zones row,
-   hand sleeves, command zone, sidebar) but rotated 180° so it looks like
-   we're sitting across a table from them.
-
-   READ-ONLY: all interaction is disabled except:
-     - Right-click opponent's hand to request reveal (already wired)
-     - Right-click opponent's graveyard/exile to request view access
-   ─────────────────────────────────────────────────────────────────── */
-function OpponentBoard({ opp, authUser, onRequestHand, revealedHand, onHover }){
-  if (!opp) return null;
-  const life       = opp.life ?? 20;
-  const lifeColor  = life<=5?"#f87171":life<=10?"#fbbf24":"#e8e2d0";
-  const sleeve     = opp.deck?.sleeveUri || CARD_BACK;
-  const playmat    = opp.profile?.gamemat || GAMEMATS[0].bg;
-  const isRevealed = revealedHand?.cards && revealedHand?.userId === opp.profile?.userId;
-
-  // The ENTIRE opponent half is wrapped in rotate(180deg) so cards face the
-  // local player across the "table". Inner content is rendered in the normal
-  // reading direction within that rotated frame.
+// ═══════════════════════════════════════════════════════════════════════════
+// v7.6 Phase 0 — BoardSide
+// Identity refactor of the local player half extracted from GameBoard. Takes
+// all state, refs, and callbacks as explicit props (no context, no closure
+// capture) so hooks order inside GameBoard is unchanged. Future phases mount
+// this twice: once interactive for the local player, once readOnly + parent-
+// rotated 180° for each opponent.
+// ═══════════════════════════════════════════════════════════════════════════
+function BoardSide({
+  // ── state reads ────────────────────────────────────────────────────────
+  player, T, currentPhaseColor,
+  gamemat, gamematFilter,
+  showDeckViewer, showChangeDeck, showGamematPicker,
+  copyMode, cmdSummonAnim,
+  customMats, decks,
+  selected, selZone, selRect,
+  graveIdx, exileIdx,
+  // ── refs ───────────────────────────────────────────────────────────────
+  bfRef, cmdRef, libRef, graveRef, exileRef,
+  selRectRef, lastRightClick,
+  // ── setters ────────────────────────────────────────────────────────────
+  setCtxMenu, setHovered, setSelected, setSelZone, setSelRect,
+  setCopyMode,
+  setShowDeckViewer, setShowChangeDeck, setShowGamematPicker,
+  setShowSearchLib, setShowGraveViewer, setShowExileViewer,
+  setGraveIdx, setExileIdx, setCustomMats,
+  // ── GameBoard-scoped callbacks ─────────────────────────────────────────
+  upd, addLog, handleCtx, handleCardBFMouseDown, startFloatDrag,
+  tap, swapDeck, draw, shuffle,
+  // ── v7.6 Phase 2: HandOverlay integration ─────────────────────────────
+  // `containerRef` is attached to this BoardSide's root <div> so the inner
+  // HandOverlay can compute card positions relative to this container. Under
+  // a parent transform:rotate(180deg) (Phase 3), the overlay rotates with us.
+  containerRef, hand, handRef, hovered, floatDrag,
+  readOnly = false,
+  // ── v7.6 Phase 4-B: zone-request trigger (opp side only) ──────────────
+  // Called with (zoneName, event) when the viewer right-clicks the hand,
+  // graveyard, or exile tile on a readOnly BoardSide. Only wired on the opp
+  // mount; undefined for the local mount (right-click retains existing
+  // card-context-menu semantics via `handleCtx`).
+  onZoneRequest,
+}){
   return (
-    <div style={{
-      height:"100%",width:"100%",position:"relative",
-      transform:"rotate(180deg)",transformOrigin:"center center",
-      display:"flex",flexDirection:"column",overflow:"hidden",
-      background:"#030608",
-    }}>
-      {/* Playmat backdrop */}
-      <div style={{
-        position:"absolute",inset:0,background:playmat,
-        backgroundSize:"cover",backgroundPosition:"center",
-        opacity:.85,pointerEvents:"none",
-      }}/>
-      <div style={{
-        position:"absolute",inset:0,
-        background:"radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(2,4,10,.55) 100%)",
-        pointerEvents:"none",
-      }}/>
+        <div ref={containerRef} style={{flex:1,display:"flex",overflow:"visible",minHeight:0,position:"relative"}}>
 
-      {/* Top identification strip (with life + phase indicator) */}
-      <div style={{
-        display:"flex",alignItems:"center",gap:8,padding:"4px 10px",
-        background:"linear-gradient(90deg,rgba(3,6,12,.85),rgba(3,6,12,.4),rgba(3,6,12,.85))",
-        borderBottom:"1px solid rgba(248,113,113,.18)",flexShrink:0,zIndex:2,
-      }}>
-        {opp.profile?.avatarImg
-          ? <img src={opp.profile.avatarImg} alt="" style={{width:22,height:22,borderRadius:"50%",objectFit:"cover",border:"1px solid rgba(248,113,113,.3)"}}/>
-          : <span style={{fontSize:14}}>{opp.profile?.avatar||"🧙"}</span>}
-        <span style={{fontSize:11,color:"#c8a870",fontFamily:"Cinzel,serif",letterSpacing:".05em"}}>
-          {opp.profile?.alias||"Opponent"}
-        </span>
-        <span style={{fontSize:15,fontFamily:"Cinzel Decorative,serif",
-          color:lifeColor,textShadow:life<=5?"0 0 12px #f87171":"none"}}>♥{life}</span>
-        {opp.poison>0&&<span style={{fontSize:11,color:"#a78bfa"}}>☠{opp.poison}</span>}
-        <div style={{flex:1}}/>
-        <span style={{fontSize:9,color:"#6a7a8a"}}>📚 {opp.library.length}</span>
-        <span style={{fontSize:9,color:"#a78bfa"}}>☠ {opp.graveyard.length}</span>
-        <span style={{fontSize:9,color:"#60a5fa"}}>✦ {opp.exile.length}</span>
-      </div>
-
-      {/* Main area: battlefield (large) + zones column on right */}
-      <div style={{flex:1,display:"flex",position:"relative",overflow:"hidden",minHeight:0,zIndex:1}}>
-        {/* Opponent's battlefield — full half of the screen. Cards with bfX/bfY
-            are absolute-positioned to mirror the opponent's exact drag placement. */}
-        <div style={{
-          flex:1,position:"relative",overflow:"hidden",
-        }}>
-          {opp.battlefield.length===0 && (
-            <div style={{
-              position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
-              color:"rgba(200,168,112,.12)",fontFamily:"Cinzel,serif",fontSize:11,pointerEvents:"none",
-            }}>— battlefield empty —</div>
-          )}
-          {opp.battlefield.map(c=>{
-            // Damage + counter badges for full visibility (Q6 — user wants all state visible)
-            const dmg = c.damage||0;
-            const counterEntries = Object.entries(c.counters||{}).filter(([,v])=>v>0);
-            // v7.5.1: use opponent's own persisted position if present so cards
-            // appear exactly where they dragged them (not auto-flex-wrapped).
-            const hasPos = typeof c.bfX === "number" && typeof c.bfY === "number";
-            return (
-              <div key={c.iid}
-                onMouseEnter={()=>onHover && onHover(c)}
-                onMouseLeave={()=>onHover && onHover(null)}
-                style={{
-                position:hasPos?"absolute":"relative",
-                left:hasPos?c.bfX:undefined,
-                top:hasPos?c.bfY:undefined,
-                width:66,height:92,borderRadius:3,overflow:"visible",flexShrink:0,
-                transform:c.tapped?"rotate(90deg)":"none",
-                transition:"transform .22s cubic-bezier(.34,1.4,.64,1)",
-                filter:c.tapped?"brightness(.9)":"none",
-                cursor:"pointer",
-              }}>
-                <img src={(c.imageUri||c.image_uris?.small||getImg(c))||CARD_BACK}
-                  alt={c.name||""} style={{
-                    width:"100%",height:"100%",objectFit:"cover",borderRadius:3,
-                    border:"1px solid rgba(200,168,112,.25)",
-                    boxShadow:c.tapped?"0 2px 4px rgba(0,0,0,.4)":"0 4px 10px rgba(0,0,0,.55)",
-                  }}/>
-                {dmg>0 && (
-                  <span style={{position:"absolute",top:-4,right:-4,background:"#7f1d1d",color:"#fecaca",
-                    fontFamily:"Cinzel Decorative,serif",fontSize:9,padding:"1px 5px",borderRadius:8,
-                    border:"1px solid #fca5a5",boxShadow:"0 1px 4px rgba(0,0,0,.6)"}}>-{dmg}</span>
-                )}
-                {counterEntries.map(([k,v],i)=>(
-                  <span key={k} style={{position:"absolute",bottom:-4,left:-4+(i*14),
-                    background:k.startsWith("+")?"#1e7a3f":"#7a1e3f",color:"#fff",
-                    fontFamily:"Cinzel,serif",fontSize:8,padding:"1px 4px",borderRadius:8,
-                    border:"1px solid rgba(255,255,255,.3)",boxShadow:"0 1px 3px rgba(0,0,0,.5)"}}>{k}{v}</span>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Opponent's sidebar — their RIGHT, which from 180° perspective shows on local viewer's LEFT */}
-        <div style={{
-          flex:"0 0 72px",display:"flex",flexDirection:"column",gap:4,padding:"6px 4px",
-          background:"linear-gradient(180deg,rgba(3,6,12,.85),rgba(5,10,18,.95))",
-          borderLeft:"1px solid rgba(200,168,112,.15)",flexShrink:0,
-        }}>
-          {/* Library (top card or sleeve) */}
-          <div
-            onMouseEnter={()=>opp.revealTop && opp.library[0] && onHover && onHover(opp.library[0])}
-            onMouseLeave={()=>onHover && onHover(null)}
-            style={{
-            width:64,height:88,borderRadius:3,overflow:"hidden",
-            border:"1px solid rgba(200,168,112,.3)",
-            boxShadow:"0 4px 12px rgba(0,0,0,.6)",
-            position:"relative",cursor:"pointer",
-          }} title={`${opp.profile?.alias||"Opponent"}'s library — ${opp.library.length} cards`}>
-            {opp.revealTop && opp.library[0]
-              ? <img src={getImg(opp.library[0])||CARD_BACK} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-              : <img src={sleeve} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>}
-            <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#c8a870",
-              fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
-              {opp.library.length}
-            </span>
-          </div>
-          {/* Graveyard */}
-          <div
-            onMouseEnter={()=>opp.graveyard.length>0 && onHover && onHover(opp.graveyard[opp.graveyard.length-1])}
-            onMouseLeave={()=>onHover && onHover(null)}
-            style={{
-            width:64,height:88,borderRadius:3,overflow:"hidden",
-            border:"1px solid rgba(167,139,250,.3)",
-            background:"rgba(3,6,12,.6)",
-            position:"relative",cursor:"context-menu",
-          }} title={`${opp.profile?.alias||"Opponent"}'s graveyard`}>
-            {opp.graveyard.length>0 ? (
-              <img src={getImg(opp.graveyard[opp.graveyard.length-1])||CARD_BACK}
-                alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            ) : (
-              <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",
-                color:"rgba(167,139,250,.25)",fontSize:18}}>☠</div>
-            )}
-            <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#a78bfa",
-              fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
-              {opp.graveyard.length}
-            </span>
-          </div>
-          {/* Exile */}
-          <div
-            onMouseEnter={()=>opp.exile.length>0 && onHover && onHover(opp.exile[opp.exile.length-1])}
-            onMouseLeave={()=>onHover && onHover(null)}
-            style={{
-            width:64,height:88,borderRadius:3,overflow:"hidden",
-            border:"1px solid rgba(96,165,250,.3)",
-            background:"rgba(3,6,12,.6)",
-            position:"relative",cursor:"context-menu",
-          }} title={`${opp.profile?.alias||"Opponent"}'s exile`}>
-            {opp.exile.length>0 ? (
-              <img src={getImg(opp.exile[opp.exile.length-1])||CARD_BACK}
-                alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            ) : (
-              <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",
-                color:"rgba(96,165,250,.25)",fontSize:18}}>✦</div>
-            )}
-            <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#60a5fa",
-              fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
-              {opp.exile.length}
-            </span>
-          </div>
-          {/* Command zone */}
-          {(opp.command||[]).length>0 && (
-            <div
-              onMouseEnter={()=>onHover && onHover(opp.command[0])}
-              onMouseLeave={()=>onHover && onHover(null)}
-              style={{
-              width:64,height:88,borderRadius:3,overflow:"hidden",
-              border:"1px solid rgba(200,168,112,.4)",
-              background:"rgba(200,168,112,.08)",
-              boxShadow:"0 0 10px rgba(200,168,112,.2)",
-              position:"relative",cursor:"pointer",
-            }} title="Command zone">
-              <img src={getImg(opp.command[0])||CARD_BACK} alt=""
-                style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-              <span style={{position:"absolute",bottom:2,right:3,fontSize:9,color:"#c8a870",
-                fontFamily:"Cinzel,serif",background:"rgba(0,0,0,.7)",padding:"0 4px",borderRadius:3}}>
-                ⚔{opp.command.length}
-              </span>
+          {/* Battlefield */}
+          <div ref={bfRef}
+            style={{flex:1,position:"relative",overflow:"visible",background:"none",filter:"none"}}
+            onClick={e=>e.stopPropagation()}
+          onMouseDown={e=>{
+            if(e.button!==0)return;
+            // Only start rect select if clicking empty BF (not a card)
+            if(e.target!==bfRef.current&&e.target.closest('[data-card]'))return;
+            if(e.ctrlKey||e.metaKey)return;
+            const rect=bfRef.current.getBoundingClientRect();
+            const sx=e.clientX-rect.left, sy=e.clientY-rect.top;
+            selRectRef.current={startX:sx,startY:sy,active:true};
+            setSelRect({x1:sx,y1:sy,x2:sx,y2:sy});
+            if(!e.ctrlKey&&!e.metaKey)setSelected(new Set());
+          }}>
+            <div style={{position:"absolute",inset:0,
+              background:"radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(2,4,10,.5) 100%)",
+              pointerEvents:"none"}}/>
+            <div style={{position:"absolute",inset:0,
+              background:"radial-gradient(ellipse at 20% 30%,rgba(200,168,112,.015) 0%,transparent 50%),radial-gradient(ellipse at 80% 70%,rgba(96,165,250,.01) 0%,transparent 50%)",
+              pointerEvents:"none"}}/>
+            <div style={{position:"absolute",top:5,left:8,fontSize:7,
+              color:"rgba(200,168,112,.12)",fontFamily:"Cinzel,serif",letterSpacing:".2em",pointerEvents:"none",userSelect:"none"}}>
+              {player.profile?.alias||""}
             </div>
+            {/* Gamemat background — clipped to BF bounds */}
+            <div style={{position:"absolute",inset:0,background:gamemat,
+              filter:gamematFilter&&gamematFilter!=="none"?gamematFilter:undefined,
+              overflow:"hidden",borderRadius:0,zIndex:0,pointerEvents:"none"}}/>
+            {/* Selection rectangle */}
+            {selRect&&(()=>{
+              const minX=Math.min(selRect.x1,selRect.x2);
+              const minY=Math.min(selRect.y1,selRect.y2);
+              const w=Math.abs(selRect.x2-selRect.x1);
+              const h=Math.abs(selRect.y2-selRect.y1);
+              return(
+                <div style={{position:"absolute",left:minX,top:minY,width:w,height:h,
+                  border:`1px solid ${T.accent}`,background:`${T.accent}12`,
+                  borderRadius:2,pointerEvents:"none",zIndex:100,
+                  boxShadow:`0 0 8px ${T.accent}30`}}/>
+              );
+            })()}
+            {/* cards */}
+            {player.battlefield.map(card=>(
+              <div key={card.iid} data-iid={card.iid} style={{position:"absolute",left:card.x,top:card.y,zIndex:isLand(card)?1:3}}>
+                <CardImg card={card} tapped={card.tapped} faceDown={card.faceDown}
+                  selected={selected.has(card.iid)} size="md"
+                  data-card="1"
+                  onClick={e=>{
+                    e.stopPropagation();
+                    if(copyMode){
+                      const srcCard=copyMode.card;
+                      const targetImg=getImg(card)||card.imageUri;
+                      upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===srcCard.iid?{...c,isCopy:true,copyImageUri:targetImg}:c)}));
+                      addLog(`⧉ ${srcCard.name} became a copy of ${card.name}`);
+                      setCopyMode(null);
+                      return;
+                    }
+                    // Double left click = tap/untap
+                    const now=Date.now();
+                    const last=lastRightClick.current;
+                    if(last.iid===card.iid&&now-last.time<350&&!e.ctrlKey&&!e.metaKey){
+                      tap(card);
+                      addLog(`${card.tapped?"⟳ Untapped":"⟳ Tapped"} ${card.name}`);
+                      lastRightClick.current={iid:null,time:0};
+                      return;
+                    }
+                    lastRightClick.current={iid:card.iid,time:now};
+                    if(!e.ctrlKey&&!e.metaKey){setSelected(s=>{const n=new Set();n.add(card.iid);return n;});setSelZone("battlefield");}
+                    setHovered(card);
+                  }}
+                  onCtx={e=>handleCtx(e,card,"battlefield")} onHover={setHovered} onHoverEnd={()=>setHovered(null)}
+                  onMouseDown={e=>handleCardBFMouseDown(e,card)}
+                  onCounterClick={(e,k,v)=>setCtxMenu({x:e.clientX,y:e.clientY,card,zone:"battlefield",counterKey:k,counterVal:v})}/>
+              </div>
+            ))}
+
+            {/* Deck Viewer overlay at bottom of BF */}
+            {showDeckViewer&&(
+              <DeckViewer library={player.library} revealTop={player.revealTop}
+                onClose={()=>setShowDeckViewer(false)}
+                onCtx={handleCtx} onHover={setHovered} onHoverEnd={()=>setHovered(null)} onDragStart={startFloatDrag}
+                onDraw={()=>draw(1)} onShuffle={shuffle}/>
+            )}
+            {showChangeDeck&&(
+              <div onClick={()=>setShowChangeDeck(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:9996,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}}>
+                <div onClick={e=>e.stopPropagation()} className="fade-in" style={{
+                  background:`linear-gradient(160deg,${T.panel}fa,${T.bg}fd)`,
+                  border:`1px solid ${T.accent}50`,borderRadius:12,padding:24,
+                  width:520,maxWidth:"92vw",maxHeight:"88vh",overflowY:"auto",
+                  boxShadow:"0 32px 100px rgba(0,0,0,.95)"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                    <h3 className="shimmer-text" style={{fontFamily:"Cinzel Decorative,serif",fontSize:16,letterSpacing:".06em"}}>⇄ Change Deck</h3>
+                    <button onClick={()=>setShowChangeDeck(false)}
+                      style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:10,padding:"4px 10px"})}}
+                      onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+                  </div>
+                  <div style={{fontSize:11,color:"#6a7a8a",fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:16,padding:"8px 10px",borderRadius:6,background:"rgba(220,38,38,.06)",border:"1px solid rgba(220,38,38,.15)"}}>
+                    ⚠ This will scoop all your current cards (battlefield, hand, graveyard, exile, command)
+                    and replace them with a fresh shuffled library + opening hand from the chosen deck.
+                    Life, turn number, and phase are preserved.
+                  </div>
+                  {(!decks || decks.length===0)?(
+                    <div style={{color:T.border,fontSize:12,textAlign:"center",padding:"24px 12px",fontStyle:"italic"}}>
+                      No decks available. Go back to the menu and create one first.
+                    </div>
+                  ):(
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {decks.map(d=>(
+                        <button key={d.id} onClick={()=>{swapDeck(d);setShowChangeDeck(false);}}
+                          style={{...btn(d.id===player.deck?.id?`${T.accent}1a`:`${T.panel}aa`,
+                            d.id===player.deck?.id?T.accent:T.text,
+                            {textAlign:"left",padding:"10px 14px",border:`1px solid ${d.id===player.deck?.id?T.accent+"60":T.border+"30"}`,display:"flex",justifyContent:"space-between",alignItems:"center"})}}
+                          onMouseOver={hov} onMouseOut={uhov}>
+                          <span style={{fontFamily:"Cinzel,serif",fontSize:12}}>
+                            {d.id===player.deck?.id?"◉ ":""}{d.name}
+                          </span>
+                          <span style={{fontSize:10,color:"#6a7a8a"}}>
+                            {(d.cards||[]).reduce((s,c)=>s+(c.count||1),0)} cards · {d.format||"standard"}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar */}
+          <div style={{width:190,display:"flex",flexDirection:"column",gap:2,padding:"3px",
+            background:T.panelTex||`linear-gradient(180deg,${T.panel},${T.bg})`,
+            borderLeft:`1px solid ${currentPhaseColor}15`,overflowY:"hidden",
+            alignSelf:"stretch",marginBottom:-HAND_H,paddingBottom:HAND_H}}>
+
+            {/* ── COMMAND ZONE ── */}
+            {player.command.length>0&&(
+              <div ref={cmdRef} className="drop-target"
+                style={{background:`linear-gradient(160deg,${T.accent}08,${T.bg})`,
+                  border:`1px solid ${T.accent}40`,borderRadius:8,padding:"4px 4px 4px",marginBottom:2}}>
+                <div style={{color:`${T.accent}90`,fontFamily:"Cinzel,serif",fontSize:7,letterSpacing:".18em",marginBottom:3,textAlign:"center",textTransform:"uppercase",lineHeight:1}}>Command Zone</div>
+                <div style={{display:"grid",gridTemplateColumns:player.command.length<=2?"1fr 1fr":"1fr 1fr",gap:3,justifyItems:"center"}}>
+                  {player.command.map(card=>{
+                    const isAway=card.status==="away"||card.status==="dead"||card.status==="exiled";
+                    return(
+                    <div key={card.iid} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:player.command.length>2?1:3}}
+                      onMouseDown={e=>{
+                        if(e.button!==0)return;
+                        if(isAway)return; // blocked — must return to command zone first
+                        startFloatDrag(e,{...card,isCommander:true},"command");
+                      }}>
+                      {/* Portrait */}
+                      <div style={{position:"relative",cursor:isAway?"not-allowed":"grab",
+                        animation:cmdSummonAnim?"cmdPortraitPulse .4s ease-in-out 3":undefined}}>
+                        <CardImg card={card} size={player.command.length>2?"sm":"md"}
+                          onCtx={e=>handleCtx(e,card,"command")}
+                          onHover={setHovered} onHoverEnd={()=>setHovered(null)}
+                          onClick={e=>{e.stopPropagation();setHovered(card);}}/>
+                        {/* Away/blocked overlay — commander has left the command zone */}
+                        {isAway&&(
+                          <div style={{position:"absolute",inset:0,borderRadius:6,background:"rgba(0,0,0,.55)",
+                            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                            <span style={{fontSize:card.status==="dead"?26:card.status==="exiled"?22:18}}>
+                              {card.status==="dead"?"☠":card.status==="exiled"?"✦":"⚔"}
+                            </span>
+                            <span style={{fontSize:7,color:"rgba(255,255,255,.5)",fontFamily:"Cinzel,serif",marginTop:2}}>
+                              {card.status==="dead"?"in grave":card.status==="exiled"?"exiled":"in play"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {/* Name */}
+                      <div style={{fontSize:8,color:card.status?"#4a6a8a":T.accent,fontFamily:"Cinzel,serif",
+                        textAlign:"center",maxWidth:player.command.length>2?46:72,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1}}>{card.name}</div>
+                      {/* Tax counter — below portrait, symmetrical −/number/+. In
+                          readOnly, buttons are hidden and the pill is display-only
+                          so viewers still see opp's commander tax value. */}
+                      <div style={{display:"flex",alignItems:"center",gap:3}}>
+                        {!readOnly&&<button
+                          onClick={e=>{e.stopPropagation();upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:Math.max(0,(c.castCount||0)-1)}:c)}));}}
+                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:"rgba(200,168,112,.08)",border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
+                          onMouseOver={hov} onMouseOut={uhov}>−</button>}
+                        <div style={{display:"flex",alignItems:"center",gap:2,
+                          background:(card.castCount||0)>0?"rgba(251,191,36,.1)":"rgba(200,168,112,.06)",
+                          border:`1px solid ${(card.castCount||0)>0?"rgba(251,191,36,.4)":"rgba(200,168,112,.2)"}`,
+                          borderRadius:4,padding:player.command.length>2?"0 3px":"1px 5px",cursor:readOnly?"default":"pointer",minWidth:player.command.length>2?28:42,justifyContent:"center"}}
+                          onClick={readOnly?undefined:(e=>{
+                            e.stopPropagation();
+                            const cur=card.castCount||0;
+                            const input=window.prompt("Set cast count:",String(cur));
+                            if(input===null)return;
+                            const n=parseInt(input);
+                            if(!isNaN(n)&&n>=0) upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:n}:c)}));
+                          })}
+                          title={readOnly?"Commander cast count":"Click to edit cast count"}>
+                          <span style={{fontSize:player.command.length>2?7:9}}>💎</span>
+                          <span style={{fontSize:player.command.length>2?7:9,fontFamily:"Cinzel Decorative,serif",fontWeight:700,
+                            color:(card.castCount||0)>0?"#fbbf24":T.accent}}>
+                            +{(card.castCount||0)*2}
+                          </span>
+                        </div>
+                        {!readOnly&&<button
+                          onClick={e=>{e.stopPropagation();upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:(c.castCount||0)+1}:c)}));}}
+                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:"rgba(200,168,112,.08)",border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
+                          onMouseOver={hov} onMouseOut={uhov}>+</button>}
+                      </div>
+                    </div>
+                  );})}
+                </div>
+
+              </div>
+            )}
+
+            {/* ── Deck widget ── */}
+            <div ref={libRef} className="drop-target"
+              style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid ${T.border}20`,borderRadius:7,padding:"3px 3px 3px"}}>
+              {/* Title row — compact, centered */}
+              <div style={{textAlign:"center",lineHeight:1,marginBottom:2,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em"}}>DECK</span>
+                <span style={{color:player.library.length<=5?"#f87171":player.library.length<=10?"#fbbf24":T.accent,fontSize:8}}>{player.library.length}</span>
+                {!readOnly&&<button onClick={()=>setShowSearchLib(v=>!v)}
+                  style={{...btn(`${T.panel}99`,"#8a99b0",{fontSize:7,border:`1px solid ${T.border}20`,padding:"0px 3px",lineHeight:"14px"})}}
+                  onMouseOver={hov} onMouseOut={uhov}>🔍</button>}
+              </div>
+              {/* Card landscape: portrait img rotated 90deg, centered via absolute positioning */}
+              <div style={{position:"relative",width:"100%",height:player.command.length>2?54:72,overflow:"hidden"}}
+                onContextMenu={e=>{e.preventDefault();if(player.library[0]){const c=(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?player.library[0]:{...player.library[0],name:"Top of Deck",imageUri:null,card_faces:null,image_uris:null};handleCtx(e,c,"library");}}}
+                onMouseDown={e=>{
+                  if(e.button!==0||!player.library[0])return;
+                  e.preventDefault();
+                  const t=setTimeout(()=>startFloatDrag(e,{...player.library[0],zone:"library"},"library"),300);
+                  const cancel=()=>{clearTimeout(t);window.removeEventListener("mouseup",cancel);};
+                  window.addEventListener("mouseup",cancel);
+                }}>
+                <img
+                  src={(player.revealTop||player.revealTopOnce===player.library[0]?.iid)&&player.library[0]?getImg(player.library[0])||CARD_BACK:(player.deck?.sleeveUri||CARD_BACK)}
+                  alt="top"
+                  style={{
+                    width:72,height:101,borderRadius:4,objectFit:"cover",display:"block",
+                    position:"absolute",
+                    top:"50%",left:"50%",
+                    transform:"translate(-50%,-50%) rotate(90deg)",
+                    border:`1px solid ${(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?T.accent:"#1e3a5f40"}`,
+                    boxShadow:(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?`0 0 12px ${T.accent}40`:"0 3px 10px rgba(0,0,0,.7)",
+                    cursor:player.library[0]?"grab":"default",
+                  }}/>
+              </div>
+              {(player.revealTop||player.revealTopOnce===player.library[0]?.iid)&&player.library[0]&&(
+                <div style={{fontSize:7,color:T.accent,textAlign:"center",marginTop:2,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {player.library[0].name}
+                </div>
+              )}
+            </div>
+
+            {/* Graveyard */}
+            {/* Graveyard + Exile side by side */}
+            <div style={{display:"flex",gap:3}}>
+
+              <div ref={graveRef} className="drop-target mtg-zone" data-zone="graveyard"
+                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid #1e3a5f20`,borderRadius:7,padding:"3px 3px 3px",cursor:readOnly?"context-menu":"pointer",minWidth:0}}
+                onClick={readOnly?undefined:()=>setShowGraveViewer(true)}
+                onContextMenu={readOnly&&onZoneRequest?(e=>{e.preventDefault();onZoneRequest("graveyard",e);}):undefined}
+                onWheel={e=>{e.preventDefault();e.stopPropagation();
+                  if(!player.graveyard.length)return;
+                  setGraveIdx(prev=>{
+                    const len=player.graveyard.length;
+                    const next=((prev+(e.deltaY>0?1:-1))%len+len)%len;
+                    setHovered(player.graveyard[next]);
+                    return next;
+                  });
+                }}>
+                <div style={{color:"#a78bfa",fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em",textAlign:"center",marginBottom:2,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                  <span>GRAVE {player.graveyard.length}</span>
+                  {!readOnly&&<span style={{cursor:"pointer",opacity:.6,fontSize:9}} onClick={e=>{e.stopPropagation();setShowGraveViewer(true);}}>🔍</span>}
+                </div>
+                <div style={{display:"flex",justifyContent:"center"}}>
+                {player.graveyard.length>0?(
+                  <div style={{position:"relative"}} onClick={e=>e.stopPropagation()}
+                    onMouseDown={e=>{e.stopPropagation();if(readOnly)return;if(e.button===0)startFloatDrag(e,player.graveyard[graveIdx],"graveyard");}}
+                    onContextMenu={e=>{
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if(readOnly&&onZoneRequest){ onZoneRequest("graveyard",e); }
+                      else { handleCtx(e,player.graveyard[graveIdx],"graveyard"); }
+                    }}>
+                    <CardImg card={player.graveyard[graveIdx]??player.graveyard[player.graveyard.length-1]} size={player.command.length>2?"sm":"md"} onHover={setHovered} onHoverEnd={()=>setHovered(null)}/>
+                  </div>
+                ):(
+                  <div style={{height:38,display:"flex",alignItems:"center",justifyContent:"center",color:"#3a3a5a",fontSize:8,fontStyle:"italic"}}>—</div>
+                )}
+                </div>
+              </div>
+
+              <div ref={exileRef} className="drop-target mtg-zone" data-zone="exile"
+                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid #1e3a5f20`,borderRadius:7,padding:"3px 3px 3px",cursor:readOnly?"context-menu":"pointer",minWidth:0}}
+                onClick={readOnly?undefined:()=>setShowExileViewer(true)}
+                onContextMenu={readOnly&&onZoneRequest?(e=>{e.preventDefault();onZoneRequest("exile",e);}):undefined}
+                onWheel={e=>{e.preventDefault();e.stopPropagation();
+                  if(!player.exile.length)return;
+                  setExileIdx(prev=>{
+                    const len=player.exile.length;
+                    const next=((prev+(e.deltaY>0?1:-1))%len+len)%len;
+                    setHovered(player.exile[next]);
+                    return next;
+                  });
+                }}>
+                <div style={{color:"#60a5fa",fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em",textAlign:"center",marginBottom:2,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                  <span>EXILE {player.exile.length}</span>
+                  {!readOnly&&<span style={{cursor:"pointer",opacity:.6,fontSize:9}} onClick={e=>{e.stopPropagation();setShowExileViewer(true);}}>🔍</span>}
+                </div>
+                <div style={{display:"flex",justifyContent:"center"}}>
+                {player.exile.length>0?(
+                  <div style={{position:"relative"}} onClick={e=>e.stopPropagation()}
+                    onMouseDown={e=>{e.stopPropagation();if(readOnly)return;if(e.button===0)startFloatDrag(e,player.exile[exileIdx],"exile");}}
+                    onContextMenu={e=>{
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if(readOnly&&onZoneRequest){ onZoneRequest("exile",e); }
+                      else { handleCtx(e,player.exile[exileIdx],"exile"); }
+                    }}>
+                    <CardImg card={player.exile[exileIdx]??player.exile[player.exile.length-1]} size={player.command.length>2?"sm":"md"} onHover={setHovered} onHoverEnd={()=>setHovered(null)}/>
+                  </div>
+                ):(
+                  <div style={{height:38,display:"flex",alignItems:"center",justifyContent:"center",color:"#3a3a5a",fontSize:8,fontStyle:"italic"}}>—</div>
+                )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* In-game gamemat change */}
+            {showGamematPicker&&(
+              <GamematPicker
+                currentBg={player.profile?.gamemat}
+                customMats={customMats}
+                onSelect={(bg,url,name,filterStr)=>{
+                  upd(p=>({...p,profile:{...p.profile,gamemat:bg,gamematCustom:url||"",gamematFilter:filterStr||""}}));
+                  try{window.__MTG_V7__?.saveProfile?.({...player.profile, gamemat:bg, gamematCustom:url||"", gamematFilter:filterStr||""});}catch{}
+                }}
+                onSaveCustom={(bg,url,name,filterStr)=>{
+                  const newMat={name,bg,url,filter:filterStr||""};
+                  const updated=[...(customMats||[]).filter(m=>m.name!==name),newMat];
+                  setCustomMats(updated);
+                  try{localStorage.setItem("mtg_custom_mats",JSON.stringify(updated));}catch{}
+                  upd(p=>({...p,profile:{...p.profile,gamemat:bg,gamematCustom:url||"",gamematFilter:filterStr||""}}));
+                  try{window.__MTG_V7__?.saveProfile?.({...player.profile, gamemat:bg, gamematCustom:url||"", gamematFilter:filterStr||""});}catch{}
+                }}
+                onClose={()=>setShowGamematPicker(false)}/>
+            )}
+          </div>
+
+          {/* v7.6 Phase 2: invisible hand drop-zone, positioned inside BoardSide.
+              `right:190` leaves the sidebar uncovered. Using position:absolute
+              anchors this to the BoardSide root (position:relative). */}
+          <div ref={handRef} className="drop-target mtg-hand"
+            style={{position:"absolute",bottom:0,left:0,right:190,height:HAND_H,
+              background:"none",border:"none",outline:"none",boxShadow:"none",
+              pointerEvents:"none",zIndex:0,opacity:0}}/>
+
+          {/* v7.6 Phase 2: HandOverlay mounted inside BoardSide so it inherits
+              any parent transform (e.g. rotate(180deg) on the opponent side in
+              Phase 3). In readOnly mode mutation callbacks are NOOPs; handleCtx
+              is rerouted to fire onZoneRequest("hand", e) so right-clicking an
+              opp hand sleeve triggers the view-hand request flow (Phase 4-B). */}
+          {hand && handRef && containerRef && (
+            <HandOverlay
+              hand={hand}
+              handRef={handRef}
+              containerRef={containerRef}
+              hovered={hovered}
+              selected={selected}
+              setHovered={readOnly ? NOOP : setHovered}
+              setSelected={readOnly ? NOOP : setSelected}
+              setSelZone={readOnly ? NOOP : setSelZone}
+              startFloatDrag={readOnly ? NOOP : startFloatDrag}
+              handleCtx={
+                readOnly && onZoneRequest
+                  ? ((e)=>{ if(e?.preventDefault) e.preventDefault(); onZoneRequest("hand", e); })
+                  : (readOnly ? NOOP : handleCtx)
+              }
+              floatDrag={floatDrag}
+            />
           )}
         </div>
-      </div>
-
-      {/* Bottom strip: opponent's hand sleeves */}
-      <div
-        onContextMenu={e=>{
-          e.preventDefault();e.stopPropagation();
-          if(onRequestHand) onRequestHand(e, opp);
-        }}
-        style={{
-          display:"flex",alignItems:"center",gap:3,padding:"4px 8px",minHeight:56,
-          background:"linear-gradient(90deg,rgba(3,6,12,.9),rgba(5,10,18,.7),rgba(3,6,12,.9))",
-          borderTop:"1px solid rgba(248,113,113,.15)",flexShrink:0,zIndex:2,
-          cursor:"context-menu",
-        }}
-        title="Right-click to request to see this hand"
-      >
-        <span style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel,serif",flexShrink:0,marginRight:4}}>
-          ✋ {opp.hand.length}
-        </span>
-        {isRevealed
-          ? revealedHand.cards.map((c,i)=>(
-              <div key={`r${i}`}
-                onMouseEnter={()=>onHover && onHover(c)}
-                onMouseLeave={()=>onHover && onHover(null)}
-                style={{
-                width:36,height:50,borderRadius:3,overflow:"hidden",flexShrink:0,
-                border:"1px solid #fbbf24",boxShadow:"0 0 10px rgba(251,191,36,.6)",
-                cursor:"pointer",
-              }}>
-                <img src={getImg(c)||CARD_BACK} alt=""
-                  style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-              </div>
-            ))
-          : opp.hand.map((_,i)=>(
-              <div key={i} style={{
-                width:36,height:50,borderRadius:3,overflow:"hidden",flexShrink:0,
-                border:"1px solid #2a3a5a",boxShadow:"0 2px 6px rgba(0,0,0,.6)",
-              }}>
-                <img src={sleeve} alt=""
-                  style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-              </div>
-            ))
-        }
-        {opp.hand.length===0 && (
-          <span style={{fontSize:10,color:"#2a3a5a",fontStyle:"italic",marginLeft:6}}>— empty hand —</span>
-        )}
-      </div>
-    </div>
   );
 }
-
 
 function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdatePlayer,onUpdateGame,onExit,onSwitchPlayer,onReset,onChangeDeck,isTwoPlayer,roomId,isOnline,onTheme,decks=[],authUser=null}){
   const [selected,setSelected]=useState(new Set()); // Set of iids
@@ -5051,11 +5327,16 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   const [oppHandAccess,setOppHandAccess]=useState(false);
   const [oppLibAccess,setOppLibAccess]=useState(false);
   const [oppAccessRequest,setOppAccessRequest]=useState(null);
-  // v7.4: hand-request flow
-  const [handRequestPending,setHandRequestPending]=useState(null); // I asked someone, waiting
-  const [incomingHandRequest,setIncomingHandRequest]=useState(null); // someone asked me
-  const [revealedOppHand,setRevealedOppHand]=useState({cards:null,userId:null,ts:0});
-  const [handRequestStatus,setHandRequestStatus]=useState(null); // "denied" | "timeout" | null
+  // v7.6 Phase 4: zone-parameterized request/reveal/deny. Covers hand,
+  // graveyard, and exile. Previous (v7.4/v7.5) names mapped as follows:
+  //   handRequestPending  → outgoingZoneRequest   {zone, targetAlias, ts}
+  //   incomingHandRequest → incomingZoneRequest   {zone, requesterUserId, requesterAlias, ts}
+  //   revealedOppHand     → revealedOppZones      {[zone]: {cards, userId, ts}}
+  //   handRequestStatus   → zoneRequestStatus     {zone, type:"denied"|"timeout", alias}
+  const [outgoingZoneRequest,setOutgoingZoneRequest]=useState(null);
+  const [incomingZoneRequest,setIncomingZoneRequest]=useState(null);
+  const [revealedOppZones,setRevealedOppZones]=useState({});
+  const [zoneRequestStatus,setZoneRequestStatus]=useState(null);
   const [showGraveViewer,setShowGraveViewer]=useState(false);
   const [showExileViewer,setShowExileViewer]=useState(false);
   const [sfxMuted,setSfxMuted]=useState(()=>{
@@ -5089,6 +5370,112 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   const libRef=useRef(null);
   const handRef=useRef(null);
   const cmdRef=useRef(null); // commander portrait drop target
+  // v7.6 Phase 2: BoardSide root ref — HandOverlay positions cards relative to this.
+  const containerRef=useRef(null);
+
+  // ═══ v7.6 Phase 1: opponent-side refs + state ═══════════════════════════
+  // BoardSide is mounted twice in online multiplayer: once interactive (above
+  // refs) for the local player, once readOnly for the primary opponent using
+  // these separate refs so DOM assignments don't collide. SelRect + lastRight-
+  // Click are dummies (opponent is readOnly so selection/double-tap gated).
+  const oppBfRef=useRef(null);
+  const oppCmdRef=useRef(null);
+  const oppLibRef=useRef(null);
+  const oppGraveRef=useRef(null);
+  const oppExileRef=useRef(null);
+  const oppSelRectRef=useRef(null);
+  const oppLastRightClick=useRef({iid:null,time:0});
+  // v7.6 Phase 2: opp BoardSide root ref + opp hand drop-zone ref (mirrors local).
+  const oppContainerRef=useRef(null);
+  const oppHandRef=useRef(null);
+  const [oppGraveIdx,setOppGraveIdx]=useState(0);
+  const [oppExileIdx,setOppExileIdx]=useState(0);
+  // Clamp opponent scroll indices when their zones change (mirrors the local
+  // player effects at the top of GameBoard; deps are opponent-only).
+  useEffect(()=>{
+    const len=opponent?.graveyard?.length||0;
+    if(oppGraveIdx>=len) setOppGraveIdx(Math.max(0,len-1));
+  },[opponent?.graveyard?.length]);
+  useEffect(()=>{
+    const len=opponent?.exile?.length||0;
+    if(oppExileIdx>=len) setOppExileIdx(Math.max(0,len-1));
+  },[opponent?.exile?.length]);
+
+  // v7.6 Phase 7: opponent SFX watcher. Diffs previous vs current opp state on
+  // every render-where-opponent-ref-changes (remote broadcasts, mainly). Fires
+  // local SFX cues for notable actions: draw, cast/summon, destroy, exile,
+  // tap/untap, life change, counter change. Per-event coalescing caps each
+  // category to ≤1 fire per diff (so untap-all-at-start-of-turn plays one
+  // "untapAll" cue, not N "untap"s). Guards against false positives:
+  //   • Skips on first-ever render (no prev).
+  //   • Skips when opponent profile.userId changed (reconnect / different peer).
+  //   • Skips when BF add/remove count > 5 (likely full-state reset / rejoin).
+  // Local drags of opp cards never trigger SFX: x/y changes aren't in any of
+  // the diff checks (iid sets, tap flags, counters, life, hand length).
+  // Local actions don't trigger either: same-ref preservation in
+  // setGameState's .map() means opp's player object reference is unchanged
+  // when only the local seat mutates, so the watcher skips.
+  const prevOppRef=useRef(null);
+  useEffect(()=>{
+    const prev=prevOppRef.current;
+    const curr=opponent;
+    prevOppRef.current=curr;
+    if(!prev||!curr) return;
+    if(prev.profile?.userId!==curr.profile?.userId) return;
+
+    // BF iid-set diff (used by add/remove/tap/counter checks)
+    const prevBf=prev.battlefield||[], currBf=curr.battlefield||[];
+    const prevBfIids=new Set(prevBf.map(c=>c.iid));
+    const currBfIids=new Set(currBf.map(c=>c.iid));
+    const addedToBf=[...currBfIids].filter(iid=>!prevBfIids.has(iid));
+    const removedFromBf=[...prevBfIids].filter(iid=>!currBfIids.has(iid));
+    // Reset / rejoin bail-out: massive state churn indicates non-play update.
+    if(addedToBf.length>5||removedFromBf.length>5) return;
+
+    // Life change
+    if((prev.life||0)>(curr.life||0)) SFX.playAction("lifeLoss");
+    else if((prev.life||0)<(curr.life||0)) SFX.playAction("lifeGain");
+
+    // Draw: hand size grew (masked or unmasked equally works — length survives masking)
+    if((curr.hand?.length||0)>(prev.hand?.length||0)) SFX.playAction("draw");
+
+    // BF additions = cast/summon/reanimate (not distinguished; fire toBattlefield)
+    if(addedToBf.length>0) SFX.playAction("toBattlefield");
+
+    // BF removals: classify by destination
+    if(removedFromBf.length>0){
+      const currGraveIids=new Set((curr.graveyard||[]).map(c=>c.iid));
+      const currExileIids=new Set((curr.exile||[]).map(c=>c.iid));
+      const destroyed=removedFromBf.filter(iid=>currGraveIids.has(iid));
+      const exiled=removedFromBf.filter(iid=>currExileIids.has(iid));
+      if(destroyed.length>0) SFX.playAction("toGraveyard");
+      if(exiled.length>0)    SFX.playAction("toExile");
+    }
+
+    // Tap / untap. Only inspect cards present in BOTH snapshots (same iid).
+    const prevTapMap=new Map(prevBf.map(c=>[c.iid,!!c.tapped]));
+    let newlyTapped=0,newlyUntapped=0;
+    for(const c of currBf){
+      const prevT=prevTapMap.get(c.iid);
+      if(prevT===undefined) continue;
+      if(!prevT&&c.tapped) newlyTapped++;
+      else if(prevT&&!c.tapped) newlyUntapped++;
+    }
+    if(newlyTapped>0) SFX.playAction("tap");
+    if(newlyUntapped>=3) SFX.playAction("untapAll");
+    else if(newlyUntapped>0) SFX.playAction("untap");
+
+    // Counter change (any card with a different counters object). JSON.stringify
+    // is fine here — counters are small objects and BF card count is modest.
+    const prevCntMap=new Map(prevBf.map(c=>[c.iid,JSON.stringify(c.counters||{})]));
+    const counterChanged=currBf.some(c=>{
+      const prevS=prevCntMap.get(c.iid);
+      if(prevS===undefined) return false;
+      return prevS!==JSON.stringify(c.counters||{});
+    });
+    if(counterChanged) SFX.playAction("counter");
+  },[opponent]);
+  // ════════════════════════════════════════════════════════════════════════
 
   // upd and addLog must be declared first — many hooks depend on them
   const upd=useCallback(fn=>onUpdatePlayer(playerIdx,fn),[onUpdatePlayer,playerIdx]);
@@ -5099,46 +5486,89 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
     if(net){try{net.appendEvent("action",{text:`T${turn}:${msg}`,ts:Date.now()});}catch(e){}}
   },[upd,turn]);
 
+  // v7.6 Phase 4-B: helper that opens a context-menu for requesting to view one
+  // of the opponent's zones (hand / graveyard / exile). Wired into the opp
+  // BoardSide via the `onZoneRequest` prop so that right-click on those zones
+  // prompts the viewer-side confirmation and, if confirmed, emits a
+  // zone_request event via NetSync. NOT a hook — plain arrow function,
+  // closures resolve at call time (addLog / authUser / setCtxMenu etc.).
+  const requestOppZone=(zone,e)=>{
+    if(!opponent)return;
+    const oppUid=opponent?.profile?.userId;
+    const oppAlias=opponent?.profile?.alias||"Opponent";
+    if(!oppUid){addLog(`⚠ Cannot request ${zone} — opponent has no user id`);return;}
+    const net=window.__MTG_V7__?.netSync;
+    if(!net){addLog("⚠ Offline — no opponent to ask");return;}
+    setCtxMenu({
+      x:e.clientX,y:e.clientY,card:null,zone:`opp_${zone}`,
+      items:[
+        {label:`👁 Request to see ${oppAlias}'s ${zone}`,action:()=>{
+          try{net.appendEvent("zone_request",{zone,targetUserId:oppUid,requesterUserId:authUser?.id,ts:Date.now()});}catch{}
+          addLog(`👁 Requested ${oppAlias}'s ${zone}`);
+          setOutgoingZoneRequest({zone,targetAlias:oppAlias,ts:Date.now()});
+          setCtxMenu(null);
+        }},
+        {label:"✕ Cancel",action:()=>setCtxMenu(null)},
+      ]
+    });
+  };
+
   // v7.4: hand-request flow event listeners
   useEffect(()=>{
     const onReq=(e)=>{
       const d=e.detail||{};
-      setIncomingHandRequest({requesterUserId:d.user_id,requesterAlias:d.alias||"Someone",ts:Date.now()});
+      const zone=d.zone||"hand"; // legacy events without zone default to hand
+      setIncomingZoneRequest({
+        zone,
+        requesterUserId:d.user_id||d.requesterUserId,
+        requesterAlias:d.alias||"Someone",
+        ts:Date.now(),
+      });
     };
     const onReveal=(e)=>{
       const d=e.detail||{};
-      setHandRequestPending(null);
-      setHandRequestStatus(null);
-      setRevealedOppHand({cards:d.cards||[],userId:d.revealerUserId,ts:Date.now()});
-      // Auto-hide after 10s
-      setTimeout(()=>setRevealedOppHand(curr=>curr.ts===d.ts?{cards:null,userId:null,ts:0}:curr),10000);
+      const zone=d.zone||"hand";
+      const ts=Date.now();
+      setOutgoingZoneRequest(null);
+      setZoneRequestStatus(null);
+      setRevealedOppZones(curr=>({...curr,[zone]:{cards:d.cards||[],userId:d.revealerUserId,ts}}));
+      // Auto-hide the reveal for this zone after 10s (only if nothing newer replaced it).
+      setTimeout(()=>setRevealedOppZones(curr=>{
+        if(curr[zone]?.ts!==ts) return curr;
+        const n={...curr}; delete n[zone]; return n;
+      }),10000);
     };
     const onDeny=(e)=>{
       const d=e.detail||{};
-      setHandRequestPending(null);
-      setHandRequestStatus({type:"denied",alias:d.alias||"Opponent"});
-      setTimeout(()=>setHandRequestStatus(null),4000);
+      const zone=d.zone||"hand";
+      setOutgoingZoneRequest(null);
+      setZoneRequestStatus({zone,type:"denied",alias:d.alias||"Opponent"});
+      setTimeout(()=>setZoneRequestStatus(null),4000);
     };
-    window.addEventListener("mtg:hand-request",onReq);
-    window.addEventListener("mtg:hand-reveal",onReveal);
-    window.addEventListener("mtg:hand-deny",onDeny);
+    window.addEventListener("mtg:zone-request",onReq);
+    window.addEventListener("mtg:zone-reveal",onReveal);
+    window.addEventListener("mtg:zone-deny",onDeny);
     return()=>{
-      window.removeEventListener("mtg:hand-request",onReq);
-      window.removeEventListener("mtg:hand-reveal",onReveal);
-      window.removeEventListener("mtg:hand-deny",onDeny);
+      window.removeEventListener("mtg:zone-request",onReq);
+      window.removeEventListener("mtg:zone-reveal",onReveal);
+      window.removeEventListener("mtg:zone-deny",onDeny);
     };
   },[]);
 
-  // v7.4: 30s timeout on outgoing hand request → "no response"
+  // v7.6 Phase 4: 30s timeout on outgoing zone request → "no response".
   useEffect(()=>{
-    if(!handRequestPending)return;
+    if(!outgoingZoneRequest)return;
     const t=setTimeout(()=>{
-      setHandRequestPending(null);
-      setHandRequestStatus({type:"timeout",alias:handRequestPending.targetAlias});
-      setTimeout(()=>setHandRequestStatus(null),4000);
+      setOutgoingZoneRequest(null);
+      setZoneRequestStatus({
+        zone:outgoingZoneRequest.zone,
+        type:"timeout",
+        alias:outgoingZoneRequest.targetAlias,
+      });
+      setTimeout(()=>setZoneRequestStatus(null),4000);
     },30000);
     return()=>clearTimeout(t);
-  },[handRequestPending]);
+  },[outgoingZoneRequest]);
 
   // v7.4 game-start state (effect is defined further down after drawOne)
   const [startAnimPhase,setStartAnimPhase]=useState("idle"); // idle|shuffle|drawing|done
@@ -5594,6 +6024,16 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   };
 
   // ── BF drag — clamped to BF+sidebar total bounds ──
+  // v7.6 Phase 6: live drag broadcast is IMPLICIT via this handler. Every
+  // mousemove during a BF drag calls `upd(p=>{...battlefield with new x/y...})`
+  // → `updatePlayer` sets gameState → `broadcastIfOnline(next)` → NetSync
+  // debounces (80ms) and flushes the masked state over Supabase Realtime.
+  // Peer receives → merge (their seat kept local, other seats from remote) →
+  // remote seat's BoardSide re-renders cards at {left:card.x, top:card.y}.
+  // The v7.5.1 bug was a field-name mismatch (old OpponentBoard read card.bfX,
+  // card.bfY — never written); Phase 1's BoardSide reads card.x/y so the loop
+  // is now closed end-to-end. To adjust drag smoothness, tune the 80ms
+  // debounce in src/lib/netSync.js.
   const handleBFMouseMove=useCallback(e=>{
     const drag=bfDragRef.current;
     if(!drag)return;
@@ -6617,406 +7057,83 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       {/* ═══ MAIN AREA ═══ */}
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"visible",minHeight:0,position:"relative"}}>
 
-        {/* v7.5: Opponent's mirrored half — full board rotated 180° */}
+        {/* v7.6 Phase 3+4+5: opponent half wrapped in transform:rotate(180deg)
+            so their cards face the local player. Uses `flex:1` (equal share with
+            local) rather than `0 0 50%` so the divider doesn't steal from one
+            side only — both halves grow symmetrically from `(total - 2px) / 2`.
+            `display:flex` + `minHeight:0` make this wrapper a flex parent so
+            BoardSide's own `flex:1` fills the entire half (without this, BoardSide
+            collapsed to content height and opp visually appeared smaller: the D9
+            bug). Zone-request triggers (hand, graveyard, exile) live inside
+            BoardSide via the `onZoneRequest` prop. */}
         {opponent && (
-          <div style={{flex:"0 0 50%",position:"relative",overflow:"hidden",
-            borderBottom:`2px solid ${currentPhaseColor}30`,
-            boxShadow:`0 2px 12px ${currentPhaseColor}20`}}>
-            <OpponentBoard
-              opp={opponent}
-              authUser={authUser}
-              revealedHand={revealedOppHand}
-              onHover={setHovered}
-              onRequestHand={(e,oppRef)=>{
-                const oppUid=oppRef?.profile?.userId;
-                const oppAlias=oppRef?.profile?.alias||"Opponent";
-                if(!oppUid){addLog("⚠ Cannot request hand — opponent has no user id");return;}
-                const net=window.__MTG_V7__?.netSync;
-                if(!net){addLog("⚠ Offline — no opponent to ask");return;}
-                setCtxMenu({
-                  x:e.clientX,y:e.clientY,card:null,zone:"opp_hand",
-                  items:[
-                    {label:`👁 Request to see ${oppAlias}'s hand`,action:()=>{
-                      try{net.appendEvent("hand_request",{targetUserId:oppUid,requesterUserId:authUser?.id});}catch{}
-                      addLog(`👁 Requested ${oppAlias}'s hand`);
-                      setHandRequestPending({targetAlias:oppAlias,ts:Date.now()});
-                      setCtxMenu(null);
-                    }},
-                    {label:"✕ Cancel",action:()=>setCtxMenu(null)},
-                  ]
-                });
-              }}
+          <div style={{flex:1,display:"flex",minHeight:0,position:"relative",overflow:"hidden",
+            borderTop:`2px solid ${currentPhaseColor}30`,
+            boxShadow:`0 -2px 12px ${currentPhaseColor}20`,
+            transform:"rotate(180deg)",transformOrigin:"center center"}}>
+            <BoardSide
+              readOnly
+              player={opponent} T={T} currentPhaseColor={currentPhaseColor}
+              gamemat={opponent.profile?.gamemat || GAMEMATS[0].bg}
+              gamematFilter={opponent.profile?.gamematFilter || ""}
+              showDeckViewer={false} showChangeDeck={false} showGamematPicker={false}
+              copyMode={null} cmdSummonAnim={false}
+              customMats={[]} decks={[]}
+              selected={new Set()} selZone="battlefield" selRect={null}
+              graveIdx={oppGraveIdx} exileIdx={oppExileIdx}
+              bfRef={oppBfRef} cmdRef={oppCmdRef} libRef={oppLibRef}
+              graveRef={oppGraveRef} exileRef={oppExileRef}
+              selRectRef={oppSelRectRef} lastRightClick={oppLastRightClick}
+              setCtxMenu={NOOP} setHovered={setHovered}
+              setSelected={NOOP} setSelZone={NOOP} setSelRect={NOOP}
+              setCopyMode={NOOP}
+              setShowDeckViewer={NOOP} setShowChangeDeck={NOOP} setShowGamematPicker={NOOP}
+              setShowSearchLib={NOOP} setShowGraveViewer={NOOP} setShowExileViewer={NOOP}
+              setGraveIdx={setOppGraveIdx} setExileIdx={setOppExileIdx}
+              setCustomMats={NOOP}
+              upd={NOOP} addLog={addLog}
+              handleCtx={NOOP} handleCardBFMouseDown={NOOP} startFloatDrag={NOOP}
+              tap={NOOP} swapDeck={NOOP} draw={NOOP} shuffle={NOOP}
+              containerRef={oppContainerRef} hand={opponent.hand} handRef={oppHandRef}
+              hovered={hovered} floatDrag={null}
+              onZoneRequest={requestOppZone}
             />
           </div>
         )}
 
-{/* ── DIVIDER / CENTER LINE ── */}
-        <div style={{height:2,background:`linear-gradient(90deg,transparent,${currentPhaseColor}50,transparent)`,
-          boxShadow:`0 0 8px ${currentPhaseColor}30`,flexShrink:0}}/>
+{/* ── DIVIDER / CENTER LINE (opponent only) ── */}
+        {opponent && <div style={{height:2,background:`linear-gradient(90deg,transparent,${currentPhaseColor}50,transparent)`,
+          boxShadow:`0 0 8px ${currentPhaseColor}30`,flexShrink:0}}/>}
 
         {/* ── PLAYER FIELD + SIDEBAR ── */}
-        <div style={{flex:1,display:"flex",overflow:"visible",minHeight:0,position:"relative"}}>
-
-          {/* Battlefield */}
-          <div ref={bfRef}
-            style={{flex:1,position:"relative",overflow:"visible",background:"none",filter:"none"}}
-            onClick={e=>e.stopPropagation()}
-          onMouseDown={e=>{
-            if(e.button!==0)return;
-            // Only start rect select if clicking empty BF (not a card)
-            if(e.target!==bfRef.current&&e.target.closest('[data-card]'))return;
-            if(e.ctrlKey||e.metaKey)return;
-            const rect=bfRef.current.getBoundingClientRect();
-            const sx=e.clientX-rect.left, sy=e.clientY-rect.top;
-            selRectRef.current={startX:sx,startY:sy,active:true};
-            setSelRect({x1:sx,y1:sy,x2:sx,y2:sy});
-            if(!e.ctrlKey&&!e.metaKey)setSelected(new Set());
-          }}>
-            <div style={{position:"absolute",inset:0,
-              background:"radial-gradient(ellipse at 50% 50%,transparent 40%,rgba(2,4,10,.5) 100%)",
-              pointerEvents:"none"}}/>
-            <div style={{position:"absolute",inset:0,
-              background:"radial-gradient(ellipse at 20% 30%,rgba(200,168,112,.015) 0%,transparent 50%),radial-gradient(ellipse at 80% 70%,rgba(96,165,250,.01) 0%,transparent 50%)",
-              pointerEvents:"none"}}/>
-            <div style={{position:"absolute",top:5,left:8,fontSize:7,
-              color:"rgba(200,168,112,.12)",fontFamily:"Cinzel,serif",letterSpacing:".2em",pointerEvents:"none",userSelect:"none"}}>
-              {player.profile?.alias||""}
-            </div>
-            {/* Gamemat background — clipped to BF bounds */}
-            <div style={{position:"absolute",inset:0,background:gamemat,
-              filter:gamematFilter&&gamematFilter!=="none"?gamematFilter:undefined,
-              overflow:"hidden",borderRadius:0,zIndex:0,pointerEvents:"none"}}/>
-            {/* Selection rectangle */}
-            {selRect&&(()=>{
-              const minX=Math.min(selRect.x1,selRect.x2);
-              const minY=Math.min(selRect.y1,selRect.y2);
-              const w=Math.abs(selRect.x2-selRect.x1);
-              const h=Math.abs(selRect.y2-selRect.y1);
-              return(
-                <div style={{position:"absolute",left:minX,top:minY,width:w,height:h,
-                  border:`1px solid ${T.accent}`,background:`${T.accent}12`,
-                  borderRadius:2,pointerEvents:"none",zIndex:100,
-                  boxShadow:`0 0 8px ${T.accent}30`}}/>
-              );
-            })()}
-            {/* cards */}
-            {player.battlefield.map(card=>(
-              <div key={card.iid} data-iid={card.iid} style={{position:"absolute",left:card.x,top:card.y,zIndex:isLand(card)?1:3}}>
-                <CardImg card={card} tapped={card.tapped} faceDown={card.faceDown}
-                  selected={selected.has(card.iid)} size="md"
-                  data-card="1"
-                  onClick={e=>{
-                    e.stopPropagation();
-                    if(copyMode){
-                      const srcCard=copyMode.card;
-                      const targetImg=getImg(card)||card.imageUri;
-                      upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===srcCard.iid?{...c,isCopy:true,copyImageUri:targetImg}:c)}));
-                      addLog(`⧉ ${srcCard.name} became a copy of ${card.name}`);
-                      setCopyMode(null);
-                      return;
-                    }
-                    // Double left click = tap/untap
-                    const now=Date.now();
-                    const last=lastRightClick.current;
-                    if(last.iid===card.iid&&now-last.time<350&&!e.ctrlKey&&!e.metaKey){
-                      tap(card);
-                      addLog(`${card.tapped?"⟳ Untapped":"⟳ Tapped"} ${card.name}`);
-                      lastRightClick.current={iid:null,time:0};
-                      return;
-                    }
-                    lastRightClick.current={iid:card.iid,time:now};
-                    if(!e.ctrlKey&&!e.metaKey){setSelected(s=>{const n=new Set();n.add(card.iid);return n;});setSelZone("battlefield");}
-                    setHovered(card);
-                  }}
-                  onCtx={e=>handleCtx(e,card,"battlefield")} onHover={setHovered} onHoverEnd={()=>setHovered(null)}
-                  onMouseDown={e=>handleCardBFMouseDown(e,card)}
-                  onCounterClick={(e,k,v)=>setCtxMenu({x:e.clientX,y:e.clientY,card,zone:"battlefield",counterKey:k,counterVal:v})}/>
-              </div>
-            ))}
-
-            {/* Deck Viewer overlay at bottom of BF */}
-            {showDeckViewer&&(
-              <DeckViewer library={player.library} revealTop={player.revealTop}
-                onClose={()=>setShowDeckViewer(false)}
-                onCtx={handleCtx} onHover={setHovered} onHoverEnd={()=>setHovered(null)} onDragStart={startFloatDrag}
-                onDraw={()=>draw(1)} onShuffle={shuffle}/>
-            )}
-            {showChangeDeck&&(
-              <div onClick={()=>setShowChangeDeck(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:9996,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}}>
-                <div onClick={e=>e.stopPropagation()} className="fade-in" style={{
-                  background:`linear-gradient(160deg,${T.panel}fa,${T.bg}fd)`,
-                  border:`1px solid ${T.accent}50`,borderRadius:12,padding:24,
-                  width:520,maxWidth:"92vw",maxHeight:"88vh",overflowY:"auto",
-                  boxShadow:"0 32px 100px rgba(0,0,0,.95)"}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-                    <h3 className="shimmer-text" style={{fontFamily:"Cinzel Decorative,serif",fontSize:16,letterSpacing:".06em"}}>⇄ Change Deck</h3>
-                    <button onClick={()=>setShowChangeDeck(false)}
-                      style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:10,padding:"4px 10px"})}}
-                      onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
-                  </div>
-                  <div style={{fontSize:11,color:"#6a7a8a",fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:16,padding:"8px 10px",borderRadius:6,background:"rgba(220,38,38,.06)",border:"1px solid rgba(220,38,38,.15)"}}>
-                    ⚠ This will scoop all your current cards (battlefield, hand, graveyard, exile, command)
-                    and replace them with a fresh shuffled library + opening hand from the chosen deck.
-                    Life, turn number, and phase are preserved.
-                  </div>
-                  {(!decks || decks.length===0)?(
-                    <div style={{color:T.border,fontSize:12,textAlign:"center",padding:"24px 12px",fontStyle:"italic"}}>
-                      No decks available. Go back to the menu and create one first.
-                    </div>
-                  ):(
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {decks.map(d=>(
-                        <button key={d.id} onClick={()=>{swapDeck(d);setShowChangeDeck(false);}}
-                          style={{...btn(d.id===player.deck?.id?`${T.accent}1a`:`${T.panel}aa`,
-                            d.id===player.deck?.id?T.accent:T.text,
-                            {textAlign:"left",padding:"10px 14px",border:`1px solid ${d.id===player.deck?.id?T.accent+"60":T.border+"30"}`,display:"flex",justifyContent:"space-between",alignItems:"center"})}}
-                          onMouseOver={hov} onMouseOut={uhov}>
-                          <span style={{fontFamily:"Cinzel,serif",fontSize:12}}>
-                            {d.id===player.deck?.id?"◉ ":""}{d.name}
-                          </span>
-                          <span style={{fontSize:10,color:"#6a7a8a"}}>
-                            {(d.cards||[]).reduce((s,c)=>s+(c.count||1),0)} cards · {d.format||"standard"}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Sidebar */}
-          <div style={{width:190,display:"flex",flexDirection:"column",gap:2,padding:"3px",
-            background:T.panelTex||`linear-gradient(180deg,${T.panel},${T.bg})`,
-            borderLeft:`1px solid ${currentPhaseColor}15`,overflowY:"hidden",
-            alignSelf:"stretch",marginBottom:-HAND_H,paddingBottom:HAND_H}}>
-
-            {/* ── COMMAND ZONE ── */}
-            {player.command.length>0&&(
-              <div ref={cmdRef} className="drop-target"
-                style={{background:`linear-gradient(160deg,${T.accent}08,${T.bg})`,
-                  border:`1px solid ${T.accent}40`,borderRadius:8,padding:"4px 4px 4px",marginBottom:2}}>
-                <div style={{color:`${T.accent}90`,fontFamily:"Cinzel,serif",fontSize:7,letterSpacing:".18em",marginBottom:3,textAlign:"center",textTransform:"uppercase",lineHeight:1}}>Command Zone</div>
-                <div style={{display:"grid",gridTemplateColumns:player.command.length<=2?"1fr 1fr":"1fr 1fr",gap:3,justifyItems:"center"}}>
-                  {player.command.map(card=>{
-                    const isAway=card.status==="away"||card.status==="dead"||card.status==="exiled";
-                    return(
-                    <div key={card.iid} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:player.command.length>2?1:3}}
-                      onMouseDown={e=>{
-                        if(e.button!==0)return;
-                        if(isAway)return; // blocked — must return to command zone first
-                        startFloatDrag(e,{...card,isCommander:true},"command");
-                      }}>
-                      {/* Portrait */}
-                      <div style={{position:"relative",cursor:isAway?"not-allowed":"grab",
-                        animation:cmdSummonAnim?"cmdPortraitPulse .4s ease-in-out 3":undefined}}>
-                        <CardImg card={card} size={player.command.length>2?"sm":"md"}
-                          onCtx={e=>handleCtx(e,card,"command")}
-                          onHover={setHovered} onHoverEnd={()=>setHovered(null)}
-                          onClick={e=>{e.stopPropagation();setHovered(card);}}/>
-                        {/* Away/blocked overlay — commander has left the command zone */}
-                        {isAway&&(
-                          <div style={{position:"absolute",inset:0,borderRadius:6,background:"rgba(0,0,0,.55)",
-                            display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-                            <span style={{fontSize:card.status==="dead"?26:card.status==="exiled"?22:18}}>
-                              {card.status==="dead"?"☠":card.status==="exiled"?"✦":"⚔"}
-                            </span>
-                            <span style={{fontSize:7,color:"rgba(255,255,255,.5)",fontFamily:"Cinzel,serif",marginTop:2}}>
-                              {card.status==="dead"?"in grave":card.status==="exiled"?"exiled":"in play"}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      {/* Name */}
-                      <div style={{fontSize:8,color:card.status?"#4a6a8a":T.accent,fontFamily:"Cinzel,serif",
-                        textAlign:"center",maxWidth:player.command.length>2?46:72,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1}}>{card.name}</div>
-                      {/* Tax counter — below portrait, symmetrical −/number/+ */}
-                      <div style={{display:"flex",alignItems:"center",gap:3}}>
-                        <button
-                          onClick={e=>{e.stopPropagation();upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:Math.max(0,(c.castCount||0)-1)}:c)}));}}
-                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:"rgba(200,168,112,.08)",border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
-                          onMouseOver={hov} onMouseOut={uhov}>−</button>
-                        <div style={{display:"flex",alignItems:"center",gap:2,
-                          background:(card.castCount||0)>0?"rgba(251,191,36,.1)":"rgba(200,168,112,.06)",
-                          border:`1px solid ${(card.castCount||0)>0?"rgba(251,191,36,.4)":"rgba(200,168,112,.2)"}`,
-                          borderRadius:4,padding:player.command.length>2?"0 3px":"1px 5px",cursor:"pointer",minWidth:player.command.length>2?28:42,justifyContent:"center"}}
-                          onClick={e=>{
-                            e.stopPropagation();
-                            const cur=card.castCount||0;
-                            const input=window.prompt("Set cast count:",String(cur));
-                            if(input===null)return;
-                            const n=parseInt(input);
-                            if(!isNaN(n)&&n>=0) upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:n}:c)}));
-                          }}
-                          title="Click to edit cast count">
-                          <span style={{fontSize:player.command.length>2?7:9}}>💎</span>
-                          <span style={{fontSize:player.command.length>2?7:9,fontFamily:"Cinzel Decorative,serif",fontWeight:700,
-                            color:(card.castCount||0)>0?"#fbbf24":T.accent}}>
-                            +{(card.castCount||0)*2}
-                          </span>
-                        </div>
-                        <button
-                          onClick={e=>{e.stopPropagation();upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:(c.castCount||0)+1}:c)}));}}
-                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:"rgba(200,168,112,.08)",border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
-                          onMouseOver={hov} onMouseOut={uhov}>+</button>
-                      </div>
-                    </div>
-                  );})}
-                </div>
-
-              </div>
-            )}
-
-            {/* ── Deck widget ── */}
-            <div ref={libRef} className="drop-target"
-              style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid ${T.border}20`,borderRadius:7,padding:"3px 3px 3px"}}>
-              {/* Title row — compact, centered */}
-              <div style={{textAlign:"center",lineHeight:1,marginBottom:2,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em"}}>DECK</span>
-                <span style={{color:player.library.length<=5?"#f87171":player.library.length<=10?"#fbbf24":T.accent,fontSize:8}}>{player.library.length}</span>
-                <button onClick={()=>setShowSearchLib(v=>!v)}
-                  style={{...btn(`${T.panel}99`,"#8a99b0",{fontSize:7,border:`1px solid ${T.border}20`,padding:"0px 3px",lineHeight:"14px"})}}
-                  onMouseOver={hov} onMouseOut={uhov}>🔍</button>
-              </div>
-              {/* Card landscape: portrait img rotated 90deg, centered via absolute positioning */}
-              <div style={{position:"relative",width:"100%",height:player.command.length>2?54:72,overflow:"hidden"}}
-                onContextMenu={e=>{e.preventDefault();if(player.library[0]){const c=(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?player.library[0]:{...player.library[0],name:"Top of Deck",imageUri:null,card_faces:null,image_uris:null};handleCtx(e,c,"library");}}}
-                onMouseDown={e=>{
-                  if(e.button!==0||!player.library[0])return;
-                  e.preventDefault();
-                  const t=setTimeout(()=>startFloatDrag(e,{...player.library[0],zone:"library"},"library"),300);
-                  const cancel=()=>{clearTimeout(t);window.removeEventListener("mouseup",cancel);};
-                  window.addEventListener("mouseup",cancel);
-                }}>
-                <img
-                  src={(player.revealTop||player.revealTopOnce===player.library[0]?.iid)&&player.library[0]?getImg(player.library[0])||CARD_BACK:(player.deck?.sleeveUri||CARD_BACK)}
-                  alt="top"
-                  style={{
-                    width:72,height:101,borderRadius:4,objectFit:"cover",display:"block",
-                    position:"absolute",
-                    top:"50%",left:"50%",
-                    transform:"translate(-50%,-50%) rotate(90deg)",
-                    border:`1px solid ${(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?T.accent:"#1e3a5f40"}`,
-                    boxShadow:(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?`0 0 12px ${T.accent}40`:"0 3px 10px rgba(0,0,0,.7)",
-                    cursor:player.library[0]?"grab":"default",
-                  }}/>
-              </div>
-              {(player.revealTop||player.revealTopOnce===player.library[0]?.iid)&&player.library[0]&&(
-                <div style={{fontSize:7,color:T.accent,textAlign:"center",marginTop:2,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                  {player.library[0].name}
-                </div>
-              )}
-            </div>
-
-            {/* Graveyard */}
-            {/* Graveyard + Exile side by side */}
-            <div style={{display:"flex",gap:3}}>
-
-              <div ref={graveRef} className="drop-target mtg-zone" data-zone="graveyard"
-                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid #1e3a5f20`,borderRadius:7,padding:"3px 3px 3px",cursor:"pointer",minWidth:0}}
-                onClick={()=>setShowGraveViewer(true)}
-                onWheel={e=>{e.preventDefault();e.stopPropagation();
-                  if(!player.graveyard.length)return;
-                  setGraveIdx(prev=>{
-                    const len=player.graveyard.length;
-                    const next=((prev+(e.deltaY>0?1:-1))%len+len)%len;
-                    setHovered(player.graveyard[next]);
-                    return next;
-                  });
-                }}>
-                <div style={{color:"#a78bfa",fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em",textAlign:"center",marginBottom:2,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                  <span>GRAVE {player.graveyard.length}</span>
-                  <span style={{cursor:"pointer",opacity:.6,fontSize:9}} onClick={e=>{e.stopPropagation();setShowGraveViewer(true);}}>🔍</span>
-                </div>
-                <div style={{display:"flex",justifyContent:"center"}}>
-                {player.graveyard.length>0?(
-                  <div style={{position:"relative"}} onClick={e=>e.stopPropagation()}
-                    onMouseDown={e=>{e.stopPropagation();if(e.button===0)startFloatDrag(e,player.graveyard[graveIdx],"graveyard");}}
-                    onContextMenu={e=>{e.stopPropagation();handleCtx(e,player.graveyard[graveIdx],"graveyard");}}>
-                    <CardImg card={player.graveyard[graveIdx]??player.graveyard[player.graveyard.length-1]} size={player.command.length>2?"sm":"md"} onHover={setHovered} onHoverEnd={()=>setHovered(null)}/>
-                  </div>
-                ):(
-                  <div style={{height:38,display:"flex",alignItems:"center",justifyContent:"center",color:"#3a3a5a",fontSize:8,fontStyle:"italic"}}>—</div>
-                )}
-                </div>
-              </div>
-
-              <div ref={exileRef} className="drop-target mtg-zone" data-zone="exile"
-                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid #1e3a5f20`,borderRadius:7,padding:"3px 3px 3px",cursor:"pointer",minWidth:0}}
-                onClick={()=>setShowExileViewer(true)}
-                onWheel={e=>{e.preventDefault();e.stopPropagation();
-                  if(!player.exile.length)return;
-                  setExileIdx(prev=>{
-                    const len=player.exile.length;
-                    const next=((prev+(e.deltaY>0?1:-1))%len+len)%len;
-                    setHovered(player.exile[next]);
-                    return next;
-                  });
-                }}>
-                <div style={{color:"#60a5fa",fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em",textAlign:"center",marginBottom:2,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                  <span>EXILE {player.exile.length}</span>
-                  <span style={{cursor:"pointer",opacity:.6,fontSize:9}} onClick={e=>{e.stopPropagation();setShowExileViewer(true);}}>🔍</span>
-                </div>
-                <div style={{display:"flex",justifyContent:"center"}}>
-                {player.exile.length>0?(
-                  <div style={{position:"relative"}} onClick={e=>e.stopPropagation()}
-                    onMouseDown={e=>{e.stopPropagation();if(e.button===0)startFloatDrag(e,player.exile[exileIdx],"exile");}}
-                    onContextMenu={e=>{e.stopPropagation();handleCtx(e,player.exile[exileIdx],"exile");}}>
-                    <CardImg card={player.exile[exileIdx]??player.exile[player.exile.length-1]} size={player.command.length>2?"sm":"md"} onHover={setHovered} onHoverEnd={()=>setHovered(null)}/>
-                  </div>
-                ):(
-                  <div style={{height:38,display:"flex",alignItems:"center",justifyContent:"center",color:"#3a3a5a",fontSize:8,fontStyle:"italic"}}>—</div>
-                )}
-                </div>
-              </div>
-
-            </div>
-
-            {/* In-game gamemat change */}
-            {showGamematPicker&&(
-              <GamematPicker
-                currentBg={player.profile?.gamemat}
-                customMats={customMats}
-                onSelect={(bg,url,name,filterStr)=>{
-                  upd(p=>({...p,profile:{...p.profile,gamemat:bg,gamematCustom:url||"",gamematFilter:filterStr||""}}));
-                  try{window.__MTG_V7__?.saveProfile?.({...player.profile, gamemat:bg, gamematCustom:url||"", gamematFilter:filterStr||""});}catch{}
-                }}
-                onSaveCustom={(bg,url,name,filterStr)=>{
-                  const newMat={name,bg,url,filter:filterStr||""};
-                  const updated=[...(customMats||[]).filter(m=>m.name!==name),newMat];
-                  setCustomMats(updated);
-                  try{localStorage.setItem("mtg_custom_mats",JSON.stringify(updated));}catch{}
-                  upd(p=>({...p,profile:{...p.profile,gamemat:bg,gamematCustom:url||"",gamematFilter:filterStr||""}}));
-                  try{window.__MTG_V7__?.saveProfile?.({...player.profile, gamemat:bg, gamematCustom:url||"", gamematFilter:filterStr||""});}catch{}
-                }}
-                onClose={()=>setShowGamematPicker(false)}/>
-            )}
-          </div>
-        </div>
+        <BoardSide
+          player={player} T={T} currentPhaseColor={currentPhaseColor}
+          gamemat={gamemat} gamematFilter={gamematFilter}
+          showDeckViewer={showDeckViewer} showChangeDeck={showChangeDeck} showGamematPicker={showGamematPicker}
+          copyMode={copyMode} cmdSummonAnim={cmdSummonAnim}
+          customMats={customMats} decks={decks}
+          selected={selected} selZone={selZone} selRect={selRect}
+          graveIdx={graveIdx} exileIdx={exileIdx}
+          bfRef={bfRef} cmdRef={cmdRef} libRef={libRef} graveRef={graveRef} exileRef={exileRef}
+          selRectRef={selRectRef} lastRightClick={lastRightClick}
+          setCtxMenu={setCtxMenu} setHovered={setHovered} setSelected={setSelected} setSelZone={setSelZone} setSelRect={setSelRect}
+          setCopyMode={setCopyMode}
+          setShowDeckViewer={setShowDeckViewer} setShowChangeDeck={setShowChangeDeck} setShowGamematPicker={setShowGamematPicker}
+          setShowSearchLib={setShowSearchLib} setShowGraveViewer={setShowGraveViewer} setShowExileViewer={setShowExileViewer}
+          setGraveIdx={setGraveIdx} setExileIdx={setExileIdx} setCustomMats={setCustomMats}
+          upd={upd} addLog={addLog} handleCtx={handleCtx} handleCardBFMouseDown={handleCardBFMouseDown} startFloatDrag={startFloatDrag}
+          tap={tap} swapDeck={swapDeck} draw={draw} shuffle={shuffle}
+          containerRef={containerRef} hand={player.hand} handRef={handRef}
+          hovered={hovered} floatDrag={floatDrag}
+        />
       </div>
 
 
 
-      {/* ═══ HAND drop-zone (zero-size invisible target) ═══ */}
-      <div ref={handRef} className="drop-target mtg-hand"
-        style={{position:"absolute",bottom:0,left:0,right:190,height:HAND_H,
-          background:"none",border:"none",outline:"none",boxShadow:"none",
-          pointerEvents:"none",zIndex:0,opacity:0}}/>
-
-      {/* ═══ HAND cards rendered as fixed overlay — no clipping possible ═══ */}
-      <HandOverlay
-        hand={player.hand}
-        handRef={handRef}
-        hovered={hovered}
-        selected={selected}
-        setHovered={setHovered}
-        setSelected={setSelected}
-        setSelZone={setSelZone}
-        startFloatDrag={startFloatDrag}
-        handleCtx={handleCtx}
-        floatDrag={floatDrag}
-      />
+      {/* v7.6 Phase 2: hand drop-zone and HandOverlay are now rendered inside
+          each BoardSide mount (local + opp). This keeps the hand positioned
+          relative to its BoardSide container so it rotates with the opp side
+          in Phase 3. The previous viewport-fixed overlay has been retired. */}
 
       {/* Priority signal overlay */}
       {priority&&(
@@ -7123,58 +7240,67 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         </div>
       )}
 
-      {/* v7.4: Incoming hand-reveal request */}
-      {incomingHandRequest&&(
+      {/* v7.6 Phase 4: Incoming zone-reveal request (hand, graveyard, or exile).
+          The owner sees this toast with Show/Deny buttons. Reveal emits a
+          zone_reveal event carrying the zone's actual cards; deny emits a
+          zone_deny. */}
+      {incomingZoneRequest&&(()=>{
+        const zone=incomingZoneRequest.zone||"hand";
+        const zoneLabel=zone==="hand"?"hand":zone==="graveyard"?"graveyard":zone==="exile"?"exile":zone;
+        const zoneCards=zone==="hand"?player.hand:zone==="graveyard"?player.graveyard:zone==="exile"?player.exile:[];
+        return (
         <div className="slide-in" style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",
           zIndex:25001,background:`linear-gradient(160deg,${T.panel},${T.bg})`,
           border:"1px solid #a78bfa60",borderRadius:10,padding:"14px 20px",
           boxShadow:"0 12px 40px rgba(0,0,0,.9)",textAlign:"center",minWidth:300}}>
           <div style={{fontSize:11,color:"#a78bfa",fontFamily:"Cinzel,serif",marginBottom:6}}>
-            👁 {incomingHandRequest.requesterAlias} wants to see your hand
+            👁 {incomingZoneRequest.requesterAlias} wants to see your {zoneLabel}
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"center"}}>
             <button onClick={()=>{
               const net=window.__MTG_V7__?.netSync;
               if(net){
-                try{net.appendEvent("hand_reveal",{
-                  requesterUserId:incomingHandRequest.requesterUserId,
+                try{net.appendEvent("zone_reveal",{
+                  zone,
+                  requesterUserId:incomingZoneRequest.requesterUserId,
                   revealerUserId:authUser?.id,
-                  cards:player.hand,
+                  cards:zoneCards,
                   ts:Date.now()
                 });}catch{}
               }
-              addLog(`👁 Revealed hand to ${incomingHandRequest.requesterAlias}`);
-              setIncomingHandRequest(null);
+              addLog(`👁 Revealed ${zoneLabel} to ${incomingZoneRequest.requesterAlias}`);
+              setIncomingZoneRequest(null);
             }} style={{...btn("rgba(74,222,128,.15)","#4ade80",{border:"1px solid rgba(74,222,128,.3)",padding:"6px 16px",fontFamily:"Cinzel,serif"})}}
             onMouseOver={hov} onMouseOut={uhov}>✓ Show</button>
             <button onClick={()=>{
               const net=window.__MTG_V7__?.netSync;
-              if(net){try{net.appendEvent("hand_deny",{requesterUserId:incomingHandRequest.requesterUserId,ts:Date.now()});}catch{}}
-              setIncomingHandRequest(null);
+              if(net){try{net.appendEvent("zone_deny",{zone,requesterUserId:incomingZoneRequest.requesterUserId,ts:Date.now()});}catch{}}
+              setIncomingZoneRequest(null);
             }} style={{...btn("rgba(248,113,113,.1)","#f87171",{border:"1px solid rgba(248,113,113,.2)",padding:"6px 14px"})}}
               onMouseOver={hov} onMouseOut={uhov}>✕ Deny</button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
-      {/* v7.4: Outgoing hand-request status (pending / denied / timeout) */}
-      {handRequestPending&&(
+      {/* v7.6 Phase 4: Outgoing zone-request status (pending / denied / timeout). */}
+      {outgoingZoneRequest&&(
         <div style={{position:"fixed",top:120,right:20,zIndex:24000,
           background:`linear-gradient(160deg,${T.panel}e0,${T.bg}e0)`,
           border:"1px solid #a78bfa40",borderRadius:8,padding:"10px 14px",
           fontSize:10,color:"#a78bfa",fontFamily:"Cinzel,serif"}}>
-          👁 Waiting for {handRequestPending.targetAlias}…
+          👁 Waiting for {outgoingZoneRequest.targetAlias}'s {outgoingZoneRequest.zone||"hand"}…
         </div>
       )}
-      {handRequestStatus&&(
+      {zoneRequestStatus&&(
         <div style={{position:"fixed",top:120,right:20,zIndex:24000,
           background:`linear-gradient(160deg,${T.panel}e0,${T.bg}e0)`,
-          border:`1px solid ${handRequestStatus.type==="denied"?"#f87171":"#fbbf24"}60`,
+          border:`1px solid ${zoneRequestStatus.type==="denied"?"#f87171":"#fbbf24"}60`,
           borderRadius:8,padding:"10px 14px",
-          fontSize:10,color:handRequestStatus.type==="denied"?"#f87171":"#fbbf24",fontFamily:"Cinzel,serif"}}>
-          {handRequestStatus.type==="denied"
-            ? `✕ ${handRequestStatus.alias} denied the request`
-            : `⏱ No response from ${handRequestStatus.alias}`}
+          fontSize:10,color:zoneRequestStatus.type==="denied"?"#f87171":"#fbbf24",fontFamily:"Cinzel,serif"}}>
+          {zoneRequestStatus.type==="denied"
+            ? `✕ ${zoneRequestStatus.alias} denied the ${zoneRequestStatus.zone||"hand"} request`
+            : `⏱ No response from ${zoneRequestStatus.alias} (${zoneRequestStatus.zone||"hand"})`}
         </div>
       )}
 
@@ -7337,6 +7463,34 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           }}
           onClose={()=>setShowExileViewer(false)}/>
       )}
+
+      {/* v7.6 Phase 4-C: revealed-zone viewer modals (readOnly). One modal per
+          currently-revealed opponent zone. Reuses ZoneViewerModal with all
+          mutation callbacks undefined so bulk buttons and the inline context
+          menu auto-suppress (they key off onBulkExile/onBulkShuffle and the
+          zone strict-match "graveyard"/"exile"). `opp_{zone}` passes the
+          strict-match suppression naturally. Hover preview still works. */}
+      {Object.entries(revealedOppZones).map(([zone,data])=>{
+        if(!data||!Array.isArray(data.cards)||data.cards.length===0) return null;
+        const zoneLabel = zone==="hand"?"Hand":zone==="graveyard"?"Graveyard":zone==="exile"?"Exile":zone;
+        const zoneIcon  = zone==="hand"?"✋":zone==="graveyard"?"☠":zone==="exile"?"✦":"•";
+        const zoneColor = zone==="hand"?T.accent:zone==="graveyard"?"#a78bfa":zone==="exile"?"#60a5fa":T.border;
+        const alias     = opponent?.profile?.alias||"Opponent";
+        const closeOne  = ()=>setRevealedOppZones(prev=>{
+          const next={...prev}; delete next[zone]; return next;
+        });
+        return(
+          <ZoneViewerModal
+            key={`revealed-${zone}`}
+            title={`${alias}'s ${zoneLabel} · revealed`}
+            icon={zoneIcon} color={zoneColor}
+            cards={data.cards} zone={`opp_${zone}`}
+            onHover={setHovered}
+            onClose={closeOne}
+          />
+        );
+      })}
+
       {/* Copy mode banner — pointerEvents:none so clicks reach battlefield cards */}
       {copyMode&&(
         <div className="fade-in" style={{position:"fixed",top:0,left:0,right:0,
@@ -8804,19 +8958,23 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
           window.dispatchEvent(new CustomEvent('mtg:remote-chat', { detail: p }));
         } else if (ev.kind === 'action') {
           window.dispatchEvent(new CustomEvent('mtg:remote-action', { detail: p }));
-        } else if (ev.kind === 'hand_request') {
-          // Someone is asking to see MY hand (target=me) — surface a prompt.
+        } else if (ev.kind === 'zone_request' || ev.kind === 'hand_request') {
+          // Someone is asking to see one of MY zones (target=me) — surface a prompt.
+          // Legacy `hand_request` kind defaults zone to "hand".
           if (p.targetUserId === authUser.id) {
-            window.dispatchEvent(new CustomEvent('mtg:hand-request', { detail: p }));
+            const payload = ev.kind === 'zone_request' ? p : {...p, zone:'hand'};
+            window.dispatchEvent(new CustomEvent('mtg:zone-request', { detail: payload }));
           }
-        } else if (ev.kind === 'hand_reveal') {
-          // Someone approved a reveal — if I requested it, show their hand.
+        } else if (ev.kind === 'zone_reveal' || ev.kind === 'hand_reveal') {
+          // Someone approved a reveal — if I requested it, show their zone.
           if (p.requesterUserId === authUser.id) {
-            window.dispatchEvent(new CustomEvent('mtg:hand-reveal', { detail: p }));
+            const payload = ev.kind === 'zone_reveal' ? p : {...p, zone:'hand'};
+            window.dispatchEvent(new CustomEvent('mtg:zone-reveal', { detail: payload }));
           }
-        } else if (ev.kind === 'hand_deny') {
+        } else if (ev.kind === 'zone_deny' || ev.kind === 'hand_deny') {
           if (p.requesterUserId === authUser.id) {
-            window.dispatchEvent(new CustomEvent('mtg:hand-deny', { detail: p }));
+            const payload = ev.kind === 'zone_deny' ? p : {...p, zone:'hand'};
+            window.dispatchEvent(new CustomEvent('mtg:zone-deny', { detail: payload }));
           }
         }
       });
