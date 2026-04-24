@@ -3248,12 +3248,28 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
       const metas=await Promise.all((keys.keys||[]).filter(k=>k.endsWith("_meta")).map(async k=>{try{const r=await storage.get(k,true);return r?JSON.parse(r.value):null;}catch{return null;}}));
       setRooms(metas.filter(Boolean).filter(m=>m.status==="waiting"));}catch{setRooms([]);}};
 
-  useEffect(()=>{loadRooms();const t=setInterval(loadRooms,3000);return()=>clearInterval(t);},[]);
+  useEffect(()=>{
+    // v7.6.2: on lobby mount, sweep stale rows from any rooms I still occupy
+    // (e.g. browser-closed previous sessions). Without this, stale "2/2 full"
+    // rooms haunt the list and block re-creation.
+    (async()=>{
+      try{
+        const { cleanupMyStaleRooms } = await import("./lib/storage");
+        await cleanupMyStaleRooms();
+      }catch(e){ console.warn("[lobby-mount cleanup]",e); }
+      loadRooms();
+    })();
+    const t=setInterval(loadRooms,3000);
+    return()=>clearInterval(t);
+  },[]);
 
   const createRoom=async()=>{
     if(!roomName.trim())return;
     if(!selDeckId){alert("Please select a deck first");return;}
     setLoading(true);
+    // v7.6.2: sweep any stale rows from previous rooms (e.g. browser closes
+    // without explicit Leave). Otherwise those rooms linger at 2/2 forever.
+    try{ const { cleanupMyStaleRooms } = await import("./lib/storage"); await cleanupMyStaleRooms(); }catch(e){ console.warn("[createRoom cleanup]",e); }
     const id=uid();
     // v7.4: host publishes their entire deck library so guests can pick from it
     const meta={id,name:roomName.trim(),host:profile.alias,hostAvatar:profile.avatar,maxPlayers:maxP,gamemode,players:[{alias:profile.alias,avatar:profile.avatar,ready:false}],status:"waiting",created:Date.now(),hostDecks:decks};
@@ -3262,6 +3278,10 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
 
   const joinRoom=async(roomId)=>{
     setLoading(true);
+    // v7.6.2: sweep stale rows from OTHER rooms before this join — otherwise
+    // the user sees those rooms as "2/2 full" forever. Keep the target room
+    // intact in case we're rejoining a room we already have a row in.
+    try{ const { cleanupMyStaleRooms } = await import("./lib/storage"); await cleanupMyStaleRooms(roomId); }catch(e){ console.warn("[joinRoom cleanup]",e); }
     try{const r=await storage.get(`room_${roomId}_meta`,true);if(!r){alert("Room not found");setLoading(false);return;}
       const meta=JSON.parse(r.value);
       // v7.6.1: rejoin detection — if this user already has a row in room_players,
@@ -3355,13 +3375,21 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             return pr?.deck || (pr?.deckId?decks.find(d=>d.id===pr.deckId):null) || myDeck;
           });
           const extraProfiles=extraSeats.map(i=>playerRows[i]?.profile||{alias:`Player ${i+1}`,avatar:"🧙"});
+          // v7.6.2: also pass the primary opp's profile explicitly.
+          // Previously startGame used extraProfiles[0] for opp, which is wrong:
+          // extraProfiles excludes both me and primary opp — it's the 3rd/4th seats.
+          // In 2p this meant opp got a generic fallback profile (no real playmat).
+          const oppProfile = oppRow?.profile || {alias:"Opponent",avatar:"🧙"};
           onJoinGame({
             roomId:myRoomId,
             playerIdx:mySeatIdx,
             myDeck,
             otherDeck,
+            oppProfile,
             extraDecks,
             extraProfiles,
+            extraSeats,
+            maxPlayers: meta.maxPlayers,
             meta,
             isOnline:true,
             gamemode,
@@ -3640,7 +3668,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
 }
 
 /* ─── HandOverlay — cards rendered as position:fixed, no clipping ─── */
-function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setSelected,setSelZone,startFloatDrag,handleCtx,floatDrag}){
+function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setSelected,setSelZone,startFloatDrag,handleCtx,floatDrag,readOnly=false}){
   const [rect,setRect]=useState(null);
   useEffect(()=>{
     function update(){
@@ -3668,21 +3696,29 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
   if(!rect||hand.length===0)return null;
 
   const total=hand.length;
-  // Smaller cards
-  const cardW=Math.round(CW*0.88);
-  const cardH=Math.round(CH*0.88);
+  // v7.6.2: readOnly (opponent) hand — smaller cards, and positioned at the
+  // TOP of the strip instead of peeking up above it. Critical: the opp wrapper
+  // is rotated 180°, so what renders at the strip's TOP in unrotated coords
+  // ends up at the strip's BOTTOM visually — but that's the TOP of the opp
+  // wrapper after rotation, which is the TOP of the screen. This is the
+  // "mirroring my hand at the top edge" the user asked for.
+  const cardScale = readOnly ? 0.55 : 0.88;
+  const cardW=Math.round(CW*cardScale);
+  const cardH=Math.round(CH*cardScale);
   // Always overlap — starts at 8px, grows with hand size, capped so all cards fit in zone width
   const zoneW=rect.width;
   const maxTotalW=zoneW*0.95; // never exceed 95% of zone width
-  const baseOverlap=8+Math.max(0,(total-5)*4); // more overlap as hand grows
+  const baseOverlap=(readOnly?6:8)+Math.max(0,(total-5)*(readOnly?3:4)); // more overlap as hand grows
   // Calculate step so cards always fit: step = (maxTotalW - cardW) / (total-1)
   const fittedStep=total>1?Math.min(cardW-baseOverlap,(maxTotalW-cardW)/(total-1)):cardW;
-  const step=Math.max(16,fittedStep); // never collapse below 16px step
+  const step=Math.max(readOnly?10:16,fittedStep); // never collapse below 16px step (10 for opp)
   const totalW=cardW+(total-1)*step;
   // Center within zone
   const startX=rect.left+(zoneW-totalW)/2;
-  // Lift cards higher above the drop zone
-  const baseY=rect.bottom-20;
+  // Y anchor: local player → cards peek ABOVE the strip (y = baseY - cardH, baseY near strip bottom).
+  //           opp (readOnly, rotated 180°) → cards stuck to TOP of strip (y = strip.top + small offset).
+  //           After rotation, that becomes bottom-of-strip visually = TOP of opp wrapper = screen top.
+  const baseY=readOnly?(rect.top+6):(rect.bottom-20);
 
   const hovIdx=hovered?hand.findIndex(c=>c.iid===hovered.iid):-1;
 
@@ -3704,7 +3740,11 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
         const rot=isHov?fanRot*0.3:fanRot;
         const translateY=yOff+liftY;
         const x=startX+idx*step;
-        const y=baseY-cardH; // fixed top — never changes
+        // v7.6.2: readOnly (opp) anchors by card TOP to baseY (near strip top).
+        // After the wrapper's 180° rotation this renders visually at strip
+        // bottom = top of opp wrapper = top of screen — mirroring the local
+        // player's hand at the bottom of the screen.
+        const y=readOnly?baseY:(baseY-cardH); // fixed top — never changes
 
         return(
           <div key={card.iid}
@@ -5294,6 +5334,7 @@ function BoardSide({
                   : (readOnly ? NOOP : handleCtx)
               }
               floatDrag={floatDrag}
+              readOnly={readOnly}
             />
           )}
         </div>
@@ -6091,24 +6132,38 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
     const rawX=e.clientX-rect.left-drag.ox;
     const rawY=e.clientY-rect.top-drag.oy;
     const iid=drag.iid;
+    // v7.6.2: collect moved-card positions to broadcast via the position-delta
+    // channel (tiny payload, high throttle). Drag no longer relies on the full
+    // state broadcast path which was too heavy for real-time at 60Hz.
+    const movedPositions=[];
     upd(p=>{
       const anchor=p.battlefield.find(c=>c.iid===iid);
       if(!anchor)return p;
       // Delta from anchor's PREVIOUS position to new raw position
       const dx=rawX-anchor.x, dy=rawY-anchor.y;
-      return{...p,battlefield:p.battlefield.map(c=>{
+      const newBf=p.battlefield.map(c=>{
         if(c.iid===iid){
-          // Dragged card clamps to bounds
-          return{...c,x:clamp(rawX,minX,maxX),y:clamp(rawY,minY,maxY)};
+          const nx=clamp(rawX,minX,maxX), ny=clamp(rawY,minY,maxY);
+          movedPositions.push({iid:c.iid,x:nx,y:ny});
+          return{...c,x:nx,y:ny};
         }
         if(selected.has(c.iid)){
-          // Each selected card moves by the same delta, clamped independently
-          return{...c,x:clamp((c.x||0)+dx,minX,maxX),y:clamp((c.y||0)+dy,minY,maxY)};
+          const nx=clamp((c.x||0)+dx,minX,maxX), ny=clamp((c.y||0)+dy,minY,maxY);
+          movedPositions.push({iid:c.iid,x:nx,y:ny});
+          return{...c,x:nx,y:ny};
         }
         return c;
-      })};
+      });
+      return{...p,battlefield:newBf};
     });
-  },[upd,selected]);
+    // Fire lightweight position delta — throttled inside NetSync to ~25 Hz.
+    if(isOnline && movedPositions.length>0){
+      const net=window.__MTG_V7__?.netSync;
+      if(net && typeof net.broadcastPositions==='function'){
+        try{ net.broadcastPositions(playerIdx, movedPositions); }catch(e){ console.warn('[broadcastPositions]',e); }
+      }
+    }
+  },[upd,selected,isOnline,playerIdx]);
 
   const handleBFMouseUp=useCallback(e=>{
     const drag=bfDragRef.current;
@@ -8938,26 +8993,45 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     return next;
   }),[broadcastIfOnline]);
 
-  const startGame=(deck,isTwoPlayer=false,isOnline=false,roomId=null,playerIdx=0,otherDeck=null,gamemode=null,extraDecks=null,extraProfiles=null)=>{
+  const startGame=(deck,isTwoPlayer=false,isOnline=false,roomId=null,playerIdx=0,otherDeck=null,gamemode=null,extraDecks=null,extraProfiles=null,extras=null)=>{
     const fmt=gamemode||deck.format||"standard";
     const life=getStartingLife(fmt);
     // Dandan: both players get dandan deck
-    const d1=fmt==="dandan"?DANDAN_DECK:deck;
-    const d2=fmt==="dandan"?DANDAN_DECK:(otherDeck||deck);
+    const dMine=fmt==="dandan"?DANDAN_DECK:deck;
+    const dOpp=fmt==="dandan"?DANDAN_DECK:(otherDeck||deck);
     // v7.4: always stamp my own userId on my profile so opponents can target hand-reveal requests.
     const myProfile = {...profile, userId: authUser?.id};
-    const p1=initPlayer(d1,myProfile,life);
-    const p2=initPlayer(d2,isTwoPlayer||isOnline?(extraProfiles?.[0]||{alias:"Opponent",avatar:"🧙",gamemat:GAMEMATS[0].bg}):myProfile,life);
-    // v7: support 3 or 4 players. extraDecks/extraProfiles arrays hold the
-    // additional seats. p3/p4 are only added when an array entry exists.
-    const extra=[];
-    if(extraDecks && extraDecks[0]){
-      extra.push(initPlayer(fmt==="dandan"?DANDAN_DECK:extraDecks[0], extraProfiles?.[1]||{alias:"Player 3",avatar:"🧙",gamemat:GAMEMATS[0].bg}, life));
+
+    // v7.6.2: SEAT-INDEXED PLAYER ARRAY. Prior versions always put the local
+    // user at players[0] and opp at players[1], regardless of actual seat. For
+    // a joiner (playerIdx=1), this meant myPlayerIdx pointed at slot 1 which
+    // held OPP data — joiner saw their own deck labelled as opponent, and
+    // opp's deck labelled as theirs. Fix: place each player's data at their
+    // ABSOLUTE seat index so all peers have consistent seat indexing.
+    const maxP = Math.max(2, extras?.maxPlayers || (isTwoPlayer||isOnline ? 2 : 2));
+    const oppSeat = isOnline ? ((playerIdx + 1) % maxP) : (1 - playerIdx);
+    const oppProfile = extras?.oppProfile ||
+      (isTwoPlayer||isOnline
+        ? {alias:"Opponent",avatar:"🧙",gamemat:GAMEMATS[0].bg}
+        : myProfile);
+    const extraSeats = Array.isArray(extras?.extraSeats) ? extras.extraSeats : [];
+
+    const seats = new Array(maxP).fill(null);
+    seats[playerIdx] = initPlayer(dMine, myProfile, life);
+    seats[oppSeat]   = initPlayer(dOpp, oppProfile, life);
+    // Fill 3rd/4th seats at their absolute indices.
+    if (Array.isArray(extraDecks)) {
+      extraSeats.forEach((seatIdx, k) => {
+        const d  = fmt==="dandan" ? DANDAN_DECK : (extraDecks[k] || dMine);
+        const pr = extraProfiles?.[k] || {alias:`Player ${seatIdx+1}`,avatar:"🧙",gamemat:GAMEMATS[0].bg};
+        seats[seatIdx] = initPlayer(d, pr, life);
+      });
     }
-    if(extraDecks && extraDecks[1]){
-      extra.push(initPlayer(fmt==="dandan"?DANDAN_DECK:extraDecks[1], extraProfiles?.[2]||{alias:"Player 4",avatar:"🧙",gamemat:GAMEMATS[0].bg}, life));
+    // Any empty seats (shouldn't happen normally, but be safe): fill with me.
+    for (let i=0; i<maxP; i++) {
+      if (!seats[i]) seats[i] = initPlayer(dMine, myProfile, life);
     }
-    const players=[p1,p2,...extra];
+    const players = seats;
 
     // v7: stop any stale net sync from a previous game
     if(netRef.current){ netRef.current.stop().catch(()=>{}); netRef.current=null; }
@@ -8987,6 +9061,36 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
               merged.players = remoteState.players.map((p, i) => i === mine ? gs.players[i] : p);
             }
             return merged;
+          });
+        },
+        // v7.6.2: lightweight position deltas for drag — patch only the
+        // moved cards on the sender's seat. Massively reduces the payload
+        // (from ~50KB full state to a few KB) so Supabase Realtime can
+        // actually keep up during 60Hz mousemove drags.
+        onPositions:(data)=>{
+          // data: {seatIdx, positions: [{iid, x, y, tapped?}, ...]}
+          if(!data || typeof data.seatIdx !== 'number' || !Array.isArray(data.positions)) return;
+          setGameState(gs=>{
+            if(!gs || !Array.isArray(gs.players) || !gs.players[data.seatIdx]) return gs;
+            const mine = gs.myPlayerIdx ?? 0;
+            // Never patch our own seat from incoming positions (we're authoritative)
+            if (data.seatIdx === mine) return gs;
+            const seat = gs.players[data.seatIdx];
+            const bf = Array.isArray(seat.battlefield) ? seat.battlefield : [];
+            const posMap = new Map(data.positions.map(p => [p.iid, p]));
+            const newBf = bf.map(c => {
+              const p = posMap.get(c.iid);
+              if (!p) return c;
+              return {
+                ...c,
+                x: typeof p.x === 'number' ? p.x : c.x,
+                y: typeof p.y === 'number' ? p.y : c.y,
+                ...(p.tapped !== undefined ? { tapped: !!p.tapped } : {}),
+              };
+            });
+            const newPlayers = gs.players.slice();
+            newPlayers[data.seatIdx] = { ...seat, battlefield: newBf };
+            return { ...gs, players: newPlayers };
           });
         },
       });
@@ -9131,9 +9235,9 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
 
   if(view==="profile")return<ProfileSetup existing={profile} onSave={async(p)=>{await saveProfile(p); setView("menu");}}/>;
   if(view==="deckbuilder")return<DeckBuilder deck={editingDeck} onSave={saveDeck} onBack={()=>setView("menu")} customCards={customCards}/>;
-  if(view==="rooms")return<RoomLobby profile={profile} decks={decks} onBack={()=>setView("menu")} onJoinGame={({roomId,playerIdx=0,myDeck,otherDeck,isOnline,isLocal,gamemode,extraDecks,extraProfiles})=>{
+  if(view==="rooms")return<RoomLobby profile={profile} decks={decks} onBack={()=>setView("menu")} onJoinGame={({roomId,playerIdx=0,myDeck,otherDeck,oppProfile,isOnline,isLocal,gamemode,extraDecks,extraProfiles,extraSeats,maxPlayers})=>{
     if(isLocal)startGame(myDeck,true,false,null,0,otherDeck,gamemode,extraDecks,extraProfiles);
-    else startGame(myDeck,false,true,roomId,playerIdx,otherDeck,gamemode,extraDecks,extraProfiles);
+    else startGame(myDeck,false,true,roomId,playerIdx,otherDeck,gamemode,extraDecks,extraProfiles,{oppProfile,extraSeats,maxPlayers});
   }}/>;
 
   if(view==="game"&&gameState){

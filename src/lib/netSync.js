@@ -1,24 +1,24 @@
-/*  src/lib/netSync.js — v7.6.1
+/*  src/lib/netSync.js — v7.6.2
     ─────────────────────────────────────────────────────────────────────────
     Game-state sync + event log over Supabase Realtime.
 
-    v7.6.1 rewrite — DUAL-PATH SYNC:
-      - Fast path: Realtime *broadcast channel* delivers masked state to
-        peers over pure WebSocket (no DB roundtrip). Typical latency ~50ms.
-      - Durable path: Debounced `game_state` upsert persists the latest
-        broadcast for rejoin recovery. Longer debounce (500ms) is fine —
-        real-time sync is handled by the fast path.
-      - Incoming merge: broadcast takes precedence when fresher (monotonic
-        per-user seq); postgres_changes only closes gaps after reconnects.
-
-    Why the change: v7.5 routed EVERY update through a Postgres upsert +
-    `postgres_changes` replication event. Under load (drags, many cards on
-    BF, free-tier instance) this produced 5-10 second delays that made
-    live drag unusable. Broadcast channels bypass Postgres entirely.
+    v7.6.2 — Real-time perf overhaul:
+      - channel.send() was firing on EVERY broadcast (60/sec during drag).
+        Supabase free tier rate-limits at ~100 msg/sec; messages buffered
+        server-side → 5-10 second visible lag. NOW: trailing-edge throttle
+        at 50ms (20 Hz max).
+      - Added broadcastPositions(seatIdx, positions) — tiny-payload delta
+        channel for drag updates. Carries only {iid, x, y, tapped} per card.
+        Receiver's onPositions callback patches local state without a full
+        state replace. Keeps drag smooth without overwhelming the pipe.
+      - Full-state broadcast still exists (for tap, zone moves, life changes,
+        etc.) but throttled.
+      - DB upsert debounce: 800ms (persistence backstop for rejoin).
+      - postgres_changes fallback remains for cold-start state hydration.
 
     v7.4 additions preserved:
       - loadHistory(): SELECT recent game_events on join.
-      - events stamped with user_id + alias for correct attribution.
+      - events stamped with user_id + alias.
       - appendEvent / subscribeEvents helpers.
     ─────────────────────────────────────────────────────────────────────────
 */
@@ -26,27 +26,41 @@
 import { supabase } from './supabase';
 
 export class NetSync {
-  constructor({ roomId, userId, alias, onRemoteState }) {
+  constructor({ roomId, userId, alias, onRemoteState, onPositions }) {
     this.roomId        = roomId;
     this.userId        = userId;
     this.alias         = alias || 'Player';
     this.onRemoteState = onRemoteState;
+    this.onPositions   = onPositions || null;
 
-    // Per-sender monotonic sequence for broadcast dedupe.
+    // Per-sender monotonic sequence for dedupe.
     this.outSeq         = 0;
-    this.lastSeenByUser = {};  // userId -> highest seq we've applied
+    this.lastSeenByUser = {};  // userId -> highest state seq
+    this.lastPosSeenByUser = {};  // userId -> highest position seq
 
     this.channel      = null;
     this.evtChannel   = null;
-    this.pending      = null;
-    this.flushTimer   = null;
+
+    // Full-state broadcast throttle (channel.send) — trailing edge.
+    this.broadcastTimer   = null;
+    this.pendingBroadcast = null;
+
+    // Position-broadcast throttle — trailing edge, shorter interval.
+    this.positionTimer   = null;
+    this.pendingPositions = null;  // {seatIdx, positions}
+
+    // DB upsert debounce (persistence only, not latency-critical).
+    this.pendingDb   = null;
+    this.flushTimer  = null;
+
     this.subscribed   = false;
     this.closed       = false;
 
-    // DB upsert debounce — longer than pre-v7.6.1 because broadcast carries
-    // the real-time work. 500ms means ~2 persistent snapshots/sec maximum,
-    // which is plenty for rejoin recovery and keeps DB writes modest.
-    this.dbDebounceMs = 500;
+    // Tunable timings. Throttle too low → rate limits; too high → visible jitter.
+    // 50ms = 20Hz broadcasts, 40ms = 25Hz position updates, 800ms = durable DB writes.
+    this.broadcastThrottleMs = 50;
+    this.positionThrottleMs  = 40;
+    this.dbDebounceMs        = 800;
   }
 
   async start() {
@@ -57,17 +71,12 @@ export class NetSync {
       this.onRemoteState(data.state, { initial: true });
     }
 
-    // 2) Subscribe to broadcast channel (fast path) + postgres_changes
-    //    (durable fallback, mainly useful when rejoining).
+    // 2) Subscribe to broadcast channel (fast path: state + positions)
+    //    + postgres_changes (durable fallback).
     this.channel = supabase
-      .channel(`gs:${this.roomId}`, {
-        config: {
-          // Don't echo our own broadcasts back to us.
-          broadcast: { self: false, ack: false },
-          presence: { key: this.userId },
-        },
-      })
-      .on('broadcast', { event: 'state' }, (msg) => this._handleBroadcast(msg))
+      .channel(`gs:${this.roomId}`)
+      .on('broadcast', { event: 'state' },     (msg) => this._handleState(msg))
+      .on('broadcast', { event: 'positions' }, (msg) => this._handlePositions(msg))
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
@@ -79,36 +88,43 @@ export class NetSync {
       });
   }
 
-  // ── Broadcast path ─────────────────────────────────────────────────────
-  // Called by Playground on every local state change. Fire-and-forget via
-  // the Realtime channel for instant delivery, AND schedule a debounced DB
-  // upsert for persistence.
+  // ── FULL STATE PATH ────────────────────────────────────────────────────
+  // For non-drag updates (tap, life change, zone moves, etc.). Throttled
+  // trailing-edge at 50ms.
 
   broadcast(state) {
     if (this.closed) return;
+    this.pendingBroadcast = state;
+    this.pendingDb = state;
 
-    // 1) Instant broadcast via Realtime channel
-    this.outSeq += 1;
-    const seq = this.outSeq;
-    if (this.channel) {
-      try {
-        // Fire-and-forget. Before `subscribed` is true this may no-op;
-        // receivers catch up via the next postgres_changes event.
-        this.channel.send({
-          type: 'broadcast',
-          event: 'state',
-          payload: { state, seq, from: this.userId, ts: Date.now() },
-        });
-      } catch (e) { console.warn('[netSync.broadcast.send]', e); }
+    // Throttle channel send
+    if (!this.broadcastTimer) {
+      this.broadcastTimer = setTimeout(() => {
+        this.broadcastTimer = null;
+        this._sendState(this.pendingBroadcast);
+        this.pendingBroadcast = null;
+      }, this.broadcastThrottleMs);
     }
-
-    // 2) Schedule durable DB upsert
-    this.pending = state;
-    if (this.flushTimer) return;
-    this.flushTimer = setTimeout(() => this.flush(), this.dbDebounceMs);
+    // Debounce DB upsert (persistence)
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flush(), this.dbDebounceMs);
+    }
   }
 
-  _handleBroadcast(msg) {
+  _sendState(state) {
+    if (!state || this.closed || !this.channel) return;
+    this.outSeq += 1;
+    const seq = this.outSeq;
+    try {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'state',
+        payload: { state, seq, from: this.userId, ts: Date.now() },
+      });
+    } catch (e) { console.warn('[netSync._sendState]', e); }
+  }
+
+  _handleState(msg) {
     if (this.closed) return;
     const data = msg?.payload;
     if (!data || data.from === this.userId) return;
@@ -119,19 +135,76 @@ export class NetSync {
     catch (e) { console.warn('[netSync.onRemoteState broadcast]', e); }
   }
 
+  // ── POSITION-ONLY DELTA PATH ───────────────────────────────────────────
+  // For drag updates. Payload is tiny (few KB at most), throttled to ~25Hz.
+  // This is what makes live drag appear real-time.
+
+  broadcastPositions(seatIdx, positions) {
+    if (this.closed) return;
+    if (!Array.isArray(positions) || positions.length === 0) return;
+    // Merge into pending — latest positions win for each iid
+    if (!this.pendingPositions || this.pendingPositions.seatIdx !== seatIdx) {
+      this.pendingPositions = { seatIdx, positions: [...positions] };
+    } else {
+      const map = new Map();
+      for (const p of this.pendingPositions.positions) map.set(p.iid, p);
+      for (const p of positions) map.set(p.iid, p);
+      this.pendingPositions.positions = Array.from(map.values());
+    }
+    if (!this.positionTimer) {
+      this.positionTimer = setTimeout(() => {
+        this.positionTimer = null;
+        this._sendPositions(this.pendingPositions);
+        this.pendingPositions = null;
+      }, this.positionThrottleMs);
+    }
+  }
+
+  _sendPositions(pending) {
+    if (!pending || this.closed || !this.channel) return;
+    this.outSeq += 1;
+    const seq = this.outSeq;
+    try {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'positions',
+        payload: {
+          seatIdx: pending.seatIdx,
+          positions: pending.positions,
+          seq, from: this.userId, ts: Date.now(),
+        },
+      });
+    } catch (e) { console.warn('[netSync._sendPositions]', e); }
+  }
+
+  _handlePositions(msg) {
+    if (this.closed) return;
+    const data = msg?.payload;
+    if (!data || data.from === this.userId) return;
+    const prev = this.lastPosSeenByUser[data.from] || 0;
+    if (typeof data.seq === 'number' && data.seq <= prev) return;
+    this.lastPosSeenByUser[data.from] = data.seq || 0;
+    if (this.onPositions) {
+      try { this.onPositions(data); }
+      catch (e) { console.warn('[netSync.onPositions]', e); }
+    }
+  }
+
+  // ── Durable persistence path ──────────────────────────────────────────
+
   _handlePostgres(payload) {
     if (this.closed) return;
     const row = payload.new || payload.record;
     if (!row) return;
-    if (row.last_writer === this.userId) return;  // our own upsert echo
+    if (row.last_writer === this.userId) return;
     try { this.onRemoteState(row.state, { initial: false, path: 'postgres' }); }
     catch (e) { console.warn('[netSync.onRemoteState postgres]', e); }
   }
 
   async flush() {
     this.flushTimer = null;
-    const state = this.pending;
-    this.pending = null;
+    const state = this.pendingDb;
+    this.pendingDb = null;
     if (!state || this.closed) return;
     try {
       const { data } = await supabase.from('game_state')
@@ -149,7 +222,7 @@ export class NetSync {
     } catch (e) { console.warn('[netSync.flush exception]', e); }
   }
 
-  // ── Event log (chat, action attribution) — unchanged from v7.4 ────────
+  // ── Event log (chat, action attribution) — unchanged ──────────────────
 
   async appendEvent(kind, payload) {
     if (this.closed) return;
@@ -191,9 +264,11 @@ export class NetSync {
 
   async stop() {
     this.closed = true;
-    if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
+    if (this.broadcastTimer) { clearTimeout(this.broadcastTimer); this.broadcastTimer = null; }
+    if (this.positionTimer)  { clearTimeout(this.positionTimer);  this.positionTimer  = null; }
+    if (this.flushTimer)     { clearTimeout(this.flushTimer);     this.flushTimer     = null; }
     // Final flush so the DB reflects terminal state for rejoin recovery.
-    if (this.pending) { try { await this.flush(); } catch {} }
+    if (this.pendingDb) { try { await this.flush(); } catch {} }
     if (this.channel)    { await supabase.removeChannel(this.channel); this.channel = null; }
     if (this.evtChannel) { await supabase.removeChannel(this.evtChannel); this.evtChannel = null; }
   }

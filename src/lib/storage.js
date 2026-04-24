@@ -222,7 +222,7 @@ export const storage = {
   async list(prefix = '', isShared = false) { return (isShared ? shared : local).list(prefix); },
 };
 
-// v2 fix (bug #3): explicit leaveRoom — removes own row from room_players
+// v7.6.1 fix (bug #3): explicit leaveRoom — removes own row from room_players
 // so the seat frees up. If the caller is the host, also closes the room
 // so it disappears from the lobby list.
 export async function leaveRoom(roomId) {
@@ -245,6 +245,43 @@ export async function leaveRoom(roomId) {
       }
     }
   } catch (e) { console.warn('[leaveRoom]', e); }
+}
+
+// v7.6.2: sweep all my stale room_players rows. Call on app mount and before
+// creating/joining a new room. Prevents the "3 rooms stuck at 2/2" bug when a
+// user force-closes the browser without explicit leave. Optionally keep one
+// room if we're currently joined to it (rejoin-in-progress flow).
+export async function cleanupMyStaleRooms(keepRoomId = null) {
+  try {
+    const { data: u } = await supabase.auth.getUser();
+    const me = u?.user?.id;
+    if (!me) return;
+    // Find all rooms I still have rows in
+    const { data: myRows } = await supabase
+      .from('room_players')
+      .select('room_id')
+      .eq('user_id', me);
+    if (!Array.isArray(myRows) || myRows.length === 0) return;
+    const roomIds = [...new Set(myRows.map(r => r.room_id))].filter(id => id !== keepRoomId);
+    if (roomIds.length === 0) return;
+    // Delete my rows in all those rooms
+    await supabase.from('room_players').delete()
+      .eq('user_id', me)
+      .in('room_id', roomIds);
+    // For rooms where I was host AND now empty, mark closed
+    for (const rid of roomIds) {
+      try {
+        const { data: room } = await supabase.from('rooms')
+          .select('host_id, status').eq('id', rid).maybeSingle();
+        if (!room) continue;
+        const { count } = await supabase.from('room_players')
+          .select('*', { count: 'exact', head: true }).eq('room_id', rid);
+        if (room.host_id === me || (count || 0) === 0) {
+          await supabase.from('rooms').update({ status: 'closed' }).eq('id', rid);
+        }
+      } catch {}
+    }
+  } catch (e) { console.warn('[cleanupMyStaleRooms]', e); }
 }
 
 export default storage;
