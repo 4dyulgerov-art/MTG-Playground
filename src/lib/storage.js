@@ -190,9 +190,11 @@ const shared = {
     try {
       // v6 calls storage.list("room_", true) to enumerate waiting rooms
       if (prefix === 'room_' || prefix === '') {
-        // v2 fix (bug #3): join room_players to count actual occupants, and
-        // filter out rooms that are full or abandoned (0 players = host left).
-        // We also auto-close rooms older than 2 hours to prevent dead rooms.
+        // v7.6.1: SHOW rooms regardless of whether they're "full" by seat count
+        // — a dropped player's stale row occupies their seat, so a 2/2 room may
+        // actually have a free slot for rejoin. Callers (joinRoom) detect rejoins
+        // by matching user_id against room_players. Still filter to status=waiting
+        // and auto-hide abandoned rooms (0 players) and dead rooms (2+ hours old).
         const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
         const { data, error } = await supabase
           .from('rooms')
@@ -203,10 +205,7 @@ const shared = {
           .limit(50);
         if (error) { console.warn('[rooms.list]', error); return { keys: [] }; }
         const keys = (data || [])
-          .filter(r => {
-            const n = (r.room_players || []).length;
-            return n > 0 && n < r.max_players;
-          })
+          .filter(r => (r.room_players || []).length > 0)
           .map(r => `room_${r.id}_meta`);
         return { keys };
       }

@@ -1,7 +1,7 @@
 {
   "name": "mtg-playground-v7",
   "private": true,
-  "version": "7.6.0",
+  "version": "7.6.1",
   "type": "module",
   "description": "Browser-based Magic: The Gathering playtester. Fast, free, no download. 2-4 player online or local.",
   "scripts": {

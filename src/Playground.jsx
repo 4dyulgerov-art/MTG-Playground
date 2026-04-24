@@ -1409,8 +1409,10 @@ const getStartingLife=(format)=>format==="commander"?40:format==="dandan"?20:20;
 const initPlayer=(deck,profile,life=20)=>({
   profile:(()=>{
     const base = profile||{alias:"Player",avatar:"🧙",gamemat:GAMEMATS[0].bg,gamematCustom:""};
-    // v7.5.1: if the deck has its own playmat, use it (but don't overwrite profile object)
-    if(deck?.playmatUri) return {...base, gamemat: deck.playmatUri, gamematCustom: deck.playmatUri};
+    // v7.6.1: if the deck has its own playmat, use it (but don't overwrite profile object).
+    // CSS fix: wrap the URL in `url(...) center/cover no-repeat` — the raw URL alone
+    // is not valid for the CSS `background` shorthand and rendered as black.
+    if(deck?.playmatUri) return {...base, gamemat: `url(${deck.playmatUri}) center/cover no-repeat`, gamematCustom: deck.playmatUri};
     return base;
   })(),
   deck,
@@ -3261,17 +3263,50 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   const joinRoom=async(roomId)=>{
     setLoading(true);
     try{const r=await storage.get(`room_${roomId}_meta`,true);if(!r){alert("Room not found");setLoading(false);return;}
-      const meta=JSON.parse(r.value);const pIdx=meta.players.length;if(pIdx>=meta.maxPlayers){alert("Room is full");setLoading(false);return;}
+      const meta=JSON.parse(r.value);
+      // v7.6.1: rejoin detection — if this user already has a row in room_players,
+      // restore that seat instead of appending a new one. Fixes the "dropped, can't
+      // rejoin" bug where the stale row made the room appear full.
+      let existingSeat = null;
+      try{
+        const { supabase } = await import("./lib/supabase");
+        const { data:u } = await supabase.auth.getUser();
+        const me = u?.user?.id;
+        if(me){
+          const { data:rp } = await supabase.from('room_players')
+            .select('seat').eq('room_id',roomId).eq('user_id',me).maybeSingle();
+          if(rp && typeof rp.seat === 'number') existingSeat = rp.seat;
+        }
+      }catch(e){ console.warn("[joinRoom rejoin-probe]",e); }
+
       // v7.4: fetch host's deck library so we can show the "Host's Decks" tab
       const hostLib = Array.isArray(meta.hostDecks) ? meta.hostDecks : [];
       setHostDecks(hostLib);
-      meta.players.push({alias:profile.alias,avatar:profile.avatar,ready:false});
-      await storage.set(`room_${roomId}_meta`,JSON.stringify(meta),true);
-      // v7.5.1: write player row WITHOUT a deck — user must explicitly pick in waiting lobby
-      await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:null,deck:null,ready:false}),true);
-      setMyRoomId(roomId);
-      setMySeat(pIdx);
-      setSelDeckId(""); // force deck-pick prompt
+
+      if(existingSeat !== null){
+        // Rejoin — just re-enter the waiting room at our original seat.
+        setMyRoomId(roomId);
+        setMySeat(existingSeat);
+        // Pull our existing deck selection from the row so popup doesn't force re-pick.
+        try{
+          const cur = await storage.get(`room_${roomId}_player_${existingSeat}`,true);
+          const obj = cur?JSON.parse(cur.value):null;
+          if(obj?.deckId){ setSelDeckId(obj.deckId); }
+          else { setSelDeckId(""); }
+        }catch{ setSelDeckId(""); }
+      }else{
+        // New joiner — find the first unoccupied seat index (lowest unused).
+        // (Don't just use meta.players.length — stale stubs can skew it.)
+        const pIdx = meta.players.length;
+        if(pIdx>=meta.maxPlayers){alert("Room is full");setLoading(false);return;}
+        meta.players.push({alias:profile.alias,avatar:profile.avatar,ready:false});
+        await storage.set(`room_${roomId}_meta`,JSON.stringify(meta),true);
+        // v7.5.1: write player row WITHOUT a deck — user must explicitly pick in waiting lobby
+        await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:null,deck:null,ready:false}),true);
+        setMyRoomId(roomId);
+        setMySeat(pIdx);
+        setSelDeckId(""); // force deck-pick prompt
+      }
     }catch(e){alert("Error: "+e.message);}
     setLoading(false);};
 
@@ -3496,9 +3531,18 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
               <div style={{color:T.accent,fontFamily:"Cinzel, serif",fontSize:12}}>{room.name}</div>
               <div style={{fontSize:10,color:"#4a6a8a"}}>{room.host} {room.hostAvatar} · {room.players.length}/{room.maxPlayers} players</div>
             </div>
-            <button onClick={()=>joinRoom(room.id)} disabled={loading||room.players.length>=room.maxPlayers}
-              style={{...btn(`${T.accent}1a`,T.accent,{border:`1px solid ${T.accent}40`,opacity:room.players.length>=room.maxPlayers?.4:1})}}
-              onMouseOver={hov} onMouseOut={uhov}>{room.players.length>=room.maxPlayers?"Full":"Join"}</button>
+            {/* v7.6.1: always allow clicking. joinRoom detects rejoin via user_id;
+                if a non-rejoining user clicks a truly full room, joinRoom alerts. */}
+            {(() => {
+              const canRejoin = room.players.some(p => p.alias === profile.alias);
+              const isFull    = room.players.length >= room.maxPlayers;
+              const label     = canRejoin ? "Rejoin" : isFull ? "Full" : "Join";
+              return (
+                <button onClick={()=>joinRoom(room.id)} disabled={loading || (isFull && !canRejoin)}
+                  style={{...btn(`${T.accent}1a`,T.accent,{border:`1px solid ${T.accent}40`,opacity:(isFull && !canRejoin)?.4:1})}}
+                  onMouseOver={hov} onMouseOut={uhov}>{label}</button>
+              );
+            })()}
           </div>
         ))}
       </div>
@@ -8808,14 +8852,25 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       setProfile(prof);setDecks(ds);setCustomCards(cc);
       setView(prof?"menu":"profile");
     })();
-  },[initialProfile]);
+    // v7.6.1: dep array intentionally empty. Previously this useEffect had
+    // `[initialProfile]` which caused a catastrophic bug: when the in-game
+    // gamemat picker saved the profile via App.jsx.saveProfile, App re-
+    // rendered with a new initialProfile prop, this effect re-fired, and
+    // setView("menu") kicked the player out of their running game. Only
+    // runs once on mount now; the profile state is kept in sync via
+    // saveProfile's own setProfile call when the user edits it.
+     
+  },[]);
 
   const saveProfile=async p=>{
     setProfile(p);
     // v7: cloud-persist via prop, plus keep a local mirror for offline.
     if(onProfileSaved){ try{ await onProfileSaved(p); }catch(e){ console.warn("[saveProfile cloud]",e); } }
     try{await storage.set("mtg_profile_v1",JSON.stringify(p));}catch{}
-    setView("menu");
+    // v7.6.1: DO NOT call setView("menu") here — this function is also invoked
+    // from the in-game gamemat picker via window.__MTG_V7__.saveProfile, and
+    // switching to "menu" mid-game kicked the player out of their online room.
+    // The ProfileSetup form now switches the view at its own callsite.
   };
 
   const persist=async d=>{
@@ -9074,7 +9129,7 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     </div>
   );
 
-  if(view==="profile")return<ProfileSetup existing={profile} onSave={saveProfile}/>;
+  if(view==="profile")return<ProfileSetup existing={profile} onSave={async(p)=>{await saveProfile(p); setView("menu");}}/>;
   if(view==="deckbuilder")return<DeckBuilder deck={editingDeck} onSave={saveDeck} onBack={()=>setView("menu")} customCards={customCards}/>;
   if(view==="rooms")return<RoomLobby profile={profile} decks={decks} onBack={()=>setView("menu")} onJoinGame={({roomId,playerIdx=0,myDeck,otherDeck,isOnline,isLocal,gamemode,extraDecks,extraProfiles})=>{
     if(isLocal)startGame(myDeck,true,false,null,0,otherDeck,gamemode,extraDecks,extraProfiles);
