@@ -261,6 +261,14 @@ export class NetSync {
     this.pendingBroadcast = stateForTransport;
     this.pendingFull      = stateForDb || stateForTransport;
 
+    console.log('[netSync.broadcast]', {
+      slimPayloadSize: JSON.stringify(stateForTransport).length,
+      slimHasPlayers: stateForTransport?.players?.length || 0,
+      fullPayloadSize: JSON.stringify(stateForDb || stateForTransport).length,
+      throttleMs: this.broadcastThrottleMs,
+      transport: this.transport,
+    });
+
     if (!this.broadcastTimer) {
       this.broadcastTimer = setTimeout(() => {
         this.broadcastTimer = null;
@@ -278,11 +286,16 @@ export class NetSync {
     this.outSeq += 1;
     const seq = this.outSeq;
     const payload = { state, seq, from: this.userId, ts: Date.now() };
+    console.log('[netSync._sendState] seq:', seq, 'stateSize:', JSON.stringify(state).length);
     try {
       if (this.transport === 'ws' && this.ws && this.ws.readyState === 1) {
         this.ws.send(JSON.stringify({ type: 'state', payload }));
+        console.log('[netSync._sendState] WS sent');
       } else if (this.channel) {
         this.channel.send({ type: 'broadcast', event: 'state', payload });
+        console.log('[netSync._sendState] Supabase sent');
+      } else {
+        console.log('[netSync._sendState] no transport ready');
       }
     } catch (e) { console.warn('[netSync._sendState]', e); }
   }
