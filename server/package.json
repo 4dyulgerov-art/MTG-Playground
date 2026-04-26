@@ -1,0 +1,16 @@
+{
+  "name": "mtg-relay",
+  "version": "1.0.0",
+  "description": "MTG Playground WebSocket relay (Bun)",
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.js",
+    "dev":   "bun --watch run server.js"
+  },
+  "dependencies": {
+    "jose": "^5.9.6"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}

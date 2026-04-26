@@ -1,0 +1,35 @@
+# fly.toml — MTG Playground WebSocket relay
+#
+# After `fly launch --no-deploy --copy-config`:
+#   fly secrets set SUPABASE_JWT_SECRET=<paste from Supabase dashboard>
+#   fly deploy
+#
+# Get the JWT secret from: Supabase Dashboard → Settings → API → JWT Secret.
+
+app = "mtg-relay"           # change to your app name (must be unique on fly.dev)
+primary_region = "fra"      # frankfurt — pick one near most users (lhr, iad, sjc, etc.)
+
+[build]
+
+[env]
+  PORT = "3001"
+  # ALLOWED_ORIGIN = "https://your-vercel-app.vercel.app"   # uncomment after first deploy to lock origin
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = false   # keep the relay always-on; sleep would kill all WS connections
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

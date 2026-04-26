@@ -1422,6 +1422,151 @@ const initPlayer=(deck,profile,life=20)=>({
   life,poison:0,energy:0,commanderDamage:{},revealTop:false,revealTopOnce:null,log:[],
 });
 
+/* ─── v7.6.3 Slim broadcast + hydration ────────────────────────────────
+   The full state carries fully-hydrated card objects for every seat's
+   battlefield/graveyard/exile/command zones, plus the entire deck object
+   per player (60-100 hydrated cards). For a 4-player commander game this
+   is ~80-150 KB per broadcast. We strip it down before send and rebuild
+   on receive using local data.
+
+   On send (slimCard / slimForBroadcast):
+     - Tokens/clones/copies (which have no deck reference) keep full data
+     - All other cards: only the live-mutable fields + scryfallId for lookup
+     - Deck object is omitted (receivers cache it from room_players at start)
+
+   On receive (hydrateRemoteState):
+     - For each non-self player, walk each zone's cards and:
+       1. Try iid match against local-cached version (preserves metadata)
+       2. Fall back to scryfallId lookup in the player's cached deck
+       3. Last resort: keep slim card (renderer falls through to defaults)
+     - The cached deck is preserved when the broadcast omits deck
+   ─────────────────────────────────────────────────────────────────────── */
+
+const slimCard = (c) => {
+  if (!c || typeof c !== 'object') return c;
+  // Tokens, clones, and explicit copies have no deck reference. Keep them
+  // full so the receiver can render them without hydration.
+  if (c.isToken || c.isClone || c.isCopy) return c;
+  // Masked stubs (hand/library) — pass through, already small.
+  if (c.faceDown && (c._masked === 'hand' || c._masked === 'library')) return c;
+  // Slim — keep iid, scryfallId, name, all live-mutable fields.
+  return {
+    iid: c.iid,
+    scryfallId: c.scryfallId,
+    name: c.name,
+    x: c.x, y: c.y,
+    tapped: !!c.tapped,
+    faceDown: !!c.faceDown,
+    counters: c.counters || {},
+    zone: c.zone,
+    altFace: !!c.altFace,
+    flipped: !!c.flipped,
+    status: c.status || null,
+    castCount: c.castCount || 0,
+    isCommander: !!c.isCommander,
+    _slim: true,
+  };
+};
+
+const slimForBroadcast = (gs) => {
+  if (!gs || !Array.isArray(gs.players)) return gs;
+  return {
+    ...gs,
+    players: gs.players.map((p) => ({
+      ...p,
+      // Omit the heavy deck object — receiver keeps their cached copy.
+      // sleeveUri/playmatUri are read from profile (also static), so we
+      // can drop deck without losing render fidelity.
+      deck: p.deck ? { id: p.deck.id, format: p.deck.format, sleeveUri: p.deck.sleeveUri, playmatUri: p.deck.playmatUri, _slim: true } : null,
+      battlefield: (p.battlefield || []).map(slimCard),
+      graveyard:   (p.graveyard   || []).map(slimCard),
+      exile:       (p.exile       || []).map(slimCard),
+      command:     (p.command     || []).map(slimCard),
+      // hand & library stay as masked stubs (already slim from maskPrivateZones)
+    })),
+  };
+};
+
+const hydrateCard = (slim, iidMap, deckMap) => {
+  if (!slim || typeof slim !== 'object') return slim;
+  // Already-full cards (tokens, clones, masked stubs) pass through.
+  if (!slim._slim) return slim;
+  // 1. Iid match in current local state — preserves all metadata.
+  const fromIid = iidMap && iidMap.get(slim.iid);
+  if (fromIid) {
+    // Merge: existing metadata + slim's live-mutable fields override.
+    const merged = { ...fromIid, ...slim };
+    delete merged._slim;
+    return merged;
+  }
+  // 2. ScryfallId match in cached deck.
+  const fromDeck = deckMap && slim.scryfallId && deckMap.get(slim.scryfallId);
+  if (fromDeck) {
+    const merged = { ...fromDeck, ...slim };
+    delete merged._slim;
+    return merged;
+  }
+  // 3. Last resort — keep slim. Renderer must handle missing imageUri gracefully.
+  const out = { ...slim };
+  delete out._slim;
+  return out;
+};
+
+const buildIidMap = (player) => {
+  const m = new Map();
+  if (!player) return m;
+  const zones = ['battlefield','graveyard','exile','command','hand','library'];
+  for (const z of zones) {
+    const arr = player[z];
+    if (!Array.isArray(arr)) continue;
+    for (const c of arr) {
+      if (c && c.iid && !c._slim) m.set(c.iid, c);
+    }
+  }
+  return m;
+};
+
+const buildDeckMap = (deck) => {
+  const m = new Map();
+  if (!deck || !Array.isArray(deck.cards)) return m;
+  for (const c of deck.cards) {
+    if (c && c.scryfallId) m.set(c.scryfallId, c);
+  }
+  if (deck.commander && deck.commander.scryfallId) m.set(deck.commander.scryfallId, deck.commander);
+  if (Array.isArray(deck.commanders)) {
+    for (const c of deck.commanders) {
+      if (c && c.scryfallId) m.set(c.scryfallId, c);
+    }
+  }
+  return m;
+};
+
+const hydrateRemoteState = (remote, current) => {
+  if (!remote || !Array.isArray(remote.players)) return remote;
+  return {
+    ...remote,
+    players: remote.players.map((rp, i) => {
+      if (!rp) return rp;
+      const cp = current && current.players && current.players[i];
+      // Preserve cached deck if remote sent slim deck stub.
+      const remoteDeckIsSlim = rp.deck && rp.deck._slim;
+      const deck = remoteDeckIsSlim ? (cp?.deck || rp.deck) : (rp.deck || cp?.deck);
+      const iidMap  = buildIidMap(cp);
+      const deckMap = buildDeckMap(deck);
+      const hydrate = (arr) => Array.isArray(arr) ? arr.map(c => hydrateCard(c, iidMap, deckMap)) : arr;
+      return {
+        ...rp,
+        deck,
+        battlefield: hydrate(rp.battlefield),
+        graveyard:   hydrate(rp.graveyard),
+        exile:       hydrate(rp.exile),
+        command:     hydrate(rp.command),
+        // hand & library are stubs — leave as-is.
+      };
+    }),
+  };
+};
+
 /* ─── Mana cost parser ─────────────────────────────────────────────── */
 function ManaCost({cost}){
   if(!cost)return null;
@@ -4997,7 +5142,15 @@ function BoardSide({
             })()}
             {/* cards */}
             {player.battlefield.map(card=>(
-              <div key={card.iid} data-iid={card.iid} style={{position:"absolute",left:card.x,top:card.y,zIndex:isLand(card)?1:3}}>
+              <div key={card.iid} data-iid={card.iid} style={{
+                position:"absolute",left:card.x,top:card.y,zIndex:isLand(card)?1:3,
+                // v7.6.3: on the opponent (readOnly) board, smooth out the
+                // position-delta broadcasts (which arrive at ~14Hz) so motion
+                // looks ~60Hz. CSS interpolates from old to new position; the
+                // transform-based tap rotation is a separate property and is
+                // not affected.
+                ...(readOnly?{transition:"left 90ms linear, top 90ms linear"}:{}),
+              }}>
                 <CardImg card={card} tapped={card.tapped} faceDown={card.faceDown}
                   selected={selected.has(card.iid)} size="md"
                   data-card="1"
@@ -6222,7 +6375,16 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       }
 
     }
-  },[player.battlefield,moveCard,turn,upd]);
+    // v7.6.3: clear drag flag and force one full-state broadcast to reconcile.
+    // During drag the positions channel was authoritative; this catches any
+    // zone moves above and ensures a clean snapshot lands on opp's screen.
+    if(typeof window!=='undefined' && window.__MTG_V7__){
+      window.__MTG_V7__.bfDragging = false;
+      if(typeof window.__MTG_V7__.forceBroadcast === 'function'){
+        try{ window.__MTG_V7__.forceBroadcast(); }catch{}
+      }
+    }
+  },[player.battlefield,moveCard,turn,upd,selected]);
 
   const handleCardBFMouseDown=useCallback((e,card)=>{
     if(e.button!==0)return;
@@ -6250,6 +6412,10 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
     // But also start the BF position-drag for movement within BF
     const r=e.currentTarget.getBoundingClientRect();
     bfDragRef.current={iid:card.iid,ox:e.clientX-r.left-r.width/2,oy:e.clientY-r.top-r.height/2};
+    // v7.6.3: gate full-state broadcasts during drag (positions go via the
+    // delta channel only). handleBFMouseUp clears this and forces one
+    // full state to reconcile.
+    if(typeof window!=='undefined' && window.__MTG_V7__){ window.__MTG_V7__.bfDragging = true; }
   },[]);
 
   // ── Float drag ──
@@ -8880,6 +9046,8 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   // v7 Phase 2: which opponent seat index is currently "primary" (rendered by GameBoard).
   // Null = auto-pick first non-me seat.
   const [primaryOppIdx, setPrimaryOppIdx] = useState(null);
+  // v7.6.3: connection state for the sync banner ('connected' | 'reconnecting' | 'unknown')
+  const [connState, setConnState] = useState('unknown');
 
   useEffect(()=>{
     (async()=>{
@@ -8976,10 +9144,34 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     };
   },[]);
 
-  const broadcastIfOnline = useCallback((nextGS)=>{
-    if(nextGS?.isOnline && netRef.current){
-      try{ netRef.current.broadcast(maskPrivateZones(nextGS)); }catch(e){ console.warn("[netSync.broadcast]",e); }
-    }
+  const broadcastIfOnline = useCallback((nextGS, opts)=>{
+    if(!nextGS?.isOnline || !netRef.current) return;
+    const force = opts && opts.force === true;
+    // v7.6.3: skip full-state broadcasts during BF drag — drag is covered by
+    // the lightweight position-delta channel. handleBFMouseUp calls
+    // forceBroadcast to send one reconciling full state on drag end.
+    if (!force && (typeof window !== 'undefined') && window.__MTG_V7__?.bfDragging) return;
+    try{
+      const masked = maskPrivateZones(nextGS);
+      const slim   = slimForBroadcast(masked);
+      netRef.current.broadcast(slim, masked);
+    }catch(e){ console.warn("[netSync.broadcast]",e); }
+  },[maskPrivateZones]);
+
+  // v7.6.3: explicit full-state flush, used by handleBFMouseUp to reconcile
+  // any state the drag-gate suppressed. Reads current gameState via setter
+  // (no-op return).
+  const forceBroadcast = useCallback(()=>{
+    setGameState(gs=>{
+      if(gs?.isOnline && netRef.current){
+        try{
+          const masked = maskPrivateZones(gs);
+          const slim   = slimForBroadcast(masked);
+          netRef.current.broadcast(slim, masked);
+        }catch(e){ console.warn("[netSync.forceBroadcast]",e); }
+      }
+      return gs;
+    });
   },[maskPrivateZones]);
 
   const updatePlayer=useCallback((idx,fn)=>setGameState(gs=>{
@@ -9052,13 +9244,15 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
           // seat's `log` and `player.*` state; our local seat is authoritative
           // for our own data. Without this, each broadcast would clobber our
           // local log and chat state written by addLog between broadcasts.
+          // v7.6.3: hydrate slim cards from local cache before merge.
           setGameState(gs=>{
             if(!gs) return remoteState;
             const mine = gs.myPlayerIdx ?? 0;
-            const merged = {...remoteState, myPlayerIdx: mine};
+            const hydrated = hydrateRemoteState(remoteState, gs);
+            const merged = {...hydrated, myPlayerIdx: mine};
             // Keep OUR seat's latest state; accept REMOTE for all other seats.
-            if (Array.isArray(gs.players) && Array.isArray(remoteState.players)) {
-              merged.players = remoteState.players.map((p, i) => i === mine ? gs.players[i] : p);
+            if (Array.isArray(gs.players) && Array.isArray(hydrated.players)) {
+              merged.players = hydrated.players.map((p, i) => i === mine ? gs.players[i] : p);
             }
             return merged;
           });
@@ -9093,6 +9287,11 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
             return { ...gs, players: newPlayers };
           });
         },
+        // v7.6.3: connection-state callback. Drives a small banner overlay
+        // so the user knows when sync is reconnecting vs. live.
+        onConnState:(info)=>{
+          setConnState(info?.state || 'unknown');
+        },
       });
       netRef.current=sync;
       // v2 fix (bug #2): expose netSync on a global so InGameChat and
@@ -9100,9 +9299,12 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       window.__MTG_V7__ = window.__MTG_V7__ || {};
       window.__MTG_V7__.netSync = sync;
       window.__MTG_V7__.mySeat = playerIdx;
+      window.__MTG_V7__.forceBroadcast = forceBroadcast;
+      window.__MTG_V7__.bfDragging = false;
       sync.start().then(()=>{
-        // Seed remote with our initial state if it's empty (masked for privacy)
-        sync.broadcast(maskPrivateZones(initial));
+        // Seed remote with our initial state (masked for privacy, slim for transport).
+        const masked = maskPrivateZones(initial);
+        sync.broadcast(slimForBroadcast(masked), masked);
       }).catch(e=>console.warn("[netSync.start]",e));
 
       // v2 fix (bug #2): subscribe to chat + action-log events and dispatch
@@ -9265,6 +9467,18 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     return<>
       <WeatherCanvas weather={weather}/>
       {showThemePicker&&<ThemePicker current={theme} weather={weather} onTheme={setTheme} onWeather={setWeather} onClose={()=>setShowThemePicker(false)}/>}
+      {isOnline && connState === 'reconnecting' && (
+        <div style={{
+          position:"fixed", top:0, left:0, right:0, zIndex:99999,
+          background:"linear-gradient(180deg, #5b1c1cf0, #3a0e0ee8)",
+          color:"#fde7c7", padding:"6px 12px", textAlign:"center",
+          fontFamily:"Cinzel,serif", fontSize:13, letterSpacing:1.2,
+          borderBottom:"1px solid #a86b3a", boxShadow:"0 2px 12px rgba(0,0,0,.6)",
+          pointerEvents:"none",
+        }}>
+          ⚡ Reconnecting to sync server…
+        </div>
+      )}
       <GameBoard
         playerIdx={myIdx} player={player} opponent={opponent}
         phase={phase} turn={turn} stack={stack} gamemode={gm}

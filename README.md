@@ -1,16 +1,30 @@
-# MTG Playground v7.2
+# MTG Playground v7.6.3
 
 Browser-based Magic: The Gathering playtester. Built on top of the v6 single-file prototype with **zero gameplay regressions** — every feature from v6 (weather, planechase, dandan, custom cards, themes, hotkeys, sound studio, mat crop editor) is preserved intact. What v7 adds:
 
 - **Real accounts** — email/password via Supabase Auth
 - **Cross-computer rooms** — 2, 3, or 4 players gather from anywhere
-- **Game-state sync** — actions broadcast via Supabase Realtime
+- **Game-state sync** — actions broadcast via Supabase Realtime *or* a dedicated WebSocket relay (v7.6.3+)
 - **Per-player chat + shared log** — via `game_events` append-only stream
 - **Privacy masking** — hand/library contents never leak over the wire; opponents see stub objects with count only
 - **Opponent sleeve rendering** — each player's chosen sleeve is visible on face-down cards
 - **Change deck mid-game** — right-click the deck pile → "⇄ Change Deck…"
 - **3p and 4p opponent tiles** — mini-boards for additional opponents, click to swap the main focus
 - **Vite build** — ships to Vercel with a single `git push`
+
+## What's new in v7.6.3
+
+A protocol overhaul targeting the multiplayer sync lag that persisted through v7.6.2:
+
+- **Slim broadcast payloads.** Card metadata (Scryfall imageUri, oracleText, manaCost, etc.) and the full deck object are stripped before send and re-hydrated on the receiver from a local cache. Typical state broadcast drops from ~80 KB to ~8 KB.
+- **Drag gating.** Full-state broadcasts during a battlefield drag are suppressed entirely; the dedicated position-delta channel does the work, and one reconciling state goes out on mouseup.
+- **Throttle to ~14 Hz.** State and position channels both drop from 20–25 Hz to ~14 Hz (70 ms). Combined with CSS-based interpolation on opponent cards, motion still reads as smooth.
+- **DB-debounce raised to 3 s.** The Supabase `game_state` upsert is now used only for rejoin recovery, not the live game loop.
+- **Custom WebSocket relay (optional).** A small Bun server in `server/` removes Supabase Realtime as a bottleneck entirely. Set `VITE_WS_URL` to enable; without it, the client falls back to Supabase Realtime. All optimizations above apply in both modes.
+- **Reconnect logic.** Exponential backoff, JWT refresh on `TOKEN_REFRESHED`, ping every 30 s for Cloudflare keepalive, automatic re-hydration from `game_state` on reconnect.
+- **"Reconnecting…" banner.** Surfaces sync state to the user when the transport drops.
+
+See `server/README.md` for the WS relay deploy guide (Fly.io recommended).
 
 ---
 
@@ -23,6 +37,7 @@ npm install
 # 2. set up Supabase (one-time, see DEPLOY.md)
 cp .env.example .env.local
 # edit .env.local with your Supabase URL + anon key
+```
 
 # 3. run the dev server
 npm run dev

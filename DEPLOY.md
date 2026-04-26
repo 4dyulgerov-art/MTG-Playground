@@ -1,8 +1,10 @@
-# Deploying MTG Playground v7.2
+# Deploying MTG Playground v7.6.3
 
 This gets you from nothing to a live shareable URL you can playtest with 4 friends on different computers. **Total time: ~10 minutes.** Free tier everywhere.
 
-> **Already on v7 or v7.1?** Jump to the [upgrade section](#upgrading-from-v7-or-v71) at the bottom — no full redeploy needed.
+> **Already on an earlier v7?** Jump to the [upgrade section](#upgrading-from-v7-or-v71) at the bottom — no full redeploy needed.
+>
+> **Want to remove Supabase Realtime as the bottleneck?** After completing the steps below, deploy the optional WebSocket relay in `server/` — see [`server/README.md`](server/README.md) for the Fly.io / VPS guide. It's an additive change: set `VITE_WS_URL` in Vercel and the client switches transports on next load. Phase 2a optimizations (drag-gating, slim payloads, throttle) work in either mode.
 
 ---
 
