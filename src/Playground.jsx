@@ -4063,7 +4063,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
    Empty state: renders a faint dashed frame with "✋ HAND · 0" so the
    region is always visible, not phantom-empty.
 */
-function OppHandStrip({hand, sleeveUri, alias}){
+function OppHandStrip({hand, sleeveUri, alias, onZoneRequest}){
   const total = (hand || []).length;
   const STRIP_H = 96;            // strip height
   // The GameBoard header bar (Untap/Upkeep/Draw/...) is ~44-48px tall and
@@ -4085,6 +4085,11 @@ function OppHandStrip({hand, sleeveUri, alias}){
 
   // Empty-state frame
   if(total === 0){
+    const handleCtx = (e) => {
+      if(!onZoneRequest) return;
+      e.preventDefault();
+      onZoneRequest("hand", e);
+    };
     return (
       <div style={{
         position:"fixed",
@@ -4093,20 +4098,29 @@ function OppHandStrip({hand, sleeveUri, alias}){
         pointerEvents:"none",
         zIndex:9000,
         display:"flex", alignItems:"center", justifyContent:"center",
+        transform:"rotate(180deg)",
       }}>
-        <div style={{
+        <div onContextMenu={handleCtx} style={{
           padding:"6px 18px",
           border:"1px dashed rgba(200,168,112,.22)",
           borderRadius:6,
           background:"linear-gradient(180deg,rgba(200,168,112,.05),rgba(200,168,112,0))",
           color:"rgba(200,168,112,.55)",
           fontFamily:"Cinzel, serif", fontSize:10, letterSpacing:"0.15em",
+          pointerEvents:"auto",
+          cursor: onZoneRequest ? "context-menu" : "default",
         }}>
           ✋ {alias ? `${alias.toUpperCase()} · HAND` : "OPPONENT HAND"} · 0
         </div>
       </div>
     );
   }
+
+  const handleCtx = (e) => {
+    if(!onZoneRequest) return;
+    e.preventDefault();
+    onZoneRequest("hand", e);
+  };
 
   return (
     <div style={{
@@ -4115,38 +4129,44 @@ function OppHandStrip({hand, sleeveUri, alias}){
       height:STRIP_H,
       pointerEvents:"none",
       zIndex:9000,
+      transform:"rotate(180deg)",
+      transformOrigin:"center center",
     }}>
-      {/* Tiny label: alias + count, top-left of strip */}
-      <div style={{
+      <div onContextMenu={handleCtx} style={{
         position:"absolute", top:6, left:14,
         fontSize:10, fontFamily:"Cinzel, serif",
         color:"rgba(200,168,112,.6)", letterSpacing:"0.12em",
         textShadow:"0 1px 3px rgba(0,0,0,.8)",
+        pointerEvents:"auto",
+        cursor: onZoneRequest ? "context-menu" : "default",
       }}>
         ✋ {alias ? `${alias.toUpperCase()} · HAND` : "OPP HAND"} · {total}
       </div>
       {(hand || []).map((_card, idx) => {
         const x = startX + idx * step;
-        // Subtle fan: cards near the middle sit slightly lower; ends tilt outward.
         const mid = (total - 1) / 2;
         const offset = idx - mid;
-        const rot = offset * 1.5;             // degrees
-        const fanY = Math.abs(offset) * 0.8;  // pixels
+        const rot = offset * 1.5;
+        const fanY = Math.abs(offset) * 0.8;
         return (
-          <div key={_card?.iid || idx} style={{
-            position:"absolute",
-            left: x,
-            top: 6 + fanY,
-            width: cardW, height: cardH,
-            transform: `rotate(${rot}deg)`,
-            transformOrigin:"top center",
-            borderRadius:5, overflow:"hidden",
-            border:"1px solid #2a3a5a",
-            boxShadow:"0 4px 10px rgba(0,0,0,.65)",
-            background:"#0a1628",
+          <div key={_card?.iid || idx}
+            onContextMenu={handleCtx}
+            style={{
+              position:"absolute",
+              left: x,
+              top: 6 + fanY,
+              width: cardW, height: cardH,
+              transform: `rotate(${rot}deg)`,
+              transformOrigin:"top center",
+              borderRadius:5, overflow:"hidden",
+              border:"1px solid #2a3a5a",
+              boxShadow:"0 4px 10px rgba(0,0,0,.65)",
+              background:"#0a1628",
+              pointerEvents:"auto",
+              cursor: onZoneRequest ? "context-menu" : "default",
           }}>
-            <img src={sleeve} alt="" loading="eager"
-              style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}
+            <img src={sleeve} alt="" loading="eager" draggable={false}
+              style={{width:"100%",height:"100%",objectFit:"cover",display:"block",pointerEvents:"none"}}
               onError={(e)=>{ e.currentTarget.src = CARD_BACK; }}
             />
           </div>
@@ -5815,26 +5835,24 @@ function BoardSide({
               Phase 3). In readOnly mode mutation callbacks are NOOPs; handleCtx
               is rerouted to fire onZoneRequest("hand", e) so right-clicking an
               opp hand sleeve triggers the view-hand request flow (Phase 4-B). */}
-          {hand && handRef && containerRef && (
+          {/* v7.6.4: in readOnly (opp) mode, suppress this HandOverlay
+              entirely. The new viewport-anchored OppHandStrip in GameBoard
+              renders the opp hand at the screen top instead. Local player's
+              hand still renders here as before. */}
+          {!readOnly && hand && handRef && containerRef && (
             <HandOverlay
               hand={hand}
               handRef={handRef}
               containerRef={containerRef}
               hovered={hovered}
               selected={selected}
-              setHovered={readOnly ? NOOP : setHovered}
-              setSelected={readOnly ? NOOP : setSelected}
-              setSelZone={readOnly ? NOOP : setSelZone}
-              startFloatDrag={readOnly ? NOOP : startFloatDrag}
-              handleCtx={
-                readOnly && onZoneRequest
-                  ? ((e)=>{ if(e?.preventDefault) e.preventDefault(); onZoneRequest("hand", e); })
-                  : (readOnly ? NOOP : handleCtx)
-              }
+              setHovered={setHovered}
+              setSelected={setSelected}
+              setSelZone={setSelZone}
+              startFloatDrag={startFloatDrag}
+              handleCtx={handleCtx}
               floatDrag={floatDrag}
-              readOnly={readOnly}
-              /* v7.6.4: per-side sleeve so opp face-down cards render with
-                 the OPPONENT's sleeve, not the local player's. */
+              readOnly={false}
               sleeveUri={player?.deck?.sleeveUri || null}
             />
           )}
@@ -7751,6 +7769,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           hand={opponent.hand}
           sleeveUri={opponent.deck?.sleeveUri || null}
           alias={opponent.profile?.alias || ''}
+          onZoneRequest={requestOppZone}
         />
       )}
 
