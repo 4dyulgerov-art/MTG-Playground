@@ -1,4 +1,4 @@
-# MTG Playground v7.6.3
+# MTG Playground v7.6.4
 
 Browser-based Magic: The Gathering playtester. Built on top of the v6 single-file prototype with **zero gameplay regressions** — every feature from v6 (weather, planechase, dandan, custom cards, themes, hotkeys, sound studio, mat crop editor) is preserved intact. What v7 adds:
 
@@ -12,6 +12,21 @@ Browser-based Magic: The Gathering playtester. Built on top of the v6 single-fil
 - **3p and 4p opponent tiles** — mini-boards for additional opponents, click to swap the main focus
 - **Vite build** — ships to Vercel with a single `git push`
 
+## What's new in v7.6.4
+
+Closes the open issues from v7.6.3's hydration-bug debrief, plus the requested UX improvements and infrastructure hardening:
+
+- **Per-seat authoritative replication.** The joiner-divergence bug from v7.6.3 was caused by every peer broadcasting stale views of seats they don't own. Each broadcast now carries a `fromSeat` stamp; receivers patch only that seat. State stays consistent across peers regardless of broadcast race timing.
+- **Visible opponent hand strip.** A faint dashed frame anchors the opponent's hand region at the top of the screen even when empty. When populated, face-down stubs render with the **opponent's** sleeve (was the local player's sleeve due to a global state bug).
+- **20× faster deck import.** Switched from serial `/cards/named` (~11s for 100 cards) to batched `/cards/collection` (75 ids per request, ~0.5s). Both initial import and retry path benefit.
+- **Pre-cached deck images.** All card images for own deck are eagerly fetched at game start; opponents' decks are progressively cached in the background. Cards never pop in mid-game on first reveal.
+- **Anti-fragile transport.** WebSocket inbound watchdog detects zombie connections (silently dropped TCP from CGNAT/proxy). Relay does an active JWKS reachability probe at boot so misconfig is loud at startup, not silent under traffic. Log-spam dampener on relay-side jwt verify failures.
+- **Debug instrumentation.** New `window.__MTG_V7__.debug` surface with `snapshot()`, `summary()`, ring-buffered `hydrationMisses` / `broadcastLog` / `connHistory`. Used for next-session load-test audits.
+- **Removed pre-NetSync localStorage polling loop.** Latent state-corruption time bomb (wrote opp seat from local cache every 1.5s under specific conditions). Gone.
+- **Server source-of-truth restored.** v7.6.4's relay code (`server/server.js`) was synced from production after the ES256+JWKS migration was hand-patched on the droplet during v7.6.3. `server/README.md` rewritten — was actively misleading on JWT setup.
+
+See `CHANGELOG-v7.6.4.md` for the full breakdown and `HANDOVER-BRIEF-v7.6.4.md` for deploy + test procedure.
+
 ## What's new in v7.6.3
 
 A protocol overhaul targeting the multiplayer sync lag that persisted through v7.6.2:
@@ -24,7 +39,7 @@ A protocol overhaul targeting the multiplayer sync lag that persisted through v7
 - **Reconnect logic.** Exponential backoff, JWT refresh on `TOKEN_REFRESHED`, ping every 30 s for Cloudflare keepalive, automatic re-hydration from `game_state` on reconnect.
 - **"Reconnecting…" banner.** Surfaces sync state to the user when the transport drops.
 
-See `server/README.md` for the WS relay deploy guide (Fly.io recommended).
+See `server/README.md` for the WS relay deploy guide.
 
 ---
 

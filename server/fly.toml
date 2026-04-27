@@ -1,10 +1,20 @@
 # fly.toml — MTG Playground WebSocket relay
 #
+# NOTE: production currently runs on DigitalOcean (relay.playsim.live), not
+# Fly.io. This config is kept for the alternative deploy path. See README.md.
+#
 # After `fly launch --no-deploy --copy-config`:
-#   fly secrets set SUPABASE_JWT_SECRET=<paste from Supabase dashboard>
+#   fly secrets set \
+#     SUPABASE_URL=https://YOUR-PROJECT.supabase.co \
+#     SUPABASE_JWT_SECRET=<paste from Supabase dashboard>
 #   fly deploy
 #
-# Get the JWT secret from: Supabase Dashboard → Settings → API → JWT Secret.
+# SUPABASE_URL is REQUIRED for ES256/JWKS-based JWT verification — Supabase
+# migrated away from HS256-only signing. Omitting it means the relay will
+# reject every real client with 401. SUPABASE_JWT_SECRET is the legacy
+# fallback (kept for backwards compat — do not remove).
+#
+# Get values from: Supabase Dashboard → Settings → API.
 
 app = "mtg-relay"           # change to your app name (must be unique on fly.dev)
 primary_region = "fra"      # frankfurt — pick one near most users (lhr, iad, sjc, etc.)

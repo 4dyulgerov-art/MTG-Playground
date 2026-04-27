@@ -1,4 +1,4 @@
-/*  src/lib/netSync.js — v7.6.3
+/*  src/lib/netSync.js — v7.6.4
     ─────────────────────────────────────────────────────────────────────────
     Game-state sync + event log.
 
@@ -9,10 +9,24 @@
       - In BOTH paths, full state still upserts to Supabase 'game_state' table
         every ~3s for rejoin recovery (durable backstop).
 
-    v7.6.3 changes:
-      - Throttle: 50/40ms → 70/70ms (~14Hz). Combined with CSS transitions
-        on the receiver, motion remains smooth while message rate drops 40-65%.
-      - DB upsert debounce: 800ms → 3000ms (rejoin only, not gameplay path).
+    v7.6.4 changes (THE HYDRATION BUG FIX):
+      - onRemoteState now receives info.from (userId), info.fromSeat (number|null),
+        info.initial (bool), info.path ('seed'|'broadcast'|'postgres'|'rehydrate').
+        This lets the receiver implement per-seat authority: a peer's broadcast
+        only authoritatively updates THAT peer's seat, not the entire state.
+      - broadcast() accepts a senderSeat option:
+          netSync.broadcast(slim, full, { senderSeat })
+        which is included in the wire payload as `fromSeat`.
+      - Removed verbose console.log noise from broadcast/_sendState. Behind a
+        DEBUG flag now (set NetSync.DEBUG = true to re-enable).
+      - Initial DB seed flagged via info.path='seed'+info.initial=true so the
+        receiver can do a one-time full replace instead of a per-seat patch.
+      - setMySeat() helper for late-binding the broadcaster's seat index.
+
+    v7.6.3 changes preserved:
+      - Throttle: 70/70ms (~14Hz). Combined with CSS transitions
+        on the receiver, motion remains smooth while message rate drops.
+      - DB upsert debounce: 3000ms (rejoin only, not gameplay path).
       - Optional WS transport with reconnect, exponential backoff, JWT refresh.
       - onConnState callback for UI banner ("Reconnecting…", "Disconnected").
       - broadcast() accepts (slimForTransport, fullForDb) — DB always full.
@@ -38,11 +52,29 @@ const RECONNECT_BASE_MS  = 250;
 const RECONNECT_MAX_MS   = 30000;
 const PING_INTERVAL_MS   = 30000;  // Cloudflare drops idle WS at 100s
 
+// v7.6.4 anti-fragile: if no inbound message arrives within this window
+// while the WS is "open", treat the connection as zombie and force a
+// reconnect. Catches the case where an intermediate proxy silently drops
+// outbound traffic (Cloudflare/CGNAT/etc.) without sending FIN.
+//
+// We send a ping every 30s; the server echoes pong immediately. If 90s
+// elapse with zero inbound traffic (3 missed pongs), the connection is
+// dead in a way readyState can't detect. Force-close it.
+const WS_INBOUND_WATCHDOG_MS = 90000;
+
+// Set to true to re-enable verbose broadcast/send logs (or flip
+// NetSync.DEBUG = true at runtime).
+const DEBUG_DEFAULT = false;
+const dlog = (...args) => { if (NetSync.DEBUG) console.log(...args); };
+
 export class NetSync {
-  constructor({ roomId, userId, alias, onRemoteState, onPositions, onConnState }) {
+  constructor({ roomId, userId, alias, mySeat, onRemoteState, onPositions, onConnState }) {
     this.roomId        = roomId;
     this.userId        = userId;
     this.alias         = alias || 'Player';
+    // v7.6.4: own seat index. Used to stamp outgoing broadcasts. Optional —
+    // setMySeat() can update it after construction.
+    this.mySeat        = (typeof mySeat === 'number') ? mySeat : null;
     this.onRemoteState = onRemoteState;
     this.onPositions   = onPositions || null;
     this.onConnState   = onConnState || null;
@@ -67,6 +99,7 @@ export class NetSync {
     this.broadcastTimer    = null;
     this.pendingBroadcast  = null;  // slim form for transport
     this.pendingFull       = null;  // full form for db
+    this.pendingSenderSeat = null;  // seat index of broadcaster
 
     // Position throttle (trailing edge, shorter interval).
     this.positionTimer    = null;
@@ -83,6 +116,11 @@ export class NetSync {
     this.dbDebounceMs        = 3000;
   }
 
+  // v7.6.4: allow late assignment if mySeat wasn't known at construction.
+  setMySeat(seatIdx) {
+    if (typeof seatIdx === 'number') this.mySeat = seatIdx;
+  }
+
   _emitConnState(state, detail) {
     if (this.onConnState) {
       try { this.onConnState({ state, detail }); }
@@ -95,7 +133,17 @@ export class NetSync {
     try {
       const { data } = await supabase
         .from('game_state').select('*').eq('room_id', this.roomId).maybeSingle();
-      if (data) this.onRemoteState(data.state, { initial: true });
+      if (data) {
+        // v7.6.4: stamp initial=true so the receiver knows this is the
+        // authoritative full snapshot (do a full replace, not a per-seat patch).
+        // last_writer is the userId of the last broadcaster.
+        this.onRemoteState(data.state, {
+          initial: true,
+          path: 'seed',
+          from: data.last_writer || null,
+          fromSeat: null,
+        });
+      }
     } catch (e) { console.warn('[netSync.start seed]', e); }
 
     // 2) Open the realtime transport.
@@ -175,6 +223,9 @@ export class NetSync {
       } catch (e) { console.warn('[netSync.WS join]', e); }
       this._emitConnState('connected', { transport: 'ws' });
       this._startPingLoop();
+      // v7.6.4 anti-fragile: start the inbound-watchdog the moment we open.
+      this._lastInboundTs = Date.now();
+      this._startWatchdog();
       // Re-hydrate state from DB on every (re)connect — defense in depth.
       this._rehydrateFromDb();
       // PG fallback for missed broadcasts (low rate, harmless overlap).
@@ -182,6 +233,9 @@ export class NetSync {
     };
 
     ws.onmessage = (e) => {
+      // v7.6.4: any inbound traffic (incl. welcome/joined/pong) keeps the
+      // watchdog happy. The check fires elsewhere if we're starving.
+      this._lastInboundTs = Date.now();
       let msg;
       try { msg = JSON.parse(e.data); } catch { return; }
       if (!msg || typeof msg !== 'object') return;
@@ -195,6 +249,7 @@ export class NetSync {
       this.subscribed = false;
       this.wsJoined = false;
       this._stopPingLoop();
+      this._stopWatchdog();
       if (this.closed) return;
       this._emitConnState('reconnecting', { transport: 'ws', code: ev.code });
       this._scheduleReconnect();
@@ -220,13 +275,35 @@ export class NetSync {
     this._stopPingLoop();
     this.pingTimer = setInterval(() => {
       if (this.ws && this.ws.readyState === 1) {
-        try { this.ws.send(JSON.stringify({ type: 'ping', ts: Date.now() })); } catch {}
+        try { this.ws.send(JSON.stringify({ type: 'ping' })); }
+        catch (e) { console.warn('[netSync.ping]', e); }
       }
     }, PING_INTERVAL_MS);
   }
-
   _stopPingLoop() {
     if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
+  }
+
+  // v7.6.4 anti-fragile zombie-WS detector. The WebSocket spec only signals
+  // close on a clean teardown — a silently-dropped TCP connection (CGNAT
+  // timeout, mobile network handoff, Cloudflare proxy reset) leaves
+  // readyState=1 forever while no traffic flows in either direction. We
+  // poll: if readyState is OPEN but no inbound message in WATCHDOG_MS,
+  // force-close, which triggers onclose → reconnect path.
+  _startWatchdog() {
+    this._stopWatchdog();
+    this.watchdogTimer = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      const since = Date.now() - (this._lastInboundTs || Date.now());
+      if (since > WS_INBOUND_WATCHDOG_MS) {
+        console.warn(`[netSync.watchdog] no inbound traffic for ${since}ms — forcing reconnect`);
+        try { this.ws.close(4002, 'watchdog stale'); } catch {}
+        // onclose handler picks up from here.
+      }
+    }, 15000); // check every 15s
+  }
+  _stopWatchdog() {
+    if (this.watchdogTimer) { clearInterval(this.watchdogTimer); this.watchdogTimer = null; }
   }
 
   async _rehydrateFromDb() {
@@ -234,7 +311,15 @@ export class NetSync {
       const { data } = await supabase
         .from('game_state').select('*').eq('room_id', this.roomId).maybeSingle();
       if (data && data.state) {
-        this.onRemoteState(data.state, { initial: false, path: 'rehydrate' });
+        // v7.6.4: rehydrate-from-db on reconnect is treated like a seed —
+        // it's the latest authoritative full snapshot. Receiver merges
+        // it as a full state (other seats accepted; own seat preserved).
+        this.onRemoteState(data.state, {
+          initial: false,
+          path: 'rehydrate',
+          from: data.last_writer || null,
+          fromSeat: null,
+        });
       }
     } catch (e) { console.warn('[netSync.rehydrate]', e); }
   }
@@ -256,24 +341,34 @@ export class NetSync {
 
   // ── FULL STATE PATH ────────────────────────────────────────────────────
 
-  broadcast(stateForTransport, stateForDb) {
+  /**
+   * @param {object} stateForTransport  slim state (for WS/Supabase Realtime)
+   * @param {object} stateForDb         full state (for game_state DB upsert)
+   * @param {object} [opts]             { senderSeat?: number }
+   */
+  broadcast(stateForTransport, stateForDb, opts) {
     if (this.closed) return;
     this.pendingBroadcast = stateForTransport;
     this.pendingFull      = stateForDb || stateForTransport;
+    // v7.6.4: capture sender seat, falling back to the instance value.
+    const senderSeat = (opts && typeof opts.senderSeat === 'number')
+      ? opts.senderSeat
+      : this.mySeat;
+    this.pendingSenderSeat = (typeof senderSeat === 'number') ? senderSeat : null;
 
-    console.log('[netSync.broadcast]', {
-      slimPayloadSize: JSON.stringify(stateForTransport).length,
-      slimHasPlayers: stateForTransport?.players?.length || 0,
-      fullPayloadSize: JSON.stringify(stateForDb || stateForTransport).length,
-      throttleMs: this.broadcastThrottleMs,
+    dlog('[netSync.broadcast]', {
+      slimSize: JSON.stringify(stateForTransport).length,
+      fullSize: JSON.stringify(stateForDb || stateForTransport).length,
+      senderSeat: this.pendingSenderSeat,
       transport: this.transport,
     });
 
     if (!this.broadcastTimer) {
       this.broadcastTimer = setTimeout(() => {
         this.broadcastTimer = null;
-        this._sendState(this.pendingBroadcast);
+        this._sendState(this.pendingBroadcast, this.pendingSenderSeat);
         this.pendingBroadcast = null;
+        this.pendingSenderSeat = null;
       }, this.broadcastThrottleMs);
     }
     if (!this.flushTimer) {
@@ -281,21 +376,23 @@ export class NetSync {
     }
   }
 
-  _sendState(state) {
+  _sendState(state, senderSeat) {
     if (!state || this.closed) return;
     this.outSeq += 1;
     const seq = this.outSeq;
-    const payload = { state, seq, from: this.userId, ts: Date.now() };
-    console.log('[netSync._sendState] seq:', seq, 'stateSize:', JSON.stringify(state).length);
+    const payload = {
+      state,
+      seq,
+      from: this.userId,
+      fromSeat: (typeof senderSeat === 'number') ? senderSeat : (this.mySeat ?? null),
+      ts: Date.now(),
+    };
+    dlog('[netSync._sendState]', { seq, fromSeat: payload.fromSeat });
     try {
       if (this.transport === 'ws' && this.ws && this.ws.readyState === 1) {
         this.ws.send(JSON.stringify({ type: 'state', payload }));
-        console.log('[netSync._sendState] WS sent');
       } else if (this.channel) {
         this.channel.send({ type: 'broadcast', event: 'state', payload });
-        console.log('[netSync._sendState] Supabase sent');
-      } else {
-        console.log('[netSync._sendState] no transport ready');
       }
     } catch (e) { console.warn('[netSync._sendState]', e); }
   }
@@ -306,8 +403,14 @@ export class NetSync {
     const prev = this.lastSeenByUser[data.from] || 0;
     if (typeof data.seq === 'number' && data.seq <= prev) return;
     this.lastSeenByUser[data.from] = data.seq || 0;
-    try { this.onRemoteState(data.state, { initial: false, path: 'broadcast' }); }
-    catch (e) { console.warn('[netSync.onRemoteState broadcast]', e); }
+    try {
+      this.onRemoteState(data.state, {
+        initial: false,
+        path: 'broadcast',
+        from: data.from,
+        fromSeat: (typeof data.fromSeat === 'number') ? data.fromSeat : null,
+      });
+    } catch (e) { console.warn('[netSync.onRemoteState broadcast]', e); }
   }
 
   // ── POSITION-DELTA PATH ────────────────────────────────────────────────
@@ -369,8 +472,14 @@ export class NetSync {
     const row = payload.new || payload.record;
     if (!row) return;
     if (row.last_writer === this.userId) return;
-    try { this.onRemoteState(row.state, { initial: false, path: 'postgres' }); }
-    catch (e) { console.warn('[netSync.onRemoteState postgres]', e); }
+    try {
+      this.onRemoteState(row.state, {
+        initial: false,
+        path: 'postgres',
+        from: row.last_writer || null,
+        fromSeat: null,
+      });
+    } catch (e) { console.warn('[netSync.onRemoteState postgres]', e); }
   }
 
   async flush() {
@@ -441,6 +550,7 @@ export class NetSync {
     if (this.flushTimer)     { clearTimeout(this.flushTimer);     this.flushTimer     = null; }
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this._stopPingLoop();
+    this._stopWatchdog(); // v7.6.4
     if (this.pendingFull) { try { await this.flush(); } catch {} }
     if (this.ws) {
       try { this.ws.close(1000, 'stop'); } catch {}
@@ -453,3 +563,6 @@ export class NetSync {
     if (this.evtChannel) { await supabase.removeChannel(this.evtChannel); this.evtChannel = null; }
   }
 }
+
+// Runtime debug toggle: window.__MTG_V7__?.netSync && (NetSync.DEBUG = true)
+NetSync.DEBUG = DEBUG_DEFAULT;

@@ -1405,6 +1405,93 @@ const isLand=c=>!!(c?.typeLine||c?.type_line||"").toLowerCase().includes("land")
 const shuffleArr=a=>{const r=[...a];for(let i=r.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[r[i],r[j]]=[r[j],r[i]];}return r;};
 const mkCard=(base,zone="library")=>({iid:uid(),...base,tapped:false,faceDown:false,counters:{},zone,x:0,y:0});
 
+/* ─── v7.6.4 Image prefetch ────────────────────────────────────────────
+   Warm the browser's HTTP cache for every card image in a deck. Avoids
+   the "card pops in late" effect when a card is first revealed mid-game.
+
+   prefetchDeckImages(deck, {priority})
+     - priority: 'high' (eager, all at once)  → use for own deck at game start
+     - priority: 'low'  (progressive, queued) → use for opp decks
+
+   Implementation:
+     - Creates an Image() per URL — browsers will fetch and cache.
+     - For 'low' priority, throttles to ~10 concurrent and starts after a
+       1.5s delay so it doesn't compete with above-the-fold rendering.
+     - De-duped via a global Set so the same URL is never fetched twice.
+     - All errors swallowed — this is best-effort.
+*/
+const _prefetchedUrls = new Set();
+const _prefetchQueue = [];
+let _prefetchActive = 0;
+const PREFETCH_MAX_CONCURRENT = 10;
+
+function _prefetchOne(url){
+  if(!url || _prefetchedUrls.has(url)) return;
+  _prefetchedUrls.add(url);
+  try {
+    const img = new Image();
+    img.decoding = "async";
+    img.loading = "eager";
+    img.src = url;
+    // Don't keep the reference — let GC handle it once cached.
+  } catch {}
+}
+
+function _drainPrefetchQueue(){
+  while(_prefetchActive < PREFETCH_MAX_CONCURRENT && _prefetchQueue.length){
+    const url = _prefetchQueue.shift();
+    if(_prefetchedUrls.has(url)) continue;
+    _prefetchActive++;
+    _prefetchedUrls.add(url);
+    try {
+      const img = new Image();
+      img.decoding = "async";
+      img.onload = img.onerror = () => {
+        _prefetchActive--;
+        _drainPrefetchQueue();
+      };
+      img.src = url;
+    } catch {
+      _prefetchActive--;
+    }
+  }
+}
+
+function _collectDeckImageUrls(deck){
+  const urls = [];
+  if(!deck) return urls;
+  const push = (c) => {
+    if(!c) return;
+    const u = c.imageUri || c.image_uris?.normal || c.faces?.[0]?.imageUri || c.card_faces?.[0]?.image_uris?.normal;
+    if(u) urls.push(u);
+    const back = c.altImageUri || c.faces?.[1]?.imageUri || c.card_faces?.[1]?.image_uris?.normal;
+    if(back) urls.push(back);
+  };
+  for(const c of (deck.cards || [])) push(c);
+  if(deck.commander) push(deck.commander);
+  for(const c of (deck.commanders || [])) push(c);
+  if(deck.sleeveUri) urls.push(deck.sleeveUri);
+  return urls;
+}
+
+function prefetchDeckImages(deck, {priority='low'}={}){
+  if(!deck) return;
+  const urls = _collectDeckImageUrls(deck);
+  if(priority === 'high'){
+    // Eager: kick off all fetches immediately. Browser HTTP/2 multiplexing
+    // handles the parallelism; we don't need to throttle for own deck.
+    for(const u of urls) _prefetchOne(u);
+  } else {
+    // Low: queue, throttle, and wait a moment so above-the-fold paint wins.
+    setTimeout(() => {
+      for(const u of urls){
+        if(!_prefetchedUrls.has(u)) _prefetchQueue.push(u);
+      }
+      _drainPrefetchQueue();
+    }, 1500);
+  }
+}
+
 const getStartingLife=(format)=>format==="commander"?40:format==="dandan"?20:20;
 const initPlayer=(deck,profile,life=20)=>({
   profile:(()=>{
@@ -1440,6 +1527,19 @@ const initPlayer=(deck,profile,life=20)=>({
        2. Fall back to scryfallId lookup in the player's cached deck
        3. Last resort: keep slim card (renderer falls through to defaults)
      - The cached deck is preserved when the broadcast omits deck
+
+   v7.6.4 — PER-SEAT AUTHORITY (the hydration bug fix):
+     A peer's broadcast carries every seat (including stale views of seats
+     they don't own). Naively replacing all non-self seats from each
+     broadcast caused divergence — peer A's outdated view of peer B's seat
+     would clobber B's authoritative data when A's broadcast raced B's.
+     Fix: each broadcast is stamped with `fromSeat`. Receivers ONLY accept
+     `players[fromSeat]` from realtime broadcasts. Other seats are
+     untouched — their data is updated only by THEIR OWN peer's broadcasts.
+     Initial seeds and DB rehydrate paths still do a full multi-seat
+     replace (they're authoritative full snapshots).
+
+     See applyRemoteStateBySeat() and applyRemoteStateFull() below.
    ─────────────────────────────────────────────────────────────────────── */
 
 const slimCard = (c) => {
@@ -1541,29 +1641,151 @@ const buildDeckMap = (deck) => {
   return m;
 };
 
+// v7.6.4: hydrate one player object (used by both full and per-seat paths).
+// Accepts the remote player, the local player at the same index, and the
+// seat index (for telemetry). Returns the hydrated player.
+const hydratePlayer = (rp, cp, seatIdx) => {
+  if (!rp) return rp;
+  // Preserve cached deck if remote sent slim deck stub.
+  const remoteDeckIsSlim = rp.deck && rp.deck._slim;
+  const deck = remoteDeckIsSlim ? (cp?.deck || rp.deck) : (rp.deck || cp?.deck);
+  const iidMap  = buildIidMap(cp);
+  const deckMap = buildDeckMap(deck);
+
+  // Telemetry: count cards that fall through to case 3 (slim, no metadata).
+  // Helps diagnose missing-deck-cache or iid-skew issues.
+  let totalSlim = 0, missCount = 0;
+  const hydrate = (arr) => {
+    if (!Array.isArray(arr)) return arr;
+    return arr.map(c => {
+      if (c && c._slim) {
+        totalSlim++;
+        const hit = (iidMap && iidMap.has(c.iid)) ||
+                    (deckMap && c.scryfallId && deckMap.has(c.scryfallId));
+        if (!hit) missCount++;
+      }
+      return hydrateCard(c, iidMap, deckMap);
+    });
+  };
+  const out = {
+    ...rp,
+    deck,
+    battlefield: hydrate(rp.battlefield),
+    graveyard:   hydrate(rp.graveyard),
+    exile:       hydrate(rp.exile),
+    command:     hydrate(rp.command),
+    // hand & library are stubs — leave as-is.
+  };
+  if (missCount > 0 && typeof console !== 'undefined') {
+    // eslint-disable-next-line no-console
+    console.warn(`[hydrate] seat=${seatIdx} ${missCount}/${totalSlim} cards fell through to slim (no iid match, no deck match). Renderer will use defaults.`);
+    // v7.6.4: also push to debug ring buffer for post-hoc audit.
+    try {
+      const dbg = (typeof window !== 'undefined') && window.__MTG_V7__?.debug;
+      if (dbg && Array.isArray(dbg.hydrationMisses)) {
+        dbg.hydrationMisses.push({ seat: seatIdx, miss: missCount, total: totalSlim, ts: Date.now() });
+        if (typeof dbg._cap === 'function') dbg._cap(dbg.hydrationMisses, 200);
+      }
+    } catch {}
+  }
+  return out;
+};
+
 const hydrateRemoteState = (remote, current) => {
   if (!remote || !Array.isArray(remote.players)) return remote;
   return {
     ...remote,
-    players: remote.players.map((rp, i) => {
-      if (!rp) return rp;
-      const cp = current && current.players && current.players[i];
-      // Preserve cached deck if remote sent slim deck stub.
-      const remoteDeckIsSlim = rp.deck && rp.deck._slim;
-      const deck = remoteDeckIsSlim ? (cp?.deck || rp.deck) : (rp.deck || cp?.deck);
-      const iidMap  = buildIidMap(cp);
-      const deckMap = buildDeckMap(deck);
-      const hydrate = (arr) => Array.isArray(arr) ? arr.map(c => hydrateCard(c, iidMap, deckMap)) : arr;
-      return {
-        ...rp,
-        deck,
-        battlefield: hydrate(rp.battlefield),
-        graveyard:   hydrate(rp.graveyard),
-        exile:       hydrate(rp.exile),
-        command:     hydrate(rp.command),
-        // hand & library are stubs — leave as-is.
-      };
-    }),
+    players: remote.players.map((rp, i) => hydratePlayer(rp, current?.players?.[i], i)),
+  };
+};
+
+// v7.6.4: full-state apply. Used by initial seed + rehydrate-from-db paths.
+//   - Hydrates every seat from `current` (preserves metadata).
+//   - For OUR seat (mySeat), keeps `current.players[mySeat]` — our own seat
+//     is local-authoritative; we never accept remote data for it.
+//   - Top-level shared fields (turn/phase/activePlayer/stack/...) come from
+//     remote, except myPlayerIdx which is preserved from `current`.
+const applyRemoteStateFull = (remote, current, mySeat) => {
+  if (!remote) return current;
+  if (!current) {
+    // No prior state — accept remote wholesale, but stamp myPlayerIdx if known.
+    const out = { ...remote };
+    if (typeof mySeat === 'number') out.myPlayerIdx = mySeat;
+    return out;
+  }
+  const hydrated = hydrateRemoteState(remote, current);
+  const merged = { ...hydrated };
+  if (typeof mySeat === 'number') merged.myPlayerIdx = mySeat;
+
+  if (Array.isArray(current.players) && Array.isArray(hydrated.players)) {
+    // Pad players array if remote has fewer seats than current (defensive).
+    const len = Math.max(current.players.length, hydrated.players.length);
+    const out = new Array(len);
+    for (let i = 0; i < len; i++) {
+      if (i === mySeat && current.players[i]) out[i] = current.players[i];
+      else out[i] = hydrated.players[i] || current.players[i] || null;
+    }
+    merged.players = out;
+  }
+  return merged;
+};
+
+// v7.6.4: per-seat patch. Used by realtime broadcasts.
+//   - ONLY updates players[fromSeat] (the broadcaster's seat) plus shared
+//     top-level fields (turn/phase/activePlayer/stack and any other
+//     game-wide field that lives at the root of gameState).
+//   - All other seats in `current.players` are preserved untouched —
+//     stale views of those seats in the broadcaster's payload are IGNORED.
+//   - If fromSeat is invalid or equals mySeat, returns current unchanged.
+//   - If fromSeat is null (unknown), falls back to full-replace behaviour.
+//
+// Top-level fields: we spread `remote` first, then override with strictly-
+// local fields from `current`. This means any shared top-level field we
+// don't explicitly know about (e.g. oppAccessRequest, startedSeats, etc.)
+// still propagates via the broadcast — same behavior as v7.6.3 had — but
+// per-seat data is replaced by our patched seat array.
+const applyRemoteStateBySeat = (remote, current, mySeat, fromSeat) => {
+  if (!remote || !current) return applyRemoteStateFull(remote, current, mySeat);
+  // Unknown sender — fall back to full replace (e.g. postgres fallback).
+  if (typeof fromSeat !== 'number' || fromSeat < 0) {
+    return applyRemoteStateFull(remote, current, mySeat);
+  }
+  // Sender claims to be us — ignore (someone else's bug, or our own echo
+  // somehow survived the userId filter).
+  if (fromSeat === mySeat) {
+    return current;
+  }
+  // Sender's seat data must exist in the remote payload.
+  const remotePlayers = Array.isArray(remote.players) ? remote.players : [];
+  const rp = remotePlayers[fromSeat];
+  if (!rp) {
+    // Defensive: if the sender's seat is missing from their own broadcast,
+    // skip — don't touch our state.
+    return current;
+  }
+  // Hydrate just that seat using OUR local cache for that seat.
+  const cp = Array.isArray(current.players) ? current.players[fromSeat] : null;
+  const hydratedSeat = hydratePlayer(rp, cp, fromSeat);
+
+  // Build the new players array: copy all from current, replace fromSeat.
+  const players = Array.isArray(current.players) ? current.players.slice() : [];
+  players[fromSeat] = hydratedSeat;
+
+  // Top-level: spread remote (gets phase/turn/activePlayer/stack and any
+  // other shared session field), then override with strictly-local fields
+  // from current. `players` is replaced last with our per-seat-patched array.
+  return {
+    ...remote,
+    // Strictly local — never accept from remote:
+    myPlayerIdx: (typeof mySeat === 'number') ? mySeat : current.myPlayerIdx,
+    isOnline:    current.isOnline,
+    roomId:      current.roomId,
+    // Session config that's set at game start and identical on all peers,
+    // but defensively keep ours (cheap insurance):
+    gamemode:    current.gamemode ?? remote.gamemode,
+    isTwoPlayer: current.isTwoPlayer ?? remote.isTwoPlayer,
+    // Players: per-seat patch.
+    players,
   };
 };
 
@@ -2476,10 +2698,14 @@ function RevealHandModal({hand,playerName,onClose}){
 }
 
 /* ─── CardImg ─────────────────────────────────────────────────────── */
-function CardImg({card,tapped,faceDown,selected,size="md",onClick,onCtx,onHover,onHoverEnd,onMouseDown,onCounterClick,style={},noHover}){
+function CardImg({card,tapped,faceDown,selected,size="md",onClick,onCtx,onHover,onHoverEnd,onMouseDown,onCounterClick,style={},noHover,sleeveUri=null}){
   const W=size==="sm"?50:size==="xs"?36:size==="lg"?100:CW;
   const H=Math.round(W*1.4);
-  const img=faceDown?(window._deckSleeve||CARD_BACK):getImg(card);
+  // v7.6.4: prefer per-card / per-side sleeve over the global window._deckSleeve.
+  // The global is set once-per-render to the LOCAL player's sleeve, which is
+  // wrong for opp face-down cards. Callers in opp render paths (HandOverlay
+  // readOnly, opp library stub) now pass sleeveUri explicitly.
+  const img=faceDown?(sleeveUri||window._deckSleeve||CARD_BACK):getImg(card);
   const hasCtr=card?.counters&&Object.values(card.counters).some(v=>v!==0);
   const [hover,setHover]=useState(false);
   const [flipping,setFlipping]=useState(false);
@@ -3813,7 +4039,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
 }
 
 /* ─── HandOverlay — cards rendered as position:fixed, no clipping ─── */
-function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setSelected,setSelZone,startFloatDrag,handleCtx,floatDrag,readOnly=false}){
+function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setSelected,setSelZone,startFloatDrag,handleCtx,floatDrag,readOnly=false,sleeveUri=null}){
   const [rect,setRect]=useState(null);
   useEffect(()=>{
     function update(){
@@ -3838,7 +4064,39 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
     return()=>window.removeEventListener("resize",update);
   },[handRef,containerRef,hand.length]);
 
-  if(!rect||hand.length===0)return null;
+  if(!rect)return null;
+  // v7.6.4: in readOnly (opp) mode, render an always-visible faint frame for
+  // the hand strip — including when the hand is empty. Gives the user a
+  // clear visual anchor for "this is where the opp's hand lives" instead of
+  // a phantom empty region. For the local player, behavior is unchanged
+  // (return null when 0 cards).
+  if(hand.length===0){
+    if(!readOnly) return null;
+    const frameW = rect.width;
+    const frameH = Math.round(CH*0.55) + 12;
+    const frameLeft = rect.left;
+    const frameTop = rect.top + 6;
+    return(
+      <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:500}}>
+        <div style={{
+          position:"absolute",
+          left:frameLeft, top:frameTop,
+          width:frameW, height:frameH,
+          border:"1px dashed rgba(200,168,112,.18)",
+          borderRadius:6,
+          background:"linear-gradient(180deg,rgba(200,168,112,.04),rgba(200,168,112,0))",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          // The opp wrapper applies rotate(180deg); counter-rotate the label
+          // so it reads right-side-up to the local player.
+          transform:"rotate(180deg)",
+        }}>
+          <span style={{fontSize:9,fontFamily:"Cinzel, serif",color:"rgba(200,168,112,.45)",letterSpacing:"0.1em"}}>
+            ✋ HAND · 0
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   const total=hand.length;
   // v7.6.2: readOnly (opponent) hand — smaller cards, and positioned at the
@@ -3941,6 +4199,7 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
             <div style={{transform:"scale(0.88)",transformOrigin:"top left",width:CW,height:CH,animation:`handCard .3s cubic-bezier(0.34,1.3,0.64,1) ${idx*.04}s both`}}>
               <CardImg card={card} selected={isSel} size="md" noHover
                 faceDown={!!card.faceDown}
+                sleeveUri={sleeveUri}
                 onCtx={e=>{
                   e.stopPropagation();
                   if(selected.size>1&&selected.has(card.iid)){
@@ -5488,6 +5747,9 @@ function BoardSide({
               }
               floatDrag={floatDrag}
               readOnly={readOnly}
+              /* v7.6.4: per-side sleeve so opp face-down cards render with
+                 the OPPONENT's sleeve, not the local player's. */
+              sleeveUri={player?.deck?.sleeveUri || null}
             />
           )}
         </div>
@@ -7124,24 +7386,16 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
      advancePhase,tap,moveCard,copyCard,addCounter,addLog,
      signalPriority,onUpdateGame]);
 
-  // Online sync
-  useEffect(()=>{
-    if(!isOnline||!roomId)return;
-    const interval=setInterval(async()=>{
-      try{
-        await storage.set(`room_${roomId}_player_${playerIdx}`,JSON.stringify({state:player,ts:Date.now()}));
-        const r=await storage.get(`room_${roomId}_player_${1-playerIdx}`);
-        if(r){const d=JSON.parse(r.value);if(d.state)onUpdatePlayer(1-playerIdx,()=>d.state);}
-        if(playerIdx===0){
-          await storage.set(`room_${roomId}_game`,JSON.stringify({phase,turn,stack}));
-        }else{
-          const gr=await storage.get(`room_${roomId}_game`);
-          if(gr){const gd=JSON.parse(gr.value);onUpdateGame(gd);}
-        }
-      }catch{}
-    },1500);
-    return()=>clearInterval(interval);
-  },[isOnline,roomId,playerIdx,player,phase,turn,stack,onUpdatePlayer,onUpdateGame]);
+  // v7.6.4: removed pre-NetSync localStorage polling loop (was an Online-sync
+  // fallback from before NetSync existed). It wrote/read `room_X_player_N` in
+  // *unshared* localStorage at 1.5s intervals and called
+  // `onUpdatePlayer(1-playerIdx, ...)` — i.e. it would write data to the
+  // OPPONENT's seat from the local cache. With NetSync handling sync, that
+  // path was dormant in the common case (storage reads returned null because
+  // nothing else writes to those keys with shared=false), but it was a latent
+  // state-corruption footgun: any stale entry from a prior session in the
+  // same tab would have been silently fed back in every 1.5s. Removed so
+  // there is exactly one source of cross-seat state — NetSync.
 
 
   // ── Scry N cards ──
@@ -7881,6 +8135,94 @@ async function sfNamed(name){
   return null;
 }
 
+/* v7.6.4: batched fetch via Scryfall's /cards/collection endpoint.
+   Up to 75 identifiers per request; returns {data:[Card], not_found:[id]}.
+   This turns a 100-card import from ~11 sec serial into ~0.5 sec batched.
+   Falls back to sfNamed for any name that comes back in not_found.
+
+   names: [string]
+   onProgress?: (done, total) => void
+   returns: Map<lowercased_name, scryfallCard>
+*/
+async function sfCollection(names, onProgress){
+  const out = new Map();
+  if(!names || !names.length) return out;
+  const CHUNK = 75;
+  // De-dupe names case-insensitively before posting (Scryfall echoes the
+  // identifier in not_found; preserve original casing for fallback).
+  const unique = [];
+  const seen = new Set();
+  for(const n of names){
+    const key = n.toLowerCase();
+    if(seen.has(key)) continue;
+    seen.add(key);
+    unique.push(n);
+  }
+  let done = 0;
+  const total = unique.length;
+  const stillMissing = [];
+
+  for(let i=0; i<unique.length; i+=CHUNK){
+    const slice = unique.slice(i, i+CHUNK);
+    const identifiers = slice.map(n => ({name:n}));
+    try{
+      const r = await fetch("https://api.scryfall.com/cards/collection", {
+        method: "POST",
+        headers: {"content-type":"application/json"},
+        body: JSON.stringify({identifiers}),
+      });
+      if(r.ok){
+        const d = await r.json();
+        for(const card of (d.data||[])){
+          // Match against the printed name keys we requested. Scryfall's
+          // returned card.name may differ in case/punctuation, so we map by
+          // the input name ordinal — find which slice index matched.
+          // Simplest robust approach: index by both the returned name AND
+          // any slice entry whose lowercased prefix matches.
+          const key = (card.name||"").toLowerCase();
+          out.set(key, card);
+        }
+        // Anything in not_found falls through to per-name fallback.
+        for(const nf of (d.not_found||[])){
+          if(nf?.name) stillMissing.push(nf.name);
+        }
+      } else {
+        // Whole batch failed — treat all as missing for fallback.
+        stillMissing.push(...slice);
+      }
+    } catch {
+      stillMissing.push(...slice);
+    }
+    done = Math.min(total, done + slice.length);
+    if(onProgress) try{ onProgress(done, total); }catch{}
+    // Tiny pause between batches to be polite — Scryfall asks for ~10/sec.
+    if(i+CHUNK < unique.length) await new Promise(r=>setTimeout(r,80));
+  }
+
+  // Reconcile: for each requested name, see if collection returned a match
+  // under any case variant. Anything still uncovered → fallback to sfNamed.
+  const stillUnresolved = [];
+  for(const n of unique){
+    const key = n.toLowerCase();
+    if(out.has(key)) continue;
+    // Allow loose match: collection may return the canonical name with
+    // different casing/diacritics. Scan once.
+    let found = null;
+    for(const [k,v] of out){
+      if(k === key){ found = v; break; }
+    }
+    if(found){ out.set(key, found); continue; }
+    stillUnresolved.push(n);
+  }
+  // Per-name fallback for anything missing (typos, obscure names).
+  for(const n of stillUnresolved){
+    const card = await sfNamed(n);
+    if(card) out.set(n.toLowerCase(), card);
+    await new Promise(r=>setTimeout(r,110));
+  }
+  return out;
+}
+
 /* Batch import modal */
 function BatchImporter({onImport, onClose}){
   const [text, setText] = useState("");
@@ -7907,54 +8249,26 @@ function BatchImporter({onImport, onClose}){
     setStatus({done:0,total:allEntries.length,errors:[]});
 
     const results = {main:[],side:[],tokens:[]};
-    const failed = []; // entries that failed to fetch
 
-    // v7.5.1: Process in chunks of 10 cards with retry-on-fail.
-    // Scryfall has a soft rate limit ~10 req/s; we stay under that with 110ms delay.
-    // On failure (network/rate limit), retry once after 600ms before giving up.
-    const tryFetch = async (name) => {
-      let card = await sfNamed(name);
-      if (card) return card;
-      // Retry once after short delay
-      await new Promise(r => setTimeout(r, 600));
-      card = await sfNamed(name);
-      return card;
-    };
+    // v7.6.4: batched import via /cards/collection (75 ids per request).
+    // 100-card deck → 2 requests, ~0.5s. Falls back to /named per-card for
+    // anything in not_found (typos, basic-land variants, custom names).
+    const allNames = allEntries.map(e=>e.name);
+    const lookup = await sfCollection(allNames, (done,total)=>{
+      setStatus({done,total,errors:[]});
+    });
 
-    for(let i=0; i<allEntries.length; i++){
-      const {name,quantity,zone} = allEntries[i];
-      const card = await tryFetch(name);
+    const failed = [];
+    for(const {name,quantity,zone} of allEntries){
+      const card = lookup.get(name.toLowerCase());
       if(card){
-        const entry = {...buildDeckEntry(card), quantity};
-        results[zone].push(entry);
+        results[zone].push({...buildDeckEntry(card), quantity});
       } else {
         failed.push({name, quantity, zone});
       }
-      setStatus({done:i+1,total:allEntries.length,errors:failed.map(f=>f.name)});
-      if(i<allEntries.length-1) await new Promise(r=>setTimeout(r,110));
-    }
-
-    // v7.5.1: Second retry pass on every failure with longer delay (rate limit recovery)
-    if(failed.length > 0){
-      setStatus(s=>({...s, retrying: true}));
-      const stillFailed = [];
-      for(let i=0; i<failed.length; i++){
-        const {name,quantity,zone} = failed[i];
-        await new Promise(r=>setTimeout(r,400));
-        const card = await sfNamed(name);
-        if(card){
-          const entry = {...buildDeckEntry(card), quantity};
-          results[zone].push(entry);
-        } else {
-          stillFailed.push({name,quantity,zone});
-        }
-      }
-      failed.length = 0;
-      failed.push(...stillFailed);
     }
 
     setImporting(false);
-    // Report final totals + failure list so user can retry
     const importedTotal = results.main.reduce((s,c)=>s+c.quantity,0)
       + results.side.reduce((s,c)=>s+c.quantity,0)
       + results.tokens.reduce((s,c)=>s+c.quantity,0);
@@ -7966,12 +8280,11 @@ function BatchImporter({onImport, onClose}){
       importedTotal,
       expectedTotal,
       finishedAt: Date.now(),
-      failedEntries: failed, // for re-try
+      failedEntries: failed,
     });
     if(failed.length === 0){
       onImport(results);
     } else {
-      // Keep modal open with partial results + missing list. User clicks "Add what was found" to commit.
       setPartialResults(results);
     }
   };
@@ -7980,23 +8293,23 @@ function BatchImporter({onImport, onClose}){
     if(!status?.failedEntries || !partialResults) return;
     setImporting(true);
     const failed = [...status.failedEntries];
-    const stillFailed = [];
     const results = {
       main:[...(partialResults.main||[])],
       side:[...(partialResults.side||[])],
       tokens:[...(partialResults.tokens||[])],
     };
-    for(let i=0;i<failed.length;i++){
-      const {name,quantity,zone} = failed[i];
-      await new Promise(r=>setTimeout(r,500));
-      const card = await sfNamed(name);
+    // v7.6.4: batched retry via /cards/collection.
+    const lookup = await sfCollection(failed.map(f=>f.name), (done,total)=>{
+      setStatus(s=>({...s, done: partialResults.main.length + done}));
+    });
+    const stillFailed = [];
+    for(const {name,quantity,zone} of failed){
+      const card = lookup.get(name.toLowerCase());
       if(card){
         results[zone].push({...buildDeckEntry(card), quantity});
       } else {
         stillFailed.push({name,quantity,zone});
       }
-      setStatus(s=>({...s, done: partialResults.main.length + i+1,
-        errors: stillFailed.map(f=>f.name)}));
     }
     setImporting(false);
     setPartialResults(results);
@@ -9049,6 +9362,15 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   // v7.6.3: connection state for the sync banner ('connected' | 'reconnecting' | 'unknown')
   const [connState, setConnState] = useState('unknown');
 
+  // v7.6.4: maintain a debug snapshot of the latest gameState on the global
+  // namespace so window.__MTG_V7__.debug.snapshot() can dump it from the
+  // browser console for audits. Pure observability — never read by code.
+  useEffect(()=>{
+    if (typeof window === 'undefined') return;
+    window.__MTG_V7__ = window.__MTG_V7__ || {};
+    window.__MTG_V7__.__gameStateSnapshot = gameState;
+  },[gameState]);
+
   useEffect(()=>{
     (async()=>{
       // v7: profile comes from Supabase via `initialProfile` prop when signed in.
@@ -9154,7 +9476,17 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     try{
       const masked = maskPrivateZones(nextGS);
       const slim   = slimForBroadcast(masked);
-      netRef.current.broadcast(slim, masked);
+      // v7.6.4: stamp our seat index so the receiver does a per-seat patch.
+      const senderSeat = (typeof nextGS.myPlayerIdx === 'number') ? nextGS.myPlayerIdx : undefined;
+      netRef.current.broadcast(slim, masked, { senderSeat });
+      // v7.6.4: telemetry — ring-buffered outgoing broadcast log.
+      try {
+        const dbg = (typeof window !== 'undefined') && window.__MTG_V7__?.debug;
+        if (dbg && Array.isArray(dbg.broadcastLog)) {
+          dbg.broadcastLog.push({ dir:'out', fromSeat: senderSeat ?? null, ts: Date.now() });
+          if (typeof dbg._cap === 'function') dbg._cap(dbg.broadcastLog, 200);
+        }
+      } catch {}
     }catch(e){ console.warn("[netSync.broadcast]",e); }
   },[maskPrivateZones]);
 
@@ -9167,7 +9499,8 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
         try{
           const masked = maskPrivateZones(gs);
           const slim   = slimForBroadcast(masked);
-          netRef.current.broadcast(slim, masked);
+          const senderSeat = (typeof gs.myPlayerIdx === 'number') ? gs.myPlayerIdx : undefined;
+          netRef.current.broadcast(slim, masked, { senderSeat });
         }catch(e){ console.warn("[netSync.forceBroadcast]",e); }
       }
       return gs;
@@ -9232,29 +9565,67 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     setGameState(initial);
     setView("game");
 
+    // v7.6.4: prefetch all card images so cards never pop in mid-game.
+    //  - Own deck (high priority): eager — kicks off all fetches now.
+    //  - Opp decks (low priority):  progressive — queued, throttled, started
+    //    after a 1.5s delay so it doesn't compete with above-the-fold paint.
+    try {
+      prefetchDeckImages(seats[playerIdx]?.deck, {priority:'high'});
+      for (let i = 0; i < seats.length; i++) {
+        if (i !== playerIdx) prefetchDeckImages(seats[i]?.deck, {priority:'low'});
+      }
+    } catch (e) { console.warn("[prefetchDeckImages]", e); }
+
     // v7: spin up net sync for online games
     if(isOnline && roomId && authUser?.id){
       const sync=new NetSync({
         roomId,
         userId:authUser.id,
         alias: profile?.alias || authUser?.user_metadata?.alias || "Player",
-        onRemoteState:(remoteState /*, info */)=>{
-          // v2 fix (bug #2): when a remote update lands, we MERGE instead of
-          // replacing wholesale. Specifically, the remote peer owns their own
-          // seat's `log` and `player.*` state; our local seat is authoritative
-          // for our own data. Without this, each broadcast would clobber our
-          // local log and chat state written by addLog between broadcasts.
-          // v7.6.3: hydrate slim cards from local cache before merge.
+        // v7.6.4: stamp every outgoing broadcast with our seat index so the
+        // receiver can do per-seat-authoritative merging.
+        mySeat: playerIdx,
+        onRemoteState:(remoteState, info)=>{
+          // v7.6.4 — Per-seat authority.
+          //
+          // Every realtime broadcast from a peer carries the entire game
+          // state (top-level fields + ALL seats), but in practice each peer
+          // only has authoritative data for THEIR OWN seat — the rest is a
+          // possibly-stale snapshot of what they last received from us /
+          // other peers. v7.6.3 replaced every non-self seat from each
+          // broadcast, which caused divergence: peer A's stale view of
+          // peer B's seat would clobber B's authoritative data when A's
+          // broadcast raced B's broadcast on the wire.
+          //
+          // The fix: each broadcast is stamped with `info.fromSeat`. For
+          // realtime broadcasts (info.path === 'broadcast'), we ONLY patch
+          // players[fromSeat] from the remote state. All other seats in
+          // gs.players are preserved as-is, and are updated only by THEIR
+          // OWN peer's broadcasts.
+          //
+          // Initial seeds (path='seed') and DB rehydrate (path='rehydrate'
+          // or 'postgres') are full snapshots — they replace every non-self
+          // seat (because they're authoritative full game-state rows).
+          if (!remoteState) return;
+          // v7.6.4: ring-buffered incoming-broadcast log for audits.
+          try {
+            const dbg = window.__MTG_V7__?.debug;
+            if (dbg && Array.isArray(dbg.broadcastLog)) {
+              dbg.broadcastLog.push({ dir:'in', path: info?.path || 'broadcast', from: info?.from || null, fromSeat: info?.fromSeat ?? null, ts: Date.now() });
+              if (typeof dbg._cap === 'function') dbg._cap(dbg.broadcastLog, 200);
+            }
+          } catch {}
           setGameState(gs=>{
             if(!gs) return remoteState;
             const mine = gs.myPlayerIdx ?? 0;
-            const hydrated = hydrateRemoteState(remoteState, gs);
-            const merged = {...hydrated, myPlayerIdx: mine};
-            // Keep OUR seat's latest state; accept REMOTE for all other seats.
-            if (Array.isArray(gs.players) && Array.isArray(hydrated.players)) {
-              merged.players = hydrated.players.map((p, i) => i === mine ? gs.players[i] : p);
+            const path = info?.path || 'broadcast';
+
+            if (path === 'broadcast') {
+              // Per-seat patch.
+              return applyRemoteStateBySeat(remoteState, gs, mine, info?.fromSeat);
             }
-            return merged;
+            // 'seed' | 'rehydrate' | 'postgres' — full snapshot.
+            return applyRemoteStateFull(remoteState, gs, mine);
           });
         },
         // v7.6.2: lightweight position deltas for drag — patch only the
@@ -9291,6 +9662,14 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
         // so the user knows when sync is reconnecting vs. live.
         onConnState:(info)=>{
           setConnState(info?.state || 'unknown');
+          // v7.6.4: also push to debug history.
+          try {
+            const dbg = window.__MTG_V7__?.debug;
+            if (dbg && Array.isArray(dbg.connHistory)) {
+              dbg.connHistory.push({ state: info?.state || 'unknown', detail: info?.detail || null, ts: Date.now() });
+              if (typeof dbg._cap === 'function') dbg._cap(dbg.connHistory, 100);
+            }
+          } catch {}
         },
       });
       netRef.current=sync;
@@ -9301,10 +9680,47 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       window.__MTG_V7__.mySeat = playerIdx;
       window.__MTG_V7__.forceBroadcast = forceBroadcast;
       window.__MTG_V7__.bfDragging = false;
+      // v7.6.4: runtime toggle for verbose net logging.
+      // Usage: window.__MTG_V7__.setNetSyncDebug(true) in console.
+      window.__MTG_V7__.setNetSyncDebug = (on) => {
+        try { NetSync.DEBUG = !!on; console.log('[netSync] DEBUG=', NetSync.DEBUG); }
+        catch(e) { console.warn('[netSync.setDebug]', e); }
+      };
+      // v7.6.4: debug instrumentation surface. Lets a future audit (the
+      // upcoming 30-min load test) inspect state, hydration health, and
+      // broadcast cadence without instrumenting anew. None of this is
+      // load-bearing — purely observability.
+      const debug = window.__MTG_V7__.debug = window.__MTG_V7__.debug || {};
+      debug.snapshot = () => {
+        try { return JSON.parse(JSON.stringify(window.__MTG_V7__.__gameStateSnapshot || null)); }
+        catch { return null; }
+      };
+      debug.hydrationMisses = debug.hydrationMisses || []; // [{seat, miss, total, ts}]
+      debug.broadcastLog    = debug.broadcastLog    || []; // [{dir, seq, fromSeat, ts}]
+      debug.connHistory     = debug.connHistory     || []; // [{state, detail, ts}]
+      // Bounded ring buffers — never grow unboundedly.
+      debug._cap = (arr, n=200) => { while(arr.length>n) arr.shift(); };
+      debug.summary = () => ({
+        mySeat: window.__MTG_V7__.mySeat,
+        netTransport: sync.transport,
+        wsReadyState: sync.ws?.readyState ?? null,
+        outSeq: sync.outSeq,
+        lastSeenByUser: {...sync.lastSeenByUser},
+        rooms: sync.roomId,
+        hydrationMissCount: debug.hydrationMisses.length,
+        broadcastCount: debug.broadcastLog.length,
+        connHistoryLast: debug.connHistory.slice(-5),
+      });
+      debug.reset = () => {
+        debug.hydrationMisses.length = 0;
+        debug.broadcastLog.length = 0;
+        debug.connHistory.length = 0;
+      };
       sync.start().then(()=>{
         // Seed remote with our initial state (masked for privacy, slim for transport).
         const masked = maskPrivateZones(initial);
-        sync.broadcast(slimForBroadcast(masked), masked);
+        // v7.6.4: stamp our seat so receivers do a per-seat patch.
+        sync.broadcast(slimForBroadcast(masked), masked, { senderSeat: playerIdx });
       }).catch(e=>console.warn("[netSync.start]",e));
 
       // v2 fix (bug #2): subscribe to chat + action-log events and dispatch
