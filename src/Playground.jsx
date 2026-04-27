@@ -8455,7 +8455,7 @@ function BatchImporter({onImport, onClose}){
     })();
   };
 
-
+  const retryFailed = async () => {
     if(!status?.failedEntries || !partialResults) return;
     setImporting(true);
     const failed = [...status.failedEntries];
