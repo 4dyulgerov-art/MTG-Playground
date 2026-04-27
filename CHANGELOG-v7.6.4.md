@@ -8,7 +8,19 @@
 
 ## TL;DR
 
-v7.6.4 fixes the joiner-divergence bug from the v7.6.3 hydration debrief, ships a visible opponent hand strip with the correct sleeve, makes deck import ~20× faster, pre-caches deck images so cards never pop in mid-game, adds debug instrumentation for future audits, and hardens the transport layer against zombie WebSockets and silent JWKS misconfig.
+v7.6.4 fixes the joiner-divergence bug from the v7.6.3 hydration debrief, ships a viewport-anchored opponent hand strip that mirrors the local hand, makes deck import truly instant (paste → done, metadata fills in behind), pre-caches deck images so cards never pop in mid-game, adds debug instrumentation for future audits, hardens the transport layer against zombie WebSockets and silent JWKS misconfig, and rebrands the product from "MTG Playground" to **TCG Playsim** at **playsim.live**.
+
+---
+
+## Rebrand
+
+- Tab title: `playsim.live — TCG Playsim` (was "MTG Playground v7")
+- Page meta description references TCG Playsim and playsim.live
+- Boot skeleton text says TCG PLAYSIM
+- All three in-app brand labels (menu header, in-game header, settings) say **TCG Playsim**
+- `package.json` name: `playsim-live` (was `mtg-playground-v7`); description rewritten
+- `README.md` title and lead paragraphs updated; "MTG Playground" → "TCG Playsim" everywhere user-visible
+- Internal code namespace `window.__MTG_V7__` and CSS prefix `mtg-` are preserved (changing them would break too much for zero user benefit; brand is presentation layer, namespaces are implementation)
 
 ---
 
@@ -34,30 +46,38 @@ v7.6.4 fixes the joiner-divergence bug from the v7.6.3 hydration debrief, ships 
 
 ## UX
 
-### Visible opponent hand strip with correct sleeve
+### Viewport-anchored opponent hand strip
 
 **Was:**
+- The opp hand was rendered inside the rotated opp `BoardSide`. Its anchor (`oppHandRef`) sat at `bottom:0` of the BoardSide div; after the parent's 180° rotation that became visually "top of the opp half" — but in 2p layout that's screen-mid, not screen-top. The user-facing experience: you couldn't see the opp's hand at the actual top of the screen, where you intuitively expect it.
 - `CardImg` looked up the face-down sleeve via `window._deckSleeve`, a global set once-per-render to the LOCAL player's sleeve. Opp face-down cards rendered with the local player's sleeve.
-- When the opponent's hand was empty, `HandOverlay` returned `null` — the strip was invisible, with no visual anchor for "this is where opp hand lives."
+- When the opponent's hand was empty, `HandOverlay` returned `null` — the strip was invisible.
 
 **Now:**
-- `CardImg` accepts an optional `sleeveUri` prop (preferred over the global). `HandOverlay` accepts and passes `sleeveUri`. `BoardSide` reads `player.deck.sleeveUri` and threads it through. Each side now renders face-down cards with its own sleeve.
-- In `readOnly` mode (opp render path), `HandOverlay` renders a faint dashed frame with "✋ HAND · 0" when the hand is empty, instead of returning null.
+- New `OppHandStrip` component, rendered as `position:fixed top:50px` (just below the top header bar). Always sits flush at the actual screen top, completely independent of the BoardSide rotation gymnastics. Mirrors the local hand strip at the bottom.
+- Renders face-down sleeves using the **opponent's** `deck.sleeveUri`, not the local player's. Falls back gracefully if missing.
+- Empty-state: a faint dashed "✋ ALIAS · HAND · 0" frame is always visible — clear visual anchor for "this is where opp hand lives."
+- Subtle fan layout (slight rotation per card) for visual polish.
+- The original in-BoardSide `HandOverlay` for opp is preserved for spatial/symmetry purposes but `CardImg` was extended to accept a per-side `sleeveUri` prop, so its face-down rendering is also now correct.
 
-### Deck import is ~20× faster
+### Truly instant deck import
 
-**Was:** Serial `/cards/named` lookup, one card per request, ~9 req/sec. A 100-card deck took ~11s+ with the user blocked watching the progress bar.
+**Was:** Serial `/cards/named` lookup, one card per request. Even after batching to `/cards/collection`, a 100-card import still **blocked the modal** for ~0.5–1.5s with a progress spinner.
 
-**Now:** Batched via `/cards/collection` (75 identifiers per request). 100-card deck → 2 requests, ~0.5s. Per-name `/cards/named` retained as a fallback for anything in `not_found` (typos, basic-land variants, custom names). Both `handleImport` and `retryFailed` use the batched path.
+**Now:** Two-stage import. Paste a list, click **✦ Import List**, the modal closes **immediately** — your deck is populated with stub entries that have the correct names and quantities. Background fetch via batched `/cards/collection` resolves real Scryfall metadata (image, oracle text, mana cost, type line) and dispatches a `mtg-deck-patch` window event that the deckbuilder listens for and merges in. Stubs become real cards in-place as data arrives, typically within ~0.5–1s. The user is never blocked.
 
-### Card images pre-cached at game start
+A secondary **"Wait & Verify"** button preserves the synchronous batched-import path for users who want failure reports up front before committing.
+
+### Card images pre-cached at game start AND on deck save
 
 **Was:** Card images loaded lazily (`<img loading="lazy">`). The first time a card was revealed mid-game, the player saw a blank frame for 100–500ms while the image fetched.
 
 **Now:** New `prefetchDeckImages(deck, {priority})` helper:
 - Own deck → `'high'`: kicks off `Image()` fetches for every card immediately at game start. HTTP/2 multiplexing handles parallelism.
 - Opponent decks → `'low'`: queued, throttled (10 concurrent), starts after a 1.5s delay so it doesn't compete with above-the-fold paint.
+- **Also fires on every deck save (`saveDeck`)** — so by the time a deck is saved (including from instant import), its images are already warming in the cache, even before a game starts.
 - De-duped via a global Set so the same URL is never fetched twice.
+- Visible counter at `window.__MTG_V7__.debug.prefetchCount` for verification (e.g. after starting a 100-card commander game, this should jump to ~80–200 within a second).
 
 ---
 

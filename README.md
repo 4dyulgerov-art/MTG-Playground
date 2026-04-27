@@ -1,6 +1,8 @@
-# MTG Playground v7.6.4
+# TCG Playsim — playsim.live (v7.6.4)
 
-Browser-based Magic: The Gathering playtester. Built on top of the v6 single-file prototype with **zero gameplay regressions** — every feature from v6 (weather, planechase, dandan, custom cards, themes, hotkeys, sound studio, mat crop editor) is preserved intact. What v7 adds:
+> Formerly "MTG Playground". Rebranded in v7.6.4: the live deployment is at **playsim.live**, the product is **TCG Playsim**. Code structure is unchanged from v7.x; tab title, page metadata, and in-app titles all reflect the new brand.
+
+Browser-based trading-card-game playtester. Built on top of the v6 single-file prototype with **zero gameplay regressions** — every feature from v6 (weather, planechase, dandan, custom cards, themes, hotkeys, sound studio, mat crop editor) is preserved intact. What v7 adds:
 
 - **Real accounts** — email/password via Supabase Auth
 - **Cross-computer rooms** — 2, 3, or 4 players gather from anywhere

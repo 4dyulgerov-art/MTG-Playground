@@ -1433,6 +1433,12 @@ function _prefetchOne(url){
     img.decoding = "async";
     img.loading = "eager";
     img.src = url;
+    // v7.6.4: visible counter so prefetch isn't invisible.
+    if(typeof window !== 'undefined'){
+      window.__MTG_V7__ = window.__MTG_V7__ || {};
+      window.__MTG_V7__.debug = window.__MTG_V7__.debug || {};
+      window.__MTG_V7__.debug.prefetchCount = (window.__MTG_V7__.debug.prefetchCount || 0) + 1;
+    }
     // Don't keep the reference — let GC handle it once cached.
   } catch {}
 }
@@ -1451,6 +1457,12 @@ function _drainPrefetchQueue(){
         _drainPrefetchQueue();
       };
       img.src = url;
+      // v7.6.4: visible counter so prefetch isn't invisible.
+      if(typeof window !== 'undefined'){
+        window.__MTG_V7__ = window.__MTG_V7__ || {};
+        window.__MTG_V7__.debug = window.__MTG_V7__.debug || {};
+        window.__MTG_V7__.debug.prefetchCount = (window.__MTG_V7__.debug.prefetchCount || 0) + 1;
+      }
     } catch {
       _prefetchActive--;
     }
@@ -3447,7 +3459,7 @@ function ProfileSetup({existing,onSave}){
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>
             {currentAvatarDisplay}
           </div>
-          <h2 className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:20,letterSpacing:".06em",marginBottom:4}}>MTG Playground</h2>
+          <h2 className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:20,letterSpacing:".06em",marginBottom:4}}>TCG Playsim</h2>
           <p style={{color:"#3a5a7a",fontSize:10,letterSpacing:".1em",fontFamily:"Cinzel, serif"}}>ENTER THE ARENA</p>
         </div>
 
@@ -4038,7 +4050,113 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   );
 }
 
-/* ─── HandOverlay — cards rendered as position:fixed, no clipping ─── */
+/* ─── OppHandStrip — v7.6.4 viewport-anchored opp hand display ──────────
+   Renders the opponent's hand as a row of face-down sleeves at the very
+   TOP of the screen, mirroring the local player's hand at the bottom.
+   Independent of the BoardSide-rotation contraption — uses position:fixed
+   so it sits flush against the actual viewport edge regardless of the opp
+   half's flex sizing.
+
+   Privacy: uses the masked stubs from `maskPrivateZones` ({iid, faceDown,
+   _masked:"hand"}). Card identities are never exposed.
+
+   Empty state: renders a faint dashed frame with "✋ HAND · 0" so the
+   region is always visible, not phantom-empty.
+*/
+function OppHandStrip({hand, sleeveUri, alias}){
+  const total = (hand || []).length;
+  const STRIP_H = 96;            // strip height
+  // The GameBoard header bar (Untap/Upkeep/Draw/...) is ~44-48px tall and
+  // sits at the top of the screen. Anchor this strip just below it.
+  const STRIP_TOP = 50;
+  const cardW = 50;              // smaller than local hand
+  const cardH = Math.round(cardW * 1.4);
+  const zoneSidePad = 16;
+  // Compute fan layout. Cap the total spread to viewport-minus-padding so
+  // hands of any size fit. Step shrinks (overlap grows) as hand grows.
+  const maxRowW = (typeof window !== 'undefined' ? window.innerWidth : 1280) - zoneSidePad*2 - 200; // leave room for sidebar/labels
+  const baseStep = cardW - 8;
+  const fittedStep = total > 1 ? Math.min(baseStep, (maxRowW - cardW) / (total - 1)) : cardW;
+  const step = Math.max(10, fittedStep);
+  const totalW = total > 0 ? cardW + (total - 1) * step : cardW;
+  const startX = (typeof window !== 'undefined' ? window.innerWidth : 1280)/2 - totalW/2;
+
+  const sleeve = sleeveUri || (typeof window !== 'undefined' ? window._deckSleeve : null) || CARD_BACK;
+
+  // Empty-state frame
+  if(total === 0){
+    return (
+      <div style={{
+        position:"fixed",
+        top:STRIP_TOP, left:0, right:0,
+        height:STRIP_H,
+        pointerEvents:"none",
+        zIndex:9000,
+        display:"flex", alignItems:"center", justifyContent:"center",
+      }}>
+        <div style={{
+          padding:"6px 18px",
+          border:"1px dashed rgba(200,168,112,.22)",
+          borderRadius:6,
+          background:"linear-gradient(180deg,rgba(200,168,112,.05),rgba(200,168,112,0))",
+          color:"rgba(200,168,112,.55)",
+          fontFamily:"Cinzel, serif", fontSize:10, letterSpacing:"0.15em",
+        }}>
+          ✋ {alias ? `${alias.toUpperCase()} · HAND` : "OPPONENT HAND"} · 0
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      position:"fixed",
+      top:STRIP_TOP, left:0, right:0,
+      height:STRIP_H,
+      pointerEvents:"none",
+      zIndex:9000,
+    }}>
+      {/* Tiny label: alias + count, top-left of strip */}
+      <div style={{
+        position:"absolute", top:6, left:14,
+        fontSize:10, fontFamily:"Cinzel, serif",
+        color:"rgba(200,168,112,.6)", letterSpacing:"0.12em",
+        textShadow:"0 1px 3px rgba(0,0,0,.8)",
+      }}>
+        ✋ {alias ? `${alias.toUpperCase()} · HAND` : "OPP HAND"} · {total}
+      </div>
+      {(hand || []).map((_card, idx) => {
+        const x = startX + idx * step;
+        // Subtle fan: cards near the middle sit slightly lower; ends tilt outward.
+        const mid = (total - 1) / 2;
+        const offset = idx - mid;
+        const rot = offset * 1.5;             // degrees
+        const fanY = Math.abs(offset) * 0.8;  // pixels
+        return (
+          <div key={_card?.iid || idx} style={{
+            position:"absolute",
+            left: x,
+            top: 6 + fanY,
+            width: cardW, height: cardH,
+            transform: `rotate(${rot}deg)`,
+            transformOrigin:"top center",
+            borderRadius:5, overflow:"hidden",
+            border:"1px solid #2a3a5a",
+            boxShadow:"0 4px 10px rgba(0,0,0,.65)",
+            background:"#0a1628",
+          }}>
+            <img src={sleeve} alt="" loading="eager"
+              style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}
+              onError={(e)=>{ e.currentTarget.src = CARD_BACK; }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+
 function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setSelected,setSelZone,startFloatDrag,handleCtx,floatDrag,readOnly=false,sleeveUri=null}){
   const [rect,setRect]=useState(null);
   useEffect(()=>{
@@ -4064,39 +4182,7 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
     return()=>window.removeEventListener("resize",update);
   },[handRef,containerRef,hand.length]);
 
-  if(!rect)return null;
-  // v7.6.4: in readOnly (opp) mode, render an always-visible faint frame for
-  // the hand strip — including when the hand is empty. Gives the user a
-  // clear visual anchor for "this is where the opp's hand lives" instead of
-  // a phantom empty region. For the local player, behavior is unchanged
-  // (return null when 0 cards).
-  if(hand.length===0){
-    if(!readOnly) return null;
-    const frameW = rect.width;
-    const frameH = Math.round(CH*0.55) + 12;
-    const frameLeft = rect.left;
-    const frameTop = rect.top + 6;
-    return(
-      <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:500}}>
-        <div style={{
-          position:"absolute",
-          left:frameLeft, top:frameTop,
-          width:frameW, height:frameH,
-          border:"1px dashed rgba(200,168,112,.18)",
-          borderRadius:6,
-          background:"linear-gradient(180deg,rgba(200,168,112,.04),rgba(200,168,112,0))",
-          display:"flex",alignItems:"center",justifyContent:"center",
-          // The opp wrapper applies rotate(180deg); counter-rotate the label
-          // so it reads right-side-up to the local player.
-          transform:"rotate(180deg)",
-        }}>
-          <span style={{fontSize:9,fontFamily:"Cinzel, serif",color:"rgba(200,168,112,.45)",letterSpacing:"0.1em"}}>
-            ✋ HAND · 0
-          </span>
-        </div>
-      </div>
-    );
-  }
+  if(!rect||hand.length===0)return null;
 
   const total=hand.length;
   // v7.6.2: readOnly (opponent) hand — smaller cards, and positioned at the
@@ -7654,6 +7740,20 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           relative to its BoardSide container so it rotates with the opp side
           in Phase 3. The previous viewport-fixed overlay has been retired. */}
 
+      {/* v7.6.4: viewport-anchored opp hand strip at the top of the screen.
+          The in-BoardSide HandOverlay (above) renders inside the rotated opp
+          half — useful for symmetry but its top edge is screen-mid in 2p
+          layout, not screen-top. This strip is screen-anchored: position:fixed
+          top:0, so it sits flush against the actual viewport top regardless
+          of opp-half flex sizing. Mirrors the local hand strip at the bottom. */}
+      {opponent && (
+        <OppHandStrip
+          hand={opponent.hand}
+          sleeveUri={opponent.deck?.sleeveUri || null}
+          alias={opponent.profile?.alias || ''}
+        />
+      )}
+
       {/* Priority signal overlay */}
       {priority&&(
         <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",
@@ -8289,7 +8389,73 @@ function BatchImporter({onImport, onClose}){
     }
   };
 
-  const retryFailed = async () => {
+  // v7.6.4: instant import. Parse the decklist, build STUB entries with
+  // {_pending:true} and a placeholder image, hand them to onImport
+  // immediately (modal closes, deckbuilder is usable), then resolve
+  // Scryfall metadata in the background and dispatch a window event that
+  // the deckbuilder listens for to patch in real card data as it arrives.
+  // No blocking spinner. No 0.5s wait. Paste → done.
+  const handleInstantImport = () => {
+    const parsed = preview || parseDecklist(text);
+    const allEntries = [
+      ...parsed.main.map(e=>({...e,zone:"main"})),
+      ...parsed.side.map(e=>({...e,zone:"side"})),
+      ...parsed.tokens.map(e=>({...e,zone:"token"})),
+    ];
+    if(!allEntries.length){ setStatus({done:0,total:0,errors:["Nothing to import"]}); return; }
+
+    // Build stub entries — these are committed to the deck instantly.
+    const mkStub = ({name, quantity}) => ({
+      scryfallId: `pending:${name.toLowerCase()}`,
+      name,
+      quantity,
+      // Image fields are null — the renderer (CardImg, getImg) gracefully
+      // falls back to a name-only card frame until real data arrives.
+      imageUri: null,
+      manaCost: "",
+      typeLine: "",
+      oracleText: "",
+      colors: [],
+      _pending: true,
+    });
+    const results = {
+      main:   parsed.main.map(mkStub),
+      side:   parsed.side.map(mkStub),
+      tokens: parsed.tokens.map(mkStub),
+    };
+
+    // Commit stubs immediately. Modal closes, user can use the deckbuilder.
+    onImport(results);
+
+    // Background: resolve real Scryfall data and dispatch a 'mtg-deck-patch'
+    // event with the resolved cards. The deckbuilder listens and merges.
+    (async () => {
+      try {
+        const lookup = await sfCollection(allEntries.map(e=>e.name));
+        // Build resolved entries keyed by the stub's scryfallId so the
+        // deckbuilder can find and replace.
+        const patches = [];
+        for(const {name, quantity, zone} of allEntries){
+          const card = lookup.get(name.toLowerCase());
+          if(card){
+            const resolved = {...buildDeckEntry(card), quantity};
+            patches.push({
+              stubId: `pending:${name.toLowerCase()}`,
+              zone,
+              resolved,
+            });
+          }
+        }
+        if(typeof window !== 'undefined'){
+          window.dispatchEvent(new CustomEvent('mtg-deck-patch', { detail: { patches } }));
+        }
+      } catch (e) {
+        console.warn('[instant import] background fetch failed', e);
+      }
+    })();
+  };
+
+
     if(!status?.failedEntries || !partialResults) return;
     setImporting(true);
     const failed = [...status.failedEntries];
@@ -8406,9 +8572,16 @@ function BatchImporter({onImport, onClose}){
               onMouseOver={hov} onMouseOut={uhov}>Preview</button>
           )}
           {!importing && !status && (
-            <button onClick={handleImport} disabled={!text.trim()}
+            <button onClick={handleInstantImport} disabled={!text.trim()}
+              title="Add cards immediately; artwork loads in the background"
               style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,minWidth:140,fontFamily:"Cinzel, serif",fontWeight:700,border:`1px solid ${T.accent}60`})}}
               onMouseOver={hov} onMouseOut={uhov}>✦ Import List</button>
+          )}
+          {!importing && !status && (
+            <button onClick={handleImport} disabled={!text.trim()}
+              title="Wait for Scryfall lookup before adding (slower, but reports failures up front)"
+              style={{...btn("transparent","#6a7a8a",{flex:0,minWidth:120,fontSize:9,border:`1px solid ${T.border}40`})}}
+              onMouseOver={hov} onMouseOut={uhov}>Wait & Verify</button>
           )}
           {/* v7.5.1: When partial import, offer retry + commit-what-we-got */}
           {status && !importing && status.errors.length>0 && partialResults && (
@@ -8475,6 +8648,38 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
     setCards(next.cards);setSideboard(next.sideboard);setTokenList(next.tokens);setCommanders(next.commanders);
   };
   const tmr=useRef(null);
+
+  // v7.6.4: instant-import patch listener. The BatchImporter dispatches
+  // 'mtg-deck-patch' events with resolved Scryfall data after the user has
+  // already received stub entries. Merge resolved data in by matching on
+  // the stub's scryfallId (`pending:<lowercased-name>`).
+  useEffect(()=>{
+    const onPatch = (ev) => {
+      const patches = ev?.detail?.patches;
+      if(!Array.isArray(patches) || !patches.length) return;
+      const byZone = { main:[], side:[], token:[] };
+      for(const p of patches){
+        if(byZone[p.zone]) byZone[p.zone].push(p);
+      }
+      const applyTo = (list, zonePatches) => {
+        if(!zonePatches.length) return list;
+        const map = new Map(zonePatches.map(p => [p.stubId, p.resolved]));
+        return list.map(c => {
+          if(c._pending && map.has(c.scryfallId)){
+            const r = map.get(c.scryfallId);
+            // Preserve quantity from the stub; take everything else from resolved.
+            return { ...r, quantity: c.quantity };
+          }
+          return c;
+        });
+      };
+      setCards(prev => applyTo(prev, byZone.main));
+      setSideboard(prev => applyTo(prev, byZone.side));
+      setTokenList(prev => applyTo(prev, byZone.token));
+    };
+    window.addEventListener('mtg-deck-patch', onPatch);
+    return () => window.removeEventListener('mtg-deck-patch', onPatch);
+  },[]);
 
   // Fixed Scryfall search — use /cards/search with proper error handling
   useEffect(()=>{
@@ -9100,7 +9305,7 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <div style={{fontSize:26,filter:"drop-shadow(0 0 16px rgba(200,168,112,.5))",animation:"floatSoft 3s ease-in-out infinite"}}>⚔</div>
           <div>
-            <div className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:20,letterSpacing:".08em"}}>MTG Playground</div>
+            <div className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:20,letterSpacing:".08em"}}>TCG Playsim</div>
             <div style={{fontSize:8,color:"#3a5a7a",letterSpacing:".2em",fontFamily:"Cinzel, serif"}}>THE ETERNAL ARENA · v4</div>
           </div>
         </div>
@@ -9426,7 +9631,15 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     }
     try{await storage.set("mtg_decks_v3",JSON.stringify(d));}catch{}
   };
-  const saveDeck=deck=>{persist(decks.some(d=>d.id===deck.id)?decks.map(d=>d.id===deck.id?deck:d):[...decks,deck]);setView("menu");};
+  const saveDeck=deck=>{
+    persist(decks.some(d=>d.id===deck.id)?decks.map(d=>d.id===deck.id?deck:d):[...decks,deck]);
+    // v7.6.4: pre-warm images on save. If the user just imported a 100-card
+    // deck via the instant-import path, this kicks off background fetches
+    // for the artwork even before they start a game. Idempotent (the
+    // prefetch helper de-dupes) so calling it on every save is fine.
+    try { prefetchDeckImages(deck, {priority:'low'}); } catch {}
+    setView("menu");
+  };
 
   // v7: after a local state change, broadcast to peers if an online session is active.
   // v7.4 Privacy: Only hand CARDS are masked to opponents. Library, graveyard,
@@ -9846,7 +10059,7 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   if(view==="loading")return(
     <div style={{height:"100vh",background:T.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
       <div style={{fontSize:40,animation:"floatSoft 1.5s ease-in-out infinite",filter:"drop-shadow(0 0 20px rgba(200,168,112,.5))"}}>⚔</div>
-      <div className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:16,letterSpacing:".1em"}}>MTG Playground</div>
+      <div className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:16,letterSpacing:".1em"}}>TCG Playsim</div>
       <div style={{fontSize:9,color:"#2a3a5a",fontFamily:"Cinzel, serif",letterSpacing:".2em",animation:"pulse 1.5s ease-in-out infinite"}}>ENTERING THE MULTIVERSE…</div>
     </div>
   );

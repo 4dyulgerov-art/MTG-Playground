@@ -1,9 +1,9 @@
 {
-  "name": "mtg-playground-v7",
+  "name": "playsim-live",
   "private": true,
   "version": "7.6.4",
   "type": "module",
-  "description": "Browser-based Magic: The Gathering playtester. Fast, free, no download. 2-4 player online or local.",
+  "description": "TCG Playsim (playsim.live) — browser-based trading-card-game playtester. Fast, free, no download. 2-4 player online or local.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
