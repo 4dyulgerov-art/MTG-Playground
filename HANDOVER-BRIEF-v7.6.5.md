@@ -7,6 +7,25 @@
 
 ---
 
+## Post-launch hotfixes (in this build)
+
+This build folds in **ten** hotfixes that landed from playtest after the initial 7.6.5 push. None require schema changes or migrations — they're all client-side resilience patches.
+
+1. **Presence counter falls back gracefully** when `user_profiles.updated_at` / `room_players.updated_at` columns aren't present — counts total profiles / seats instead of showing 0.
+2. **Room creation actually writes the seat row** even when `room_players.updated_at` is missing — retries the upsert without the column on column-missing errors.
+3. **Dandân library** shows a clean sleeve placeholder (no overlay), with a real right-click context menu.
+4. **Dandân graveyard** matches — clean placeholder, real context menu, no purple gradient overlay.
+5. **The "DANDÂN" word** in the middle of the battlefield is gone.
+6. **Hotkeys ⌨ button** is now visible in Dandân header alongside the 📜 info button.
+7. **App.jsx heartbeat** stops cleanly on schema-mismatch errors instead of looping.
+8. **↑ / ↓ keys for life ±1** restored. Removing the topbar LifeCounter and HandLifeCounter took their keyboard listeners with them. The arrow keys now run through the main GameBoard hotkey loop and call `changeLife`, so they animate + log the change correctly.
+9. **HotkeyHelp completeness audit.** Help modal now lists every hotkey the handler actually responds to. Previously missing: ↑, ↓, Y (discard hand), `?` / `/` (open help itself).
+10. **Hotseat opp-hand defensive mask.** All hand-rendering paths verified to render sleeve only, but added belt-and-braces masking at the BoardSide prop level so future render additions can't accidentally leak card faces in hotseat (where the privacy mask doesn't run).
+
+If you've already pushed the initial v7.6.5 to production, this build replaces it. The git commit message should reflect the hotfix nature: `v7.6.5 hotfix — Dandân polish, presence resilience, life hotkeys, hand-mask defense`.
+
+---
+
 ## TL;DR
 
 Polish + hardening release on top of v7.6.4. Headlines:
@@ -16,11 +35,11 @@ Polish + hardening release on top of v7.6.4. Headlines:
 - **Filters → combobox**, deck card layout fixed, multi-commander preview
 - **Profile playmat: URL + Browse**
 - **Presence Counter actually shows real data** (heartbeat to user_profiles, in-game stamp on room_players)
-- **Dandân room stays in single-deck mode** (host-only opening-hand)
+- **Dandân SharedZones polished** — clean sleeve placeholders, real context menus, no decorative overlays
 - **Password reset bug fixed** (global PASSWORD_RECOVERY interceptor)
 - **Favicons + manifest** installed in `/public`
 
-No data-model changes. No relay changes. No migrations. Pure client-side except for the App-level heartbeat that touches `user_profiles.updated_at`.
+No data-model changes. No relay changes. No migrations.
 
 ---
 

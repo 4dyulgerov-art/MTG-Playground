@@ -5633,17 +5633,35 @@ function DeckViewer({library,revealTop,onClose,onCtx,onHover,onDragStart,onDraw,
    to draw to your own hand; right-click for a small menu. Click the
    graveyard pile to open the existing graveyard viewer.
 */
-function SharedZones({ player, draw, mill, onOpenGrave, onOpenLib, addLog, T }){
+function SharedZones({ player, draw, mill, onOpenGrave, onOpenLib, addLog, T, handleCtx }){
   if(!player) return null;
   const libCount = (player.library || []).length;
   const graveCount = (player.graveyard || []).length;
   const sleeve = player.deck?.sleeveUri || CARD_BACK;
-  // Top of graveyard for thumbnail
-  const topGrave = graveCount > 0 ? player.graveyard[graveCount - 1] : null;
-  const topGraveImg = topGrave ? (getImg(topGrave) || CARD_BACK) : null;
+  // v7.6.5: graveyard pile shows the SLEEVE, not the top card face. The
+  // user can right-click → "View graveyard" or click the pile to open the
+  // viewer. (Other formats show the top card on the grave pile but for
+  // Dandân we want it to read as a "shared zone" with a clean placeholder.)
 
   const PILE_W = 70;
   const PILE_H = Math.round(PILE_W * 1.4);
+
+  // Synthesize a card-like object so handleCtx can show the proper
+  // ContextMenu. The "Library" and "Graveyard" zones in the menu have full
+  // shared-deck affordances (draw N, mill N, view, shuffle, look at top).
+  const libSynthCard  = { iid: "shared_library_top", name: "Top of Shared Library", imageUri: null };
+  const graveSynthCard = graveCount > 0
+    ? player.graveyard[graveCount - 1]
+    : { iid: "shared_graveyard_top", name: "Shared Graveyard", imageUri: null };
+
+  const onLibCtx = (e) => {
+    e.preventDefault();
+    if (handleCtx) handleCtx(e, libSynthCard, "library");
+  };
+  const onGraveCtx = (e) => {
+    e.preventDefault();
+    if (handleCtx) handleCtx(e, graveSynthCard, "graveyard");
+  };
 
   return (
     <div style={{
@@ -5654,22 +5672,16 @@ function SharedZones({ player, draw, mill, onOpenGrave, onOpenLib, addLog, T }){
       pointerEvents:"none",
       display:"flex", gap:18, alignItems:"center",
     }}>
-      {/* Shared library */}
+      {/* Shared library — sleeve placeholder, no tinted overlay */}
       <div
         onClick={() => { draw(1); }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          // Quick menu
-          const choice = window.prompt(`Draw how many cards from shared library? (${libCount} remaining)`, "1");
-          const n = Math.max(1, Math.min(libCount, parseInt(choice||"1",10) || 1));
-          if(n > 0) draw(n);
-        }}
-        title={`🐟 Shared Library — ${libCount} cards · click to draw, right-click to draw N`}
+        onContextMenu={onLibCtx}
+        title={`🐟 Shared Library — ${libCount} cards · click to draw, right-click for menu`}
         style={{
           width: PILE_W, height: PILE_H,
           borderRadius: 6,
           border: "2px solid rgba(168,85,247,.55)",
-          background: `linear-gradient(160deg, rgba(168,85,247,.15), rgba(2,4,10,.85))`,
+          background: "rgba(2,4,10,.85)",
           boxShadow: "0 6px 20px rgba(0,0,0,.7), 0 0 14px rgba(168,85,247,.25)",
           cursor: "pointer",
           pointerEvents: "auto",
@@ -5679,13 +5691,11 @@ function SharedZones({ player, draw, mill, onOpenGrave, onOpenLib, addLog, T }){
         onMouseOver={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 24px rgba(0,0,0,.8), 0 0 22px rgba(168,85,247,.45)";}}
         onMouseOut={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="0 6px 20px rgba(0,0,0,.7), 0 0 14px rgba(168,85,247,.25)";}}
       >
-        {/* Card-back image as the library "spine" */}
+        {/* v7.6.5: card-back sleeve, FULL opacity, no tinted overlay. */}
         <img src={sleeve} alt="" loading="eager" draggable={false}
-          style={{position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity:.65}}
+          style={{position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover"}}
           onError={(e)=>{ e.currentTarget.src = CARD_BACK; }}
         />
-        {/* Tinted overlay so this reads as 'shared' not just a normal deck */}
-        <div style={{position:"absolute", inset:0, background:"linear-gradient(180deg, rgba(168,85,247,.0), rgba(168,85,247,.35))", pointerEvents:"none"}}/>
         {/* Count + label */}
         <div style={{
           position:"absolute", left:0, right:0, top:4,
@@ -5701,26 +5711,20 @@ function SharedZones({ player, draw, mill, onOpenGrave, onOpenLib, addLog, T }){
         }}>{libCount}</div>
       </div>
 
-      {/* Center label between the piles */}
-      <div style={{
-        fontFamily:"Cinzel Decorative, serif",
-        fontSize:11, letterSpacing:".25em",
-        color:"#c084fc",
-        textShadow:"0 2px 6px rgba(0,0,0,.9), 0 0 12px rgba(168,85,247,.5)",
-        opacity:.85,
-      }}>🐟 DANDÂN</div>
+      {/* v7.6.5: "DANDÂN" word in the middle of the battlefield removed —
+          the format is already obvious from the shared piles + 📜 button. */}
 
-      {/* Shared graveyard */}
+      {/* Shared graveyard — sleeve placeholder, no tinted overlay,
+          real context menu with full graveyard affordances. */}
       <div
         onClick={() => { if(onOpenGrave) onOpenGrave(); }}
-        title={`☠ Shared Graveyard — ${graveCount} cards · click to view`}
+        onContextMenu={onGraveCtx}
+        title={`☠ Shared Graveyard — ${graveCount} cards · click to view, right-click for menu`}
         style={{
           width: PILE_W, height: PILE_H,
           borderRadius: 6,
           border: "2px solid rgba(167,139,250,.5)",
-          background: graveCount === 0
-            ? "linear-gradient(160deg, rgba(167,139,250,.06), rgba(2,4,10,.85))"
-            : "rgba(2,4,10,.85)",
+          background: "rgba(2,4,10,.85)",
           boxShadow: "0 6px 20px rgba(0,0,0,.7)",
           cursor: graveCount > 0 ? "pointer" : "default",
           pointerEvents: "auto",
@@ -5731,12 +5735,13 @@ function SharedZones({ player, draw, mill, onOpenGrave, onOpenLib, addLog, T }){
         onMouseOver={e=>{ if(graveCount>0){ e.currentTarget.style.transform="translateY(-2px)"; e.currentTarget.style.boxShadow="0 10px 24px rgba(0,0,0,.8), 0 0 16px rgba(167,139,250,.4)"; } }}
         onMouseOut={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="0 6px 20px rgba(0,0,0,.7)";}}
       >
-        {topGraveImg && (
-          <img src={topGraveImg} alt="" loading="eager" draggable={false}
-            style={{position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover"}}
-          />
-        )}
-        <div style={{position:"absolute", inset:0, background:"linear-gradient(180deg, rgba(167,139,250,.0), rgba(167,139,250,.3))", pointerEvents:"none"}}/>
+        {/* v7.6.5: graveyard placeholder uses the same sleeve image as the
+            library, full opacity, no tinted overlay. The viewer modal still
+            shows real card faces when opened. */}
+        <img src={sleeve} alt="" loading="eager" draggable={false}
+          style={{position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", filter: graveCount === 0 ? "grayscale(.6)" : "none"}}
+          onError={(e)=>{ e.currentTarget.src = CARD_BACK; }}
+        />
         <div style={{
           position:"absolute", left:0, right:0, top:4,
           textAlign:"center",
@@ -5918,6 +5923,8 @@ function ScryModal({cards,mode,onConfirm,onClose}){
 /* ─── HotkeyHelp modal ───────────────────────────────────────────── */
 function HotkeyHelp({onClose}){
   const GLOBAL=[
+    ["↑","Life +1"],
+    ["↓","Life −1"],
     ["X","Untap all cards in play"],
     ["C","Draw a card from deck"],
     ["V","Shuffle your deck"],
@@ -5931,12 +5938,14 @@ function HotkeyHelp({onClose}){
     ["Q","No Response / Pass"],
     ["W","Insert token or any card"],
     ["E","End Turn"],
+    ["Y","Discard entire hand"],
     ["F","Find a card in deck (Search Library)"],
     ["G","Look at top N cards (Scry)"],
     ["`","Roll D6"],
     ["Shift+`","Roll D20"],
     ["Ctrl+A","Select all on battlefield"],
-    ["Escape","Clear selection / cancel"],
+    ["Escape","Clear selection / cancel / close modal"],
+    ["? / /","Open this hotkey help"],
   ];
   const HOVER=[
     ["Space / _","Tap/untap (BF) · Send to battlefield (hand/grave/exile/library)"],
@@ -8663,6 +8672,19 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         return;
       }
 
+      // ↑ / ↓ — life ±1 (v7.6.5: restored after HandLifeCounter removal;
+      // the new CommandBar has no +/- buttons by design, so the keyboard
+      // is now the primary way to nudge life by one without typing).
+      if(e.key==="ArrowUp" && !e.ctrlKey && !e.metaKey){
+        e.preventDefault();
+        changeLife((player.life ?? 20) + 1);
+        return;
+      }
+      if(e.key==="ArrowDown" && !e.ctrlKey && !e.metaKey){
+        e.preventDefault();
+        changeLife((player.life ?? 20) - 1);
+        return;
+      }
       // ── HOVER CARD hotkeys (act on hovered card) ──
       const card=hovered;
       if(!card)return;
@@ -8804,8 +8826,8 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     };
     window.addEventListener("keydown",onKey);
     return()=>window.removeEventListener("keydown",onKey);
-  },[player.battlefield,selected,hovered,upd,draw,shuffle,mulligan,untapAll,
-     advancePhase,tap,moveCard,copyCard,addCounter,addLog,
+  },[player.battlefield,player.life,selected,hovered,upd,draw,shuffle,mulligan,untapAll,
+     advancePhase,tap,moveCard,copyCard,addCounter,addLog,changeLife,
      signalPriority,onUpdateGame]);
 
   // v7.6.4: removed pre-NetSync localStorage polling loop (was an Online-sync
@@ -8908,7 +8930,9 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         )}
         <button onClick={onExit} style={{...btn(`${T.panel}99`,T.muted,{border:`1px solid ${T.border}20`,fontSize:10})}} onMouseOver={hov} onMouseOut={uhov}>⬅</button>
         <button onClick={onReset} style={{...btn("rgba(251,191,36,.08)","#fbbf24",{border:"1px solid rgba(251,191,36,.2)",fontSize:10})}} onMouseOver={hov} onMouseOut={uhov}>↺</button>
-        {!isDandan&&<button onClick={()=>setShowHotkeys(v=>!v)} title="Hotkey Help (?)" style={{...btn(`rgba(${T.accentRgb},.08)`,T.accent,{fontSize:10,border:"1px solid rgba(200,168,112,.2)",fontFamily:"Cinzel,serif",letterSpacing:".05em"})}} onMouseOver={hov} onMouseOut={uhov}>⌨</button>}
+        {/* v7.6.5: hotkey button now always visible, including in Dandân, so
+            players can consult the keymap regardless of format. */}
+        <button onClick={()=>setShowHotkeys(v=>!v)} title="Hotkey Help (?)" style={{...btn(`rgba(${T.accentRgb},.08)`,T.accent,{fontSize:10,border:"1px solid rgba(200,168,112,.2)",fontFamily:"Cinzel,serif",letterSpacing:".05em"})}} onMouseOver={hov} onMouseOut={uhov}>⌨</button>
         {isDandan&&(<>
           <span style={{fontSize:11,color:"#a855f7",fontFamily:"Cinzel,serif",letterSpacing:".08em"}}>🐟 DANDÂN</span>
           {/* v7.6.4: info button — opens rules + chosen-variant strategy modal. */}
@@ -9044,7 +9068,17 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
               upd={NOOP} addLog={addLog}
               handleCtx={NOOP} handleCardBFMouseDown={NOOP} startFloatDrag={NOOP}
               tap={NOOP} swapDeck={NOOP} draw={NOOP} shuffle={NOOP}
-              containerRef={oppContainerRef} hand={opponent.hand} handRef={oppHandRef}
+              containerRef={oppContainerRef}
+              hand={
+                /* v7.6.5: defensive mask — even though OppHandStrip always
+                   renders sleeves and BoardSide.HandOverlay is suppressed in
+                   readOnly mode, force every opp hand card's `faceDown` flag
+                   to true here so that ANY downstream rendering path cannot
+                   accidentally leak card faces. Doubly important in hotseat
+                   2p where the privacy mask doesn't run. */
+                (opponent.hand || []).map(c => ({...c, faceDown: true, _hotseatMasked: true}))
+              }
+              handRef={oppHandRef}
               hovered={hovered} floatDrag={null}
               onZoneRequest={requestOppZone}
             />
@@ -9119,6 +9153,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
           onOpenGrave={()=>setShowGraveViewer(true)}
           addLog={addLog}
           T={T}
+          handleCtx={handleCtx}
         />
       )}
 
@@ -10704,23 +10739,50 @@ function PresenceCounter({T}){
     const tick = async () => {
       try {
         const { supabase } = await import('./lib/supabase');
-        // "Online" — distinct profiles updated in the last 10 minutes.
         const tenMinAgo = new Date(Date.now() - 10*60*1000).toISOString();
-        const onlineQ = await supabase
-          .from('user_profiles')
-          .select('id', { count: 'exact', head: true })
-          .gte('updated_at', tenMinAgo);
-        // "In game" — total seats across rooms whose status is active or
-        // whose meta has been touched recently.
-        const inGameQ = await supabase
-          .from('room_players')
-          .select('user_id', { count: 'exact', head: true })
-          .gte('updated_at', tenMinAgo);
+        // v7.6.5: be resilient to schema variations.
+        // - "Online" — try user_profiles.updated_at first; if the column is
+        //   missing, fall back to total user_profiles count (lifetime users
+        //   as a coarse proxy). Either way the counter shows a meaningful
+        //   number rather than perpetually 0.
+        let onlineCount = 0;
+        try {
+          const { count, error } = await supabase
+            .from('user_profiles')
+            .select('id', { count: 'exact', head: true })
+            .gte('updated_at', tenMinAgo);
+          if (error) throw error;
+          onlineCount = count || 0;
+        } catch (e1) {
+          // Column missing or other error — fall back to total profiles.
+          try {
+            const { count } = await supabase
+              .from('user_profiles')
+              .select('id', { count: 'exact', head: true });
+            onlineCount = count || 0;
+          } catch {}
+        }
+        // - "In game" — count rows in room_players. Use updated_at when
+        //   available, otherwise just count total rows (which equals current
+        //   seat occupancy because leaveRoom deletes rows).
+        let inGameCount = 0;
+        try {
+          const { count, error } = await supabase
+            .from('room_players')
+            .select('user_id', { count: 'exact', head: true })
+            .gte('updated_at', tenMinAgo);
+          if (error) throw error;
+          inGameCount = count || 0;
+        } catch (e1) {
+          try {
+            const { count } = await supabase
+              .from('room_players')
+              .select('user_id', { count: 'exact', head: true });
+            inGameCount = count || 0;
+          } catch {}
+        }
         if (cancelled) return;
-        setStats({
-          online: onlineQ?.count || 0,
-          inGame: inGameQ?.count || 0,
-        });
+        setStats({ online: onlineCount, inGame: inGameCount });
       } catch {}
     };
     tick();

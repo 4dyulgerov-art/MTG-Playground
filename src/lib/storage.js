@@ -147,7 +147,7 @@ const shared = {
             }
           } catch {}
         }
-        const row = {
+        const baseRow = {
           room_id: id,
           user_id: me,
           seat,
@@ -156,13 +156,20 @@ const shared = {
           profile: parsed.profile || null,   // full profile JSONB
           alias:  parsed.profile?.alias || '',
           avatar: parsed.profile?.avatar || '🧙',
-          // v7.6.4: stamp updated_at so PresenceCounter ("in game" tab)
-          // sees this seat as recently active. The DB default may not
-          // refresh on upsert, so we set it explicitly.
-          updated_at: new Date().toISOString(),
         };
-        const { error } = await supabase
-          .from('room_players').upsert(row, { onConflict: 'room_id,user_id' });
+        // v7.6.5: try with `updated_at` first (so PresenceCounter "in-game"
+        // tab works). If the DB doesn't have that column, silently retry
+        // without it. v7.6.4 hard-required the column and broke seat writes
+        // on installs where the column was missing → host immediately
+        // appeared to leave the room they just created.
+        let { error } = await supabase
+          .from('room_players').upsert({ ...baseRow, updated_at: new Date().toISOString() }, { onConflict: 'room_id,user_id' });
+        if (error && /updated_at/i.test(error.message || '')) {
+          // Column missing — retry without it. Don't log a warning.
+          const retry = await supabase
+            .from('room_players').upsert(baseRow, { onConflict: 'room_id,user_id' });
+          error = retry.error;
+        }
         if (error) { console.warn('[room_players.upsert]', error); return null; }
         return { value };
       }

@@ -129,21 +129,29 @@ export default function App() {
     return () => window.removeEventListener('mtg:signout', h);
   }, []);
 
-  // v7.6.4: presence heartbeat. Every 60s while signed in, touch
+  // v7.6.5: presence heartbeat. Every 60s while signed in, touch
   // user_profiles.updated_at so the PresenceCounter can see "active in
-  // last 10 minutes" as a proxy for "online". Without this, the counter
-  // shows 0 because logging in doesn't itself bump updated_at.
+  // last 10 minutes" as a proxy for "online". If the column doesn't
+  // exist on the deployed schema, abort the heartbeat after the first
+  // failure — don't loop spamming the network.
   useEffect(() => {
     if (!user?.id) return;
     let cancelled = false;
     let interval = null;
+    let columnMissing = false;
     const ping = async () => {
-      if (cancelled) return;
+      if (cancelled || columnMissing) return;
       try {
         const { supabase } = await import('./lib/supabase');
-        await supabase.from('user_profiles')
+        const { error } = await supabase.from('user_profiles')
           .update({ updated_at: new Date().toISOString() })
           .eq('id', user.id);
+        if (error && /updated_at/i.test(error.message || '')) {
+          columnMissing = true;
+          if (interval) { clearInterval(interval); interval = null; }
+          // Don't warn — schema is just missing the column. Presence
+          // counter will simply stay at 0 in that case.
+        }
       } catch {}
     };
     ping();

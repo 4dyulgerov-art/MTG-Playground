@@ -5,6 +5,30 @@
 
 ---
 
+## Post-launch hotfixes (in this build)
+
+After the initial v7.6.5 ship, six bugs landed from playtest. All addressed here, build verified clean.
+
+1. **Presence counter showed 0.** Both queries assumed an `updated_at` column that may not exist on the deployed schema. PresenceCounter now tries `updated_at` first, falls back to total `user_profiles` count + total `room_players` count if the column is missing. App.jsx heartbeat aborts cleanly on the same error instead of looping.
+2. **Creating a room kicked the host out of their seat.** `room_players.upsert` was hard-requiring `updated_at` — if the column was missing the upsert failed silently and the seat row never got written. Now retries without `updated_at` on column-missing errors, so seats actually get written and the opp can see the room.
+3. **Dandân library showed top-card image instead of sleeve.** SharedZones library now always renders the deck sleeve (or `CARD_BACK` fallback) at full opacity. The `opacity:.65 + tinted purple gradient` overlay that made it look "weird" is gone.
+4. **Dandân graveyard had a translucent overlay.** Same fix: removed the gradient overlay. Graveyard pile now shows a clean sleeve placeholder (with grayscale tint when empty). The viewer modal still shows real card faces when opened.
+5. **Dandân library + graveyard had no real right-click menus.** Both now wire `handleCtx` with a synthetic top-of-zone card, exposing the full ContextMenu (draw N, mill N, view, shuffle, look at top, etc.) — same as the menu in other formats.
+6. **"DANDÂN" word in the middle of the battlefield.** Removed. The format is already obvious from the shared piles + the 📜 button in the header.
+7. **Hotkeys ⌨ button was hidden in Dandân.** Now always visible alongside the Dandân-only 📜 info button.
+
+## Second-round hotfixes (also in this build)
+
+8. **↑ / ↓ keys for life ±1 restored.** When the topbar `LifeCounter` and `HandLifeCounter` were removed in favor of CommandBar (which has no +/- buttons by design), the keyboard listener that lived in HandLifeCounter went with it. The arrow-key handler now lives in the main GameBoard hotkey loop and modifies `player.life` via `changeLife` (so it logs and triggers the life-change animation correctly).
+9. **HotkeyHelp completeness audit.** Cross-referenced the help modal against the actual hotkey handler. The help was missing: ↑, ↓, Y (discard hand), `?` / `/` (open help). Added all four. Now every hotkey active in the handler is documented.
+10. **Hotseat opp-hand defense.** Investigation: `OppHandStrip` always renders the deck sleeve regardless of card data, `BoardSide` mounted `readOnly` suppresses its `HandOverlay`, and `OpponentTile` (3p/4p side tiles) renders sleeves only. So opp hand cards CANNOT structurally render face-up. Defensive belt-and-braces fix anyway: the hand prop passed to opp BoardSide now has every card's `faceDown` forced to `true` and tagged `_hotseatMasked: true`. If any future render path tries to display them, they render as sleeves.
+
+### Note on "I see opp's hand in hotseat 2p"
+
+If the user is still seeing card faces in the opp position after this build, it's likely the **switch-player UX** rather than a privacy leak: when you click "Switch Player" in hotseat, the new active player's hand fans face-up at the bottom (their own hand for their turn). That hand belongs to the now-active player, not the opp — but visually you just saw it move from the top (sleeve) position to the bottom (face-up) position. That's existing v6 behavior. A future "hand reveal prompt before turn start" UX is out of scope here.
+
+---
+
 ## Headline fixes
 
 ### 1. The "steel border" bug
