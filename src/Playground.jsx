@@ -2461,59 +2461,149 @@ function RitualCircle({color="#a855f7"}){
 }
 
 /* ─── Animated life counter ─────────────────────────────────────────── */
-function LifeCounter({life,prevLife,onChange}){
-  const [editing,setEditing]=useState(false);
-  const [input,setInput]=useState("");
-  const [flash,setFlash]=useState(null);
-  const prevRef=useRef(life);
+/* ─── v7.6.4 CommandBar ──────────────────────────────────────────────────
+   Sits at the top of the command zone (replaces the "COMMAND ZONE" label).
+   Layout:
+     [LIFE]   [opp1-cmdr-dmg]  [opp2-cmdr-dmg] …
+   - Life is click-to-type. No +/- buttons.
+   - Commander damage cells show ##/21 per opponent. Hover → opponent alias.
+     Click → prompt to set the value.
+   - readOnly mode hides input affordances (used for opp board sides).
+   - When there's exactly 1 opponent (2p), one damage cell. 3p → two cells, 4p → three.
 
-  useEffect(()=>{
-    if(prevRef.current!==life){
-      const delta=life-prevRef.current;
-      setFlash(delta>0?"gain":"lose");
-      setTimeout(()=>setFlash(null),600);
-      prevRef.current=life;
+   Width: compact, sized to the command-zone wrapper. The bar's container
+   gets `width:100%` so it follows the existing command zone wrapper width.
+*/
+function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChangeCmdDmg, readOnly=false, T}){
+  const [editing,setEditing]=useState(null); // null | "life" | `cmd_${seatIdx}`
+  const [draftValue,setDraftValue]=useState("");
+  const life = player?.life ?? 20;
+  const cmdrDmg = player?.commanderDamage || {};
+  const lifeColor = life<=5?"#f87171" : life<=10?"#fbbf24" : life<=15?"#e8e2d0" : T.accent;
+
+  const startEdit = (key, current) => {
+    if (readOnly) return;
+    setDraftValue(String(current ?? 0));
+    setEditing(key);
+  };
+  const commitEdit = () => {
+    if (editing == null) return;
+    const v = parseInt(draftValue, 10);
+    if (!isNaN(v)) {
+      if (editing === "life") {
+        onChangeLife?.(v);
+      } else if (editing.startsWith("cmd_")) {
+        const seat = parseInt(editing.slice(4), 10);
+        onChangeCmdDmg?.(seat, Math.max(0, Math.min(21, v)));
+      }
     }
-  },[life]);
+    setEditing(null);
+    setDraftValue("");
+  };
+  const cancelEdit = () => { setEditing(null); setDraftValue(""); };
 
-  const color=life<=5?"#f87171":life<=10?"#fbbf24":life<=15?T.text:T.accent;
-  const glowCls=life<=5?"glow-red":"";
+  return (
+    <div style={{
+      display:"flex", alignItems:"center", gap:6,
+      padding:"3px 6px", marginBottom:3,
+      background:`linear-gradient(180deg, rgba(0,0,0,.3), transparent)`,
+      borderRadius:5,
+      width:"100%",
+    }}>
+      {/* Life — click to type */}
+      <div
+        title={readOnly?`${player?.profile?.alias||"Player"} — ${life} life`:"Click to set life"}
+        onClick={()=>startEdit("life", life)}
+        style={{
+          flex:"0 0 auto", minWidth:38,
+          fontFamily:"Cinzel Decorative, serif",
+          fontSize:16, lineHeight:1, fontWeight:700,
+          color:lifeColor,
+          textShadow:`0 0 8px ${lifeColor}55, 0 1px 3px rgba(0,0,0,.95)`,
+          cursor:readOnly?"default":"pointer",
+          padding:"3px 6px",
+          borderRadius:4,
+          textAlign:"center",
+          letterSpacing:".02em",
+          transition:"background .12s",
+        }}
+        onMouseOver={e=>{ if(!readOnly) e.currentTarget.style.background=`${T.accent}15`; }}
+        onMouseOut={e=>{ e.currentTarget.style.background="transparent"; }}>
+        {editing === "life" ? (
+          <input autoFocus value={draftValue}
+            onChange={e=>setDraftValue(e.target.value)}
+            onClick={e=>e.stopPropagation()}
+            onBlur={commitEdit}
+            onKeyDown={e=>{
+              if(e.key==="Enter")  commitEdit();
+              if(e.key==="Escape") cancelEdit();
+            }}
+            style={{
+              width:38, fontSize:14, textAlign:"center",
+              fontFamily:"Cinzel Decorative,serif", color:lifeColor,
+              background:"transparent", border:`1px solid ${lifeColor}80`,
+              borderRadius:3, padding:0, outline:"none",
+            }}/>
+        ) : (
+          <span>♥{life}</span>
+        )}
+      </div>
 
-  return(
-    <div style={{display:"flex",alignItems:"center",gap:3,position:"relative"}}>
-      <button onClick={()=>onChange(life-1)}
-        style={{...btn("rgba(220,38,38,.15)","#f87171",{padding:"2px 7px",fontSize:14,borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center"}),border:"1px solid rgba(220,38,38,.3)"}}
-        onMouseOver={hov} onMouseOut={uhov}>−</button>
-      {editing?(
-        <input autoFocus value={input} onChange={e=>setInput(e.target.value)}
-          onBlur={()=>{const v=parseInt(input);if(!isNaN(v))onChange(v);setEditing(false);}}
-          onKeyDown={e=>{if(e.key==="Enter"){const v=parseInt(input);if(!isNaN(v))onChange(v);setEditing(false);}}}
-          style={{width:44,textAlign:"center",fontSize:17,fontFamily:"Cinzel Decorative, serif",
-            background:`${T.bg}e6`,border:`1px solid ${color}`,color,borderRadius:4,padding:"1px 2px"}}/>
-      ):(
-        <div onClick={()=>{setInput(String(life));setEditing(true);}} className={glowCls}
-          style={{minWidth:38,textAlign:"center",cursor:"pointer",position:"relative",
-            animation:flash==="gain"?"lifeFlash .5s ease":flash==="lose"?"lifeFlash .5s ease":undefined}}>
-          <div style={{fontSize:7,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".1em",marginBottom:1}}>LIFE</div>
-          <div style={{fontSize:20,fontFamily:"Cinzel Decorative, serif",color,lineHeight:1,
-            textShadow:life<=5?`0 0 20px #f87171`:`0 0 10px ${color}50`}}>
-            {life}
-          </div>
-          {flash&&(
-            <div style={{position:"absolute",top:-12,left:"50%",transform:"translateX(-50%)",
-              fontSize:10,color:flash==="gain"?"#4ade80":"#f87171",fontFamily:"Cinzel, serif",
-              fontWeight:700,animation:"slideUp .5s ease forwards",pointerEvents:"none"}}>
-              {flash==="gain"?"+":"-"}{Math.abs(life-prevRef.current)}
+      {/* Commander damage cells — one per opponent. Spacer fills if only 1. */}
+      <div style={{flex:1,display:"flex",justifyContent:"flex-end",gap:4}}>
+        {(opponents||[]).map(opp => {
+          const seat = opp.seat;
+          const dmg  = cmdrDmg[seat] || 0;
+          const lethal = dmg >= 21;
+          const dmgColor = lethal ? "#f87171" : dmg >= 14 ? "#fbbf24" : dmg > 0 ? T.text : T.muted;
+          const editKey = `cmd_${seat}`;
+          return (
+            <div key={seat}
+              title={`${opp.alias||`P${seat+1}`} — ${dmg}/21 cmdr dmg${lethal?" (LETHAL)":""}`}
+              onClick={()=>startEdit(editKey, dmg)}
+              style={{
+                display:"flex", alignItems:"center", gap:3,
+                fontFamily:"Cinzel, serif", fontSize:9,
+                color:dmgColor,
+                cursor:readOnly?"default":"pointer",
+                padding:"2px 5px",
+                borderRadius:3,
+                border:`1px solid ${lethal?"#f8717180":`${T.border}50`}`,
+                background:lethal?"rgba(248,113,113,.1)":"transparent",
+                transition:"background .12s",
+                minWidth:34,
+                justifyContent:"center",
+              }}
+              onMouseOver={e=>{ if(!readOnly && !lethal) e.currentTarget.style.background=`${T.accent}10`; }}
+              onMouseOut={e=>{ e.currentTarget.style.background=lethal?"rgba(248,113,113,.1)":"transparent"; }}>
+              {/* Tiny avatar dot */}
+              <span style={{fontSize:9,opacity:.85}}>{opp.avatar||"⚔"}</span>
+              {editing === editKey ? (
+                <input autoFocus value={draftValue}
+                  onChange={e=>setDraftValue(e.target.value)}
+                  onClick={e=>e.stopPropagation()}
+                  onBlur={commitEdit}
+                  onKeyDown={e=>{
+                    if(e.key==="Enter")  commitEdit();
+                    if(e.key==="Escape") cancelEdit();
+                  }}
+                  style={{
+                    width:22, fontSize:9, textAlign:"center",
+                    fontFamily:"Cinzel,serif", color:dmgColor,
+                    background:"transparent", border:`1px solid ${dmgColor}80`,
+                    borderRadius:2, padding:0, outline:"none",
+                  }}/>
+              ) : (
+                <span style={{minWidth:14,textAlign:"right"}}>{dmg}/21</span>
+              )}
             </div>
-          )}
-        </div>
-      )}
-      <button onClick={()=>onChange(life+1)}
-        style={{...btn("rgba(74,222,128,.12)","#4ade80",{padding:"2px 7px",fontSize:14,borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center"}),border:"1px solid rgba(74,222,128,.3)"}}
-        onMouseOver={hov} onMouseOut={uhov}>+</button>
+          );
+        })}
+      </div>
     </div>
   );
 }
+
 
 /* ─── v7.6.4 HandLifeCounter ─────────────────────────────────────────────
    Big circular life total overlaid on the local player's hand area, or
@@ -3026,7 +3116,7 @@ function ThemePicker({current,weather,onTheme,onWeather,onClose}){
               style={{
                 ...btn(weather===w.id?`${T.accent}26`:"rgba(8,15,28,.7)",
                   weather===w.id?T.accent:T.muted,
-                  {border:`1px solid ${weather===w.id?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,
+                  {border:`1px solid ${weather===w.id?`rgba(${T.accentRgb},.4)`:`${T.border}20`}`,
                   padding:"8px 14px",fontSize:11,gap:6,display:"flex",alignItems:"center",
                   boxShadow:weather===w.id?"0 0 12px rgba(200,168,112,.2)":"none"}),
               }}
@@ -3151,7 +3241,7 @@ function PlanechasePanel({active, onPlaneswalk, onChaos, onClose}){
       {dieResult&&(
         <div style={{textAlign:"center",marginBottom:8,padding:"6px",borderRadius:5,
           background:dieResult==="planeswalk"?`${T.accent}26`:dieResult==="chaos"?"rgba(249,115,22,.15)":"rgba(10,22,40,.5)",
-          border:`1px solid ${dieResult==="planeswalk"?"rgba(${T.accentRgb},.3)":dieResult==="chaos"?"rgba(249,115,22,.3)":"${T.border}20"}`,
+          border:`1px solid ${dieResult==="planeswalk"?`rgba(${T.accentRgb},.3)`:dieResult==="chaos"?"rgba(249,115,22,.3)":`${T.border}20`}`,
           animation:"slideIn .2s ease"}}>
           <span style={{fontSize:13,fontFamily:"Cinzel, serif",
             color:dieResult==="planeswalk"?T.accent:dieResult==="chaos"?"#f97316":T.muted}}>
@@ -3290,7 +3380,7 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
         </button>
         <button onClick={onToggleLog}
           style={{...btn(showLog?`${T.accent}20`:`${T.panel}f2`,showLog?T.accent:T.muted,{
-            border:`1px solid ${showLog?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,borderRadius:showLog?"8px 8px 0 0":"8px",
+            border:`1px solid ${showLog?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,borderRadius:showLog?"8px 8px 0 0":"8px",
             padding:"6px 10px",fontSize:10,fontFamily:"Cinzel, serif"}),
           }}
           onMouseOver={hov} onMouseOut={uhov}>📜</button>
@@ -3649,7 +3739,7 @@ function ZonePanel({title,color,icon,cards,zone,onCtx,onDragStart,onHover,isOpen
   return(
     <div className="drop-target mtg-zone" data-zone={zone}
       style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
-        border:`1px solid ${isOpen?color+"30":"${T.border}20"}`,borderRadius:7,padding:"8px 10px",
+        border:`1px solid ${isOpen?color+"30":`${T.border}20`}`,borderRadius:7,padding:"8px 10px",
         transition:"border-color .2s"}}>
       <div style={{color,fontFamily:"Cinzel, serif",fontSize:9,marginBottom:4,
         display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",
@@ -3879,11 +3969,11 @@ function TokenSearch({onCreate,onClose}){
         {/* Tab switcher */}
         <button onClick={()=>{setTab("tokens");setQuery("");setResults([]);}}
           style={{...btn(tab==="tokens"?`${T.accent}20`:"transparent",tab==="tokens"?T.accent:T.muted,
-            {border:`1px solid ${tab==="tokens"?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,fontSize:11,padding:"4px 12px"})}}
+            {border:`1px solid ${tab==="tokens"?`rgba(${T.accentRgb},.4)`:`${T.border}20`}`,fontSize:11,padding:"4px 12px"})}}
           onMouseOver={hov} onMouseOut={uhov}>✦ Tokens</button>
         <button onClick={()=>{setTab("cards");setQuery("");setResults([]);}}
           style={{...btn(tab==="cards"?`${T.accent}20`:"transparent",tab==="cards"?T.accent:T.muted,
-            {border:`1px solid ${tab==="cards"?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,fontSize:11,padding:"4px 12px"})}}
+            {border:`1px solid ${tab==="cards"?`rgba(${T.accentRgb},.4)`:`${T.border}20`}`,fontSize:11,padding:"4px 12px"})}}
           onMouseOver={hov} onMouseOut={uhov}>🔍 Any Card</button>
         <input value={query} onChange={e=>setQuery(e.target.value)}
           placeholder={tab==="tokens"?"Search tokens (all printings + Secret Lair)…":"Search any MTG card…"}
@@ -3903,7 +3993,7 @@ function TokenSearch({onCreate,onClose}){
           {TYPE_FILTERS.map(t=>(
             <button key={t} onClick={()=>setTypeFilter(t)}
               style={{...btn(typeFilter===t?`${T.accent}20`:"transparent",typeFilter===t?T.accent:T.muted,
-                {fontSize:9,border:`1px solid ${typeFilter===t?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"2px 8px",borderRadius:3})}}
+                {fontSize:9,border:`1px solid ${typeFilter===t?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,padding:"2px 8px",borderRadius:3})}}
               onMouseOver={hov} onMouseOut={uhov}>{t}</button>
           ))}
         </div>
@@ -4038,7 +4128,7 @@ function StackPanel({stack,onResolve,onCounter,onAdd}){
       {[...stack].reverse().map((item,i)=>(
         <div key={item.id} className="slide-in" style={{
           background:i===0?`${T.panel}cc`:`${T.panel}99`,
-          border:`1px solid ${i===0?`${T.accent}40`:"${T.border}20"}`,borderRadius:5,
+          border:`1px solid ${i===0?`${T.accent}40`:`${T.border}20`}`,borderRadius:5,
           padding:"5px 8px",marginBottom:3,animation:"stackEntry .2s ease"}}>
           <div style={{fontSize:10,color:i===0?T.text:T.muted,marginBottom:3,lineHeight:1.4}}>{item.description}</div>
           <div style={{display:"flex",gap:3}}>
@@ -4169,7 +4259,7 @@ function ProfileSetup({existing,onSave}){
             {[["emoji","😀 Emoji"],["art","🔍 MTG Art"],["url","🔗 Custom URL"]].map(([t,l])=>(
               <button key={t} onClick={()=>setAvatarTab(t)}
                 style={{...btn(avatarTab===t?`${T.accent}20`:"transparent",avatarTab===t?T.accent:T.muted,
-                  {fontSize:9,border:`1px solid ${avatarTab===t?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,padding:"4px 10px",borderRadius:4})}}
+                  {fontSize:9,border:`1px solid ${avatarTab===t?`rgba(${T.accentRgb},.4)`:`${T.border}20`}`,padding:"4px 10px",borderRadius:4})}}
                 onMouseOver={hov} onMouseOut={uhov}>{l}</button>
             ))}
           </div>
@@ -4180,7 +4270,7 @@ function ProfileSetup({existing,onSave}){
               {AVATARS.map(a=>(
                 <button key={a} onClick={()=>{setAvatar(a);setAvatarImg("");}} style={{
                   fontSize:20,background:(a===avatar&&!avatarImg)?`${T.accent}26`:`${T.panel}99`,
-                  border:`1px solid ${(a===avatar&&!avatarImg)?T.accent:"${T.border}30"}`,borderRadius:7,
+                  border:`1px solid ${(a===avatar&&!avatarImg)?T.accent:`${T.border}30`}`,borderRadius:7,
                   padding:"4px 6px",cursor:"pointer",transition:"all .15s",
                   boxShadow:(a===avatar&&!avatarImg)?"0 0 12px rgba(200,168,112,.3)":"none",
                   transform:(a===avatar&&!avatarImg)?"scale(1.1)":"scale(1)"}}>
@@ -4203,7 +4293,7 @@ function ProfileSetup({existing,onSave}){
                 {ART_PRESETS.map(p=>(
                   <button key={p} onClick={()=>setArtQuery(p)}
                     style={{...btn(artQuery===p?`${T.accent}20`:"transparent",artQuery===p?T.accent:T.muted,
-                      {fontSize:8,border:`1px solid ${artQuery===p?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"2px 7px",borderRadius:3})}}
+                      {fontSize:8,border:`1px solid ${artQuery===p?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,padding:"2px 7px",borderRadius:3})}}
                     onMouseOver={hov} onMouseOut={uhov}>{p}</button>
                 ))}
               </div>
@@ -4261,7 +4351,7 @@ function ProfileSetup({existing,onSave}){
             {GAMEMATS.map((gm,i)=>(
               <button key={gm.name} onClick={()=>setGmIdx(i)} style={{
                 fontSize:9,fontFamily:"Cinzel, serif",padding:"5px 10px",borderRadius:5,
-                border:`1px solid ${i===gmIdx?gm.accent||T.accent:"${T.border}20"}`,
+                border:`1px solid ${i===gmIdx?gm.accent||T.accent:`${T.border}20`}`,
                 background:i===gmIdx?`${T.accent}14`:"rgba(8,15,28,.5)",
                 color:i===gmIdx?gm.accent||T.accent:T.muted,
                 cursor:"pointer",transition:"all .15s",
@@ -4529,11 +4619,11 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             <div style={{display:"flex",gap:4,marginBottom:8}}>
               <button onClick={()=>setDeckSource("mine")}
                 style={{...btn(deckSource==="mine"?`${T.accent}1a`:`${T.panel}60`,deckSource==="mine"?T.accent:T.muted,
-                  {border:`1px solid ${deckSource==="mine"?T.accent:"${T.border}30"}`,fontSize:10,flex:1})}}
+                  {border:`1px solid ${deckSource==="mine"?T.accent:`${T.border}30`}`,fontSize:10,flex:1})}}
                 onMouseOver={hov} onMouseOut={uhov}>Play with my deck</button>
               <button onClick={()=>setDeckSource("host")}
                 style={{...btn(deckSource==="host"?`${T.accent}1a`:`${T.panel}60`,deckSource==="host"?T.accent:T.muted,
-                  {border:`1px solid ${deckSource==="host"?T.accent:"${T.border}30"}`,fontSize:10,flex:1})}}
+                  {border:`1px solid ${deckSource==="host"?T.accent:`${T.border}30`}`,fontSize:10,flex:1})}}
                 onMouseOver={hov} onMouseOut={uhov}>Play with opponent's deck</button>
             </div>
           )}
@@ -4559,7 +4649,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                 }
               }}
                 style={{...btn(d.id===selDeckId?`${T.accent}1a`:`${T.panel}99`,d.id===selDeckId?T.accent:T.muted,
-                  {border:`1px solid ${d.id===selDeckId?T.accent:"${T.border}30"}`,fontSize:10})}}
+                  {border:`1px solid ${d.id===selDeckId?T.accent:`${T.border}30`}`,fontSize:10})}}
                 onMouseOver={hov} onMouseOut={uhov}>{d.name}{deckSource==="host"?" ⚔":""}</button>
             ))}
             {deckSource==="host" && hostDecks.length===0 && (
@@ -4576,7 +4666,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
               <button key={gm.id} onClick={()=>setGamemode(gm.id)}
                 style={{...btn(gm.id===gamemode?(gm.special?"rgba(168,85,247,.15)":`${T.accent}1a`):`${T.panel}99`,
                   gm.id===gamemode?(gm.special?"#a855f7":T.accent):T.muted,
-                  {border:`1px solid ${gm.id===gamemode?(gm.special?"rgba(168,85,247,.4)":"rgba(${T.accentRgb},.3)"):"${T.border}30"}`,fontSize:10,
+                  {border:`1px solid ${gm.id===gamemode?(gm.special?"rgba(168,85,247,.4)":`rgba(${T.accentRgb},.3)`):`${T.border}30`}`,fontSize:10,
                    boxShadow:gm.id===gamemode&&gm.special?"0 0 12px rgba(168,85,247,.3)":"none"})}}
                 onMouseOver={hov} onMouseOut={uhov}>{gm.icon} {gm.label}</button>
             ))}
@@ -4595,7 +4685,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                     <button key={v.variantId} onClick={()=>setDandanVariantId(v.variantId)}
                       title={v.description}
                       style={{...btn(sel?"rgba(168,85,247,.2)":`${T.panel}99`,sel?"#c084fc":T.text,
-                        {fontSize:9,padding:"4px 8px",border:`1px solid ${sel?"rgba(168,85,247,.5)":"${T.border}30"}`,borderRadius:4})}}
+                        {fontSize:9,padding:"4px 8px",border:`1px solid ${sel?"rgba(168,85,247,.5)":`${T.border}30`}`,borderRadius:4})}}
                       onMouseOver={hov} onMouseOut={uhov}>
                       {v.name.replace(/^🐟 /,"")}
                     </button>
@@ -5252,7 +5342,7 @@ function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,
         {typesPresent.map(t=>(
           <button key={t} onClick={e=>{e.stopPropagation();setTypeTab(t);}}
             style={{...btn(typeTab===t?`${color}20`:"transparent",typeTab===t?color: T.muted,
-              {fontSize:9,border:`1px solid ${typeTab===t?color+"40":"${T.border}20"}`,padding:"3px 9px",borderRadius:4})}}
+              {fontSize:9,border:`1px solid ${typeTab===t?color+"40":`${T.border}20`}`,padding:"3px 9px",borderRadius:4})}}
             onMouseOver={hov} onMouseOut={uhov}>{t}</button>
         ))}
       </div>
@@ -5415,7 +5505,7 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
           }}
             style={{...btn(searchZone===z?`${zoneColor[z]}25`:"transparent",
               needsRequest[z]?"#3a4a5a":searchZone===z?zoneColor[z]:T.muted,
-              {fontSize:9,border:`1px solid ${searchZone===z?zoneColor[z]+"50":"${T.border}20"}`,
+              {fontSize:9,border:`1px solid ${searchZone===z?zoneColor[z]+"50":`${T.border}20`}`,
                padding:"3px 8px",borderRadius:4,opacity:needsRequest[z]?.7:1})}}
             title={needsRequest[z]?"Click to request access from opponent":undefined}
             onMouseOver={hov} onMouseOut={uhov}>
@@ -5427,7 +5517,7 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
         {typesPresent.map(t=>(
           <button key={t} onClick={()=>setLibTypeTab(t)}
             style={{...btn(libTypeTab===t?`${col}20`:"transparent",libTypeTab===t?col:T.muted,
-              {fontSize:8,border:`1px solid ${libTypeTab===t?col+"40":"${T.border}15"}`,padding:"2px 7px",borderRadius:3})}}
+              {fontSize:8,border:`1px solid ${libTypeTab===t?col+"40":`${T.border}15`}`,padding:"2px 7px",borderRadius:3})}}
             onMouseOver={hov} onMouseOut={uhov}>{t}</button>
         ))}
       </div>
@@ -5773,7 +5863,7 @@ function ScryModal({cards,mode,onConfirm,onClose}){
   const dBtn=(idx,d,label,col)=>(
     <button onClick={()=>decide(idx,d)}
       style={{...btn(decisions[idx]===d?`${col}30`:`${T.bg}99`,decisions[idx]===d?col:T.muted,
-        {fontSize:8,padding:"2px 5px",border:`1px solid ${decisions[idx]===d?col+"50":"${T.border}30"}`,borderRadius:3})}}
+        {fontSize:8,padding:"2px 5px",border:`1px solid ${decisions[idx]===d?col+"50":`${T.border}30`}`,borderRadius:3})}}
       onMouseOver={hov} onMouseOut={uhov}>{label}</button>
   );
   return(
@@ -5991,7 +6081,7 @@ function MatCropEditor({url,onApply,onSave,name}){
             {[["cover","Fill (Cover)"],["contain","Fit (Contain)"],["scale","Zoom %"],["custom","Custom"]].map(([v,l])=>(
               <button key={v} onClick={()=>setSize(v)}
                 style={{...btn(size===v?`${T.accent}20`:"transparent",size===v?T.accent:T.muted,
-                  {fontSize:8,border:`1px solid ${size===v?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"3px 8px",borderRadius:3})}}
+                  {fontSize:8,border:`1px solid ${size===v?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,padding:"3px 8px",borderRadius:3})}}
                 onMouseOver={hov} onMouseOut={uhov}>{l}</button>
             ))}
           </div>
@@ -6084,7 +6174,7 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
         {[["presets","🎨 Presets"],["art","🔍 MTG Art"],["custom","🔗 Custom URL"]].map(([t,l])=>(
           <button key={t} onClick={()=>setTab(t)}
             style={{...btn(tab===t?`${T.accent}20`:"transparent",tab===t?T.accent:T.muted,
-              {border:`1px solid ${tab===t?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,fontSize:10,padding:"4px 12px"})}}
+              {border:`1px solid ${tab===t?`rgba(${T.accentRgb},.4)`:`${T.border}20`}`,fontSize:10,padding:"4px 12px"})}}
             onMouseOver={hov} onMouseOut={uhov}>{l}</button>
         ))}
         {tab==="art"&&(
@@ -6104,7 +6194,7 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
           {ART_PRESETS.map(p=>(
             <button key={p} onClick={()=>setQuery(p)}
               style={{...btn(query===p?`${T.accent}20`:"transparent",query===p?T.accent:T.muted,
-                {fontSize:9,border:`1px solid ${query===p?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"2px 9px",borderRadius:3})}}
+                {fontSize:9,border:`1px solid ${query===p?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,padding:"2px 9px",borderRadius:3})}}
               onMouseOver={hov} onMouseOut={uhov}>{p}</button>
           ))}
         </div>
@@ -6304,7 +6394,7 @@ function FlyingCardAnim({cards,onDone}){
             width:"100%",height:"100%",
             transformStyle:"preserve-3d",
             borderRadius:5,
-            boxShadow:`0 10px 30px rgba(0,0,0,.9),0 0 20px ${c.glow||"rgba(${T.accentRgb},.5)"}`,
+            boxShadow:`0 10px 30px rgba(0,0,0,.9),0 0 20px ${c.glow||`rgba(${T.accentRgb},.5)`}`,
             animation:`flyFlip_${id} ${dur}ms cubic-bezier(0.4,0,0.2,1) ${delay}ms both`,
           }}>
             <div style={{position:"absolute",inset:0,borderRadius:5,overflow:"hidden",backfaceVisibility:"hidden",WebkitBackfaceVisibility:"hidden"}}>
@@ -6462,6 +6552,9 @@ function BoardSide({
   // v7.6.4: when 'dandan', hide the per-side library and graveyard piles
   // (replaced by the central SharedZones component).
   gamemode = null,
+  // v7.6.4: CommandBar inputs — life + commander damage per opponent.
+  opponents = [], mySeat = 0,
+  onChangeLife = null, onChangeCmdDmg = null,
   // ── v7.6 Phase 4-B: zone-request trigger (opp side only) ──────────────
   // Called with (zoneName, event) when the viewer right-clicks the hand,
   // graveyard, or exile tile on a readOnly BoardSide. Only wired on the opp
@@ -6615,12 +6708,36 @@ function BoardSide({
             borderLeft:`1px solid ${currentPhaseColor}15`,overflowY:"hidden",
             alignSelf:"stretch",marginBottom:-HAND_H,paddingBottom:HAND_H}}>
 
-            {/* ── COMMAND ZONE ── */}
-            {player.command.length>0&&(
-              <div ref={cmdRef} className="drop-target"
-                style={{background:`linear-gradient(160deg,${T.accent}08,${T.bg})`,
-                  border:`1px solid ${T.accent}40`,borderRadius:8,padding:"4px 4px 4px",marginBottom:2}}>
-                <div style={{color:`${T.accent}90`,fontFamily:"Cinzel,serif",fontSize:7,letterSpacing:".18em",marginBottom:3,textAlign:"center",textTransform:"uppercase",lineHeight:1}}>Command Zone</div>
+            {/* ── COMMAND ZONE / Life Bar ── */}
+            {/* v7.6.4: even when there are no commanders, we still show the
+                CommandBar (it carries life total + commander damage tracker),
+                so it's wrapped in its own div. The portrait grid is only
+                rendered when the command zone has cards. */}
+            <div ref={cmdRef} className="drop-target"
+              style={{
+                background: player.command.length > 0
+                  ? `linear-gradient(160deg,${T.accent}08,${T.bg})`
+                  : "transparent",
+                border: player.command.length > 0
+                  ? `1px solid ${T.accent}40`
+                  : "1px solid transparent",
+                borderRadius:8,
+                padding: player.command.length > 0 ? "4px 4px 4px" : "0",
+                marginBottom:2,
+              }}>
+              {/* v7.6.4: CommandBar replaces the "COMMAND ZONE" label.
+                  Carries life (click-to-type), and per-opponent commander
+                  damage cells. Hover an opp cell to see their alias. */}
+              <CommandBar
+                player={player}
+                opponents={opponents}
+                mySeat={mySeat}
+                onChangeLife={readOnly ? null : onChangeLife}
+                onChangeCmdDmg={readOnly ? null : onChangeCmdDmg}
+                readOnly={readOnly}
+                T={T}
+              />
+              {player.command.length > 0 && (
                 <div style={{display:"grid",gridTemplateColumns:player.command.length<=2?"1fr 1fr":"1fr 1fr",gap:3,justifyItems:"center"}}>
                   {player.command.map(card=>{
                     const isAway=card.status==="away"||card.status==="dead"||card.status==="exiled";
@@ -6667,7 +6784,7 @@ function BoardSide({
                           onMouseOver={hov} onMouseOut={uhov}>−</button>}
                         <div style={{display:"flex",alignItems:"center",gap:2,
                           background:(card.castCount||0)>0?"rgba(251,191,36,.1)":`rgba(${T.accentRgb},.06)`,
-                          border:`1px solid ${(card.castCount||0)>0?"rgba(251,191,36,.4)":"rgba(${T.accentRgb},.2)"}`,
+                          border:`1px solid ${(card.castCount||0)>0?"rgba(251,191,36,.4)":`rgba(${T.accentRgb},.2)`}`,
                           borderRadius:4,padding:player.command.length>2?"0 3px":"1px 5px",cursor:readOnly?"default":"pointer",minWidth:player.command.length>2?28:42,justifyContent:"center"}}
                           onClick={readOnly?undefined:(e=>{
                             e.stopPropagation();
@@ -6698,9 +6815,9 @@ function BoardSide({
                     </div>
                   );})}
                 </div>
+              )}
 
-              </div>
-            )}
+            </div>
 
             {/* ── Deck widget ── */}
             {/* v7.6.4: in Dandân, the library is shared and rendered in the
@@ -6740,7 +6857,7 @@ function BoardSide({
                     position:"absolute",
                     top:"50%",left:"50%",
                     transform:"translate(-50%,-50%) rotate(90deg)",
-                    border:`1px solid ${(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?T.accent:"${T.border}40"}`,
+                    border:`1px solid ${(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?T.accent:`${T.border}40`}`,
                     boxShadow:(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?`0 0 12px ${T.accent}40`:"0 3px 10px rgba(0,0,0,.7)",
                     cursor:player.library[0]?"grab":"default",
                   }}/>
@@ -6893,7 +7010,7 @@ function BoardSide({
   );
 }
 
-function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdatePlayer,onUpdateGame,onExit,onSwitchPlayer,onReset,onChangeDeck,isTwoPlayer,roomId,isOnline,onTheme,decks=[],authUser=null}){
+function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemode,onUpdatePlayer,onUpdateGame,onExit,onSwitchPlayer,onReset,onChangeDeck,isTwoPlayer,roomId,isOnline,onTheme,decks=[],authUser=null}){
   const [selected,setSelected]=useState(new Set()); // Set of iids
   const [selZone,setSelZone]=useState("battlefield"); // zone of selection
   // Selection rect state
@@ -7471,6 +7588,32 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       && (player.exile?.length||0)===0;
     if(!isBoardEmpty)return;
     if((player.library?.length||0) < 7)return;
+    // v7.6.4: Dandân — only the host (seat 0) should run the opening-hand
+    // routine. The library is shared across all seats; if every client tries
+    // to shuffle and draw 7, they will independently pop cards from "their"
+    // library, then broadcast back desynced state. Each non-host client
+    // instead waits for cards to flow in via the shared-zone mirror.
+    if (gamemode === "dandan" && playerIdx !== 0) {
+      // Just mark this seat as started so we don't loop, but don't shuffle.
+      const prev = onUpdateGame._lastGame?.startedSeats || [];
+      if (!prev.includes(playerIdx)) {
+        onUpdateGame({ startedSeats: [...prev, playerIdx] });
+      }
+      // Each player still draws their OWN opening hand from the shared lib.
+      // We delay until host has shuffled (give them ~1s).
+      startedRef.current = true;
+      setStartAnimPhase("drawing");
+      const t = setTimeout(() => {
+        for (let i = 0; i < 7; i++) {
+          setTimeout(() => drawOne(), i * 180);
+        }
+        setTimeout(() => {
+          setStartAnimPhase("done");
+          addLog("🎴 Opening hand drawn (Dandân — from shared library)");
+        }, 7 * 180 + 400);
+      }, 1200);
+      return () => clearTimeout(t);
+    }
 
     startedRef.current=true;
     setStartAnimPhase("shuffle");
@@ -7712,6 +7855,29 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
     upd(p=>({...p,life:newLife,
       log:[`T${turn}:${delta>0?"♥+":"♥"}${delta} life · ${p.life} → ${newLife}`,...p.log].slice(0,80)}));
   },[upd,player.life,turn]);
+
+  // v7.6.4: commander-damage tracker. Persists per-opponent values on
+  // player.commanderDamage[seat]. When the value crosses 21, lethal is
+  // implicit (rules-manual).
+  const changeCmdDmg = useCallback((seat, value) => {
+    const v = Math.max(0, Math.min(21, parseInt(value, 10) || 0));
+    upd(p => {
+      const prev = (p.commanderDamage || {})[seat] || 0;
+      const oppAlias = (allOpps.find(o=>o.seat===seat)?.player?.profile?.alias) || `P${seat+1}`;
+      return {
+        ...p,
+        commanderDamage: {...(p.commanderDamage || {}), [seat]: v},
+        log: [`T${turn}:⚔ Cmdr dmg from ${oppAlias}: ${prev} → ${v}`, ...p.log].slice(0, 80),
+      };
+    });
+  }, [upd, turn, allOpps]);
+
+  // v7.6.4: shape opponents for CommandBar.
+  const opponentsForBar = (allOpps || []).map(o => ({
+    seat: o.seat,
+    alias: o.player?.profile?.alias || `P${o.seat+1}`,
+    avatar: o.player?.profile?.avatar || "⚔",
+  }));
 
   const scry=useCallback((n)=>{
     const top=player.library.slice(0,n);
@@ -8752,7 +8918,8 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         </>)}
 
         <div style={{width:1,height:18,background:`${currentPhaseColor}30`}}/>
-        <LifeCounter life={player.life} prevLife={prevLife} onChange={changeLife}/>
+        {/* v7.6.4: Life counter REMOVED from topbar. Now lives at top of
+            command zone via CommandBar. Topbar still keeps poison/energy. */}
 
         {/* Poison */}
         <div style={{display:"flex",alignItems:"center",gap:1}}>
@@ -8768,7 +8935,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         {PHASES.map((p,i)=>(
           <button key={p} onClick={e=>{e.stopPropagation();onUpdateGame({phase:i});}}
             style={{...btn(i===phase?`${PHASE_CLR[i]}22`:"transparent",i===phase?PHASE_CLR[i]:T.muted,
-              {border:`1px solid ${i===phase?PHASE_CLR[i]:"${T.border}15"}`,padding:"1px 5px",fontSize:8,
+              {border:`1px solid ${i===phase?PHASE_CLR[i]:`${T.border}15`}`,padding:"1px 5px",fontSize:8,
                fontFamily:"Cinzel,serif",boxShadow:i===phase?`0 0 8px ${PHASE_CLR[i]}50`:"none",
                animation:i===phase?"phaseActive 1.5s ease-in-out infinite":undefined})}}>
             {PHASE_ICONS[i]} {p}
@@ -8858,6 +9025,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
               gamemat={opponent.profile?.gamemat || GAMEMATS[0].bg}
               gamematFilter={opponent.profile?.gamematFilter || ""}
               gamemode={gamemode}
+              opponents={[]} mySeat={playerIdx}
               showDeckViewer={false} showChangeDeck={false} showGamematPicker={false}
               copyMode={null} cmdSummonAnim={false}
               customMats={[]} decks={[]}
@@ -8892,6 +9060,8 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           player={player} T={T} currentPhaseColor={currentPhaseColor}
           gamemat={gamemat} gamematFilter={gamematFilter}
           gamemode={gamemode}
+          opponents={opponentsForBar} mySeat={playerIdx}
+          onChangeLife={changeLife} onChangeCmdDmg={changeCmdDmg}
           showDeckViewer={showDeckViewer} showChangeDeck={showChangeDeck} showGamematPicker={showGamematPicker}
           copyMode={copyMode} cmdSummonAnim={cmdSummonAnim}
           customMats={customMats} decks={decks}
@@ -8933,22 +9103,9 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         />
       )}
 
-      {/* v7.6.4: hand-overlaid life counters. Local at bottom, opps at top.
-          Local accepts ↑/↓ keys to ±1 and click-to-type. Opps are read-only. */}
-      <HandLifeCounter
-        life={player.life ?? 20}
-        onChange={changeLife}
-        position="bottom"
-        size={70}
-      />
-      {opponent && (
-        <HandLifeCounter
-          life={opponent.life ?? 20}
-          alias={opponent.profile?.alias || "Opponent"}
-          position="top" side={0} size={64}
-          readOnly
-        />
-      )}
+      {/* v7.6.4: HandLifeCounter overlays REMOVED. Life now lives at the top
+          of the command zone via CommandBar (replaces the "Command Zone"
+          label) and per-opp commander damage tracker is shown there too. */}
 
       {/* v7.6.4: Dandân — shared library + graveyard rendered at the center
           of the screen, between the two halves. Both players see the same
@@ -9259,11 +9416,11 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:14}}>
               <button onClick={()=>setMillTarget("graveyard")}
                 style={{...btn(millTarget==="graveyard"?"rgba(167,139,250,.2)":"transparent",millTarget==="graveyard"?"#a78bfa":T.muted,
-                  {fontSize:9,border:`1px solid ${millTarget==="graveyard"?"rgba(167,139,250,.4)":"${T.border}20"}`,padding:"3px 10px",borderRadius:4})}}
+                  {fontSize:9,border:`1px solid ${millTarget==="graveyard"?"rgba(167,139,250,.4)":`${T.border}20`}`,padding:"3px 10px",borderRadius:4})}}
                 onMouseOver={hov} onMouseOut={uhov}>💀 Graveyard</button>
               <button onClick={()=>setMillTarget("exile")}
                 style={{...btn(millTarget==="exile"?"rgba(96,165,250,.2)":"transparent",millTarget==="exile"?"#60a5fa":T.muted,
-                  {fontSize:9,border:`1px solid ${millTarget==="exile"?"rgba(96,165,250,.4)":"${T.border}20"}`,padding:"3px 10px",borderRadius:4})}}
+                  {fontSize:9,border:`1px solid ${millTarget==="exile"?"rgba(96,165,250,.4)":`${T.border}20`}`,padding:"3px 10px",borderRadius:4})}}
                 onMouseOver={hov} onMouseOut={uhov}>✦ Exile</button>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,justifyContent:"center",marginBottom:14}}>
@@ -10153,7 +10310,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
     ...btn(
       activeZone===z?`${T.accent}1f`:"transparent",
       activeZone===z?T.accent:T.muted,
-      {fontSize:10,border:`1px solid ${activeZone===z?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,
+      {fontSize:10,border:`1px solid ${activeZone===z?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,
        padding:"5px 12px",borderRadius:5,transition:"all .15s"}
     )
   });
@@ -10230,7 +10387,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
           <div style={{display:"flex",gap:3,marginBottom:8}}>
             {["standard","commander","modern","legacy","pioneer","pauper"].map(f=>(
               <button key={f} onClick={()=>setFormat(f)}
-                style={{...btn(f===format?`${T.accent}1a`:"transparent",f===format?T.accent:T.muted,{fontSize:9,border:`1px solid ${f===format?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"3px 7px"})}}
+                style={{...btn(f===format?`${T.accent}1a`:"transparent",f===format?T.accent:T.muted,{fontSize:9,border:`1px solid ${f===format?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,padding:"3px 7px"})}}
                 onMouseOver={hov} onMouseOut={uhov}>{f}</button>
             ))}
           </div>
@@ -10261,7 +10418,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                 onDrop={e=>{e.currentTarget.style.background="";if(deckDragCard&&deckDragCard.fromZone!==z){moveCardBetweenZones(deckDragCard.card,deckDragCard.fromZone,z);setDeckDragCard(null);}}}
                 style={{
                 ...btn(activeZone===z?`${T.accent}1a`:"transparent",activeZone===z?T.accent:T.muted,
-                  {fontSize:10,border:`1px solid ${activeZone===z?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"4px 10px",flex:1}),
+                  {fontSize:10,border:`1px solid ${activeZone===z?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,padding:"4px 10px",flex:1}),
               }} onMouseOver={hov} onMouseOut={uhov}>
                 {label} <span style={{marginLeft:4,background:activeZone===z?`${T.accent}26`:"rgba(255,255,255,.05)",
                   padding:"0 5px",borderRadius:8,fontSize:9}}>{count}</span>
@@ -10601,6 +10758,9 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
   const [avatar,setAvatar]=useState(profile?.avatar||"🧙");
   const [avatarImg,setAvatarImg]=useState(profile?.avatarImg||"");
   const [gmIdx,setGmIdx]=useState(profile?.gamematIdx ?? 3);
+  // v7.6.4: custom playmat URL — when set, takes priority over gmIdx preset.
+  const [gmCustomUri,setGmCustomUri]=useState(profile?.gamematCustom||"");
+  const [showMatPicker,setShowMatPicker]=useState(false);
   const [sleeveUri,setSleeveUri]=useState(profile?.sleeveUri||"");
   const [email,setEmail]=useState(authUser?.email||"");
   const [newPassword,setNewPassword]=useState("");
@@ -10610,13 +10770,19 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
 
   const handleSave = async () => {
     setSaving(true); setMsg(null);
+    // v7.6.4: when a custom URL is provided, it's the playmat. Otherwise use the preset gradient.
+    const customMat = (gmCustomUri||"").trim();
+    const matBg = customMat
+      ? `url(${customMat}) center/cover no-repeat`
+      : (GAMEMATS[gmIdx]?.bg || GAMEMATS[3].bg);
     const updated = {
       ...profile,
       alias: alias.trim() || profile?.alias || "Player",
       avatar,
       avatarImg,
       gamematIdx: gmIdx,
-      gamemat: GAMEMATS[gmIdx]?.bg || GAMEMATS[3].bg,
+      gamemat: matBg,
+      gamematCustom: customMat || null,
       sleeveUri: sleeveUri.trim() || null,
     };
     try { onSave(updated); } catch (e) { console.warn('[ProfileSettings save]', e); }
@@ -10711,11 +10877,11 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
           <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".12em",marginBottom:5}}>DEFAULT PLAYMAT (overridden by deck-specific playmats)</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:6}}>
             {GAMEMATS.filter(g=>g.bg).map((g,i)=>(
-              <button key={g.name} onClick={()=>setGmIdx(i)}
+              <button key={g.name} onClick={()=>{setGmIdx(i);setGmCustomUri("");}}
                 style={{
                   background:g.bg, height:54, borderRadius:5,
-                  border:`2px solid ${gmIdx===i?T.accent:"rgba(255,255,255,.08)"}`,
-                  boxShadow:gmIdx===i?`0 0 14px ${T.accent}50`:"none",
+                  border:`2px solid ${(!gmCustomUri && gmIdx===i)?T.accent:"rgba(255,255,255,.08)"}`,
+                  boxShadow:(!gmCustomUri && gmIdx===i)?`0 0 14px ${T.accent}50`:"none",
                   cursor:"pointer",position:"relative",overflow:"hidden",
                   fontFamily:"Cinzel,serif",fontSize:10,color:"#fff",
                   textShadow:"0 1px 4px rgba(0,0,0,.95)",
@@ -10725,6 +10891,26 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
               </button>
             ))}
           </div>
+          {/* v7.6.4: custom playmat URL — overrides preset selection */}
+          <div style={{marginTop:8,display:"flex",gap:6,alignItems:"center"}}>
+            <input value={gmCustomUri} onChange={e=>setGmCustomUri(e.target.value)}
+              placeholder="🖼 Custom playmat URL (overrides preset)…"
+              style={{...iS,marginTop:0,flex:1,fontSize:10}}/>
+            <button onClick={()=>setShowMatPicker(true)} type="button"
+              style={{...btn(`${T.panel}99`,T.accent,{padding:"6px 12px",fontSize:10,border:`1px solid ${T.accent}40`,fontFamily:"Cinzel,serif",letterSpacing:".05em",whiteSpace:"nowrap"})}}
+              onMouseOver={hov} onMouseOut={uhov}>🔍 Browse</button>
+          </div>
+          {gmCustomUri && (
+            <div style={{marginTop:6,height:42,borderRadius:4,
+              background:`url(${gmCustomUri}) center/cover no-repeat`,
+              border:`1px solid ${T.accent}40`,
+              position:"relative"}}>
+              <button onClick={()=>setGmCustomUri("")}
+                style={{position:"absolute",top:4,right:4,padding:"2px 6px",fontSize:9,
+                  background:"rgba(0,0,0,.7)",color:"#fca5a5",border:"none",borderRadius:3,cursor:"pointer"}}
+                title="Clear custom URL">✕</button>
+            </div>
+          )}
         </div>
 
         {/* Sleeve URL */}
@@ -10778,6 +10964,24 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
             onMouseOver={hov} onMouseOut={uhov}>{saving?"Saving…":"Save"}</button>
         </div>
       </div>
+      {/* v7.6.4: gamemat picker — opens art-search/custom-URL flow when Browse clicked. */}
+      {showMatPicker && (
+        <GamematPicker
+          currentBg={gmCustomUri ? `url(${gmCustomUri})` : (GAMEMATS[gmIdx]?.bg||"")}
+          customMats={[]}
+          onSelect={(bg)=>{
+            // bg is either a CSS string from a preset or a `url(URL) center/cover` string
+            const m = typeof bg === "string" ? bg.match(/url\(([^)]+)\)/) : null;
+            if (m) setGmCustomUri(m[1]);
+            setShowMatPicker(false);
+          }}
+          onSaveCustom={(name, url)=>{
+            setGmCustomUri(url);
+            setShowMatPicker(false);
+          }}
+          onClose={()=>setShowMatPicker(false)}
+        />
+      )}
     </div>
   );
 }
@@ -10832,10 +11036,19 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
   };
   const onDragEnd=()=>{setDraggingIdx(null);setDragOverIdx(null);};
 
-  const thumbImg=deck=>{
-    if(deck.commander?.imageUri)return deck.commander.imageUri;
-    return deck.cards?.find(c=>c.imageUri)?.imageUri||null;
+  // v7.6.4: thumbnails — return ALL commander images so we can show multiples.
+  // Falls back to first card with image if no commanders.
+  const thumbImgs = deck => {
+    const cmdrs = (deck.commanders && deck.commanders.length)
+      ? deck.commanders
+      : (deck.commander ? [deck.commander] : []);
+    const fromCmdrs = cmdrs.map(c => c.imageUri).filter(Boolean);
+    if (fromCmdrs.length) return fromCmdrs.slice(0, 4);
+    const fb = deck.cards?.find(c => c.imageUri)?.imageUri;
+    return fb ? [fb] : [];
   };
+  // Backwards-compat for any older callers expecting a single image.
+  const thumbImg = deck => thumbImgs(deck)[0] || null;
 
   // Floating rune particles background
   useEffect(()=>{
@@ -10932,35 +11145,37 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
 
       {/* Gallery */}
       <div style={{flex:1,overflowY:"auto",padding:"24px",position:"relative",zIndex:1}}>
-        {/* v7.6.4: search + format filters */}
+        {/* v7.6.4: minimal search + format filter — slim search, format
+            in a dropdown so it doesn't dominate the gallery. Dandân omitted
+            on purpose — Dandân uses premade variants, you don't build them. */}
         {decks.length > 0 && (
           <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
-            <div style={{position:"relative",flex:"1 1 240px",maxWidth:380}}>
-              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:14,color: T.muted,pointerEvents:"none"}}>🔍</span>
+            <div style={{position:"relative",flex:"1 1 200px",maxWidth:300}}>
+              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:13,color: T.muted,pointerEvents:"none"}}>🔍</span>
               <input
                 value={deckSearch} onChange={e=>setDeckSearch(e.target.value)}
                 placeholder="Search decks…"
-                style={{...iS,marginTop:0,paddingLeft:32,width:"100%",boxSizing:"border-box"}}/>
+                style={{...iS,marginTop:0,paddingLeft:30,paddingRight:deckSearch?28:10,width:"100%",boxSizing:"border-box",fontSize:11}}/>
               {deckSearch && (
                 <button onClick={()=>setDeckSearch("")}
-                  style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color: T.muted,cursor:"pointer",fontSize:14,padding:"2px 6px"}}
+                  style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color: T.muted,cursor:"pointer",fontSize:13,padding:"2px 6px"}}
                   title="Clear">✕</button>
               )}
             </div>
-            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-              {[{id:"all",label:"All",icon:"◯"}, ...GAMEMODES].map(gm=>{
-                const sel = (deckFormat||"all") === gm.id;
-                const c = gm.id==="commander"?T.accent : gm.id==="oathbreaker"?"#fbbf24" : gm.id==="dandan"?"#a855f7" : gm.id==="modern"?"#60a5fa" : gm.id==="legacy"?"#a78bfa" : gm.id==="pioneer"?"#fbbf24" : "#4ade80";
-                return (
-                  <button key={gm.id} onClick={()=>setDeckFormat(gm.id)}
-                    style={{...btn(sel?`${c}26`:`${T.panel}99`,sel?c:T.muted,
-                      {fontSize:10,padding:"5px 10px",border:`1px solid ${sel?c+"60":"${T.border}30"}`,fontFamily:"Cinzel,serif",letterSpacing:".05em"})}}
-                    onMouseOver={hov} onMouseOut={uhov}>
-                    {gm.icon} {gm.label}
-                  </button>
-                );
-              })}
-            </div>
+            <select
+              value={deckFormat||"all"}
+              onChange={e=>setDeckFormat(e.target.value)}
+              title="Filter by format"
+              style={{
+                ...iS, marginTop:0, fontSize:11, padding:"6px 10px",
+                width:"auto", minWidth:130, cursor:"pointer",
+                fontFamily:"Cinzel, serif", letterSpacing:".05em",
+              }}>
+              <option value="all">All formats</option>
+              {GAMEMODES.filter(gm => gm.id !== "dandan").map(gm => (
+                <option key={gm.id} value={gm.id}>{gm.label}</option>
+              ))}
+            </select>
           </div>
         )}
         {decks.length===0&&(
@@ -10979,9 +11194,17 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
         )}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:18}}>
           {filteredDecks.map((deck,i)=>{
-            const thumb=thumbImg(deck);
+            const thumbs=thumbImgs(deck);
             const total=deck.cards?.reduce((s,c)=>s+c.quantity,0)||0;
             const accent=deck.format==="commander"?T.accent:deck.format==="oathbreaker"?"#fbbf24":deck.format==="modern"?"#60a5fa":deck.format==="legacy"?"#a78bfa":"#4ade80";
+            // v7.6.4: layout for the commander thumbnail grid.
+            // 1 → full bleed, 2 → side by side, 3 → 3 columns, 4 → 2x2.
+            const N = thumbs.length;
+            const grid = N <= 1
+              ? { cols: 1, rows: 1 }
+              : N === 2 ? { cols: 2, rows: 1 }
+              : N === 3 ? { cols: 3, rows: 1 }
+              :           { cols: 2, rows: 2 };
             return(
               <div key={deck.id} className="slide-in"
                 draggable
@@ -10996,34 +11219,44 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
                 }}
                 style={{
                   position:"relative",height:240,
-                  border:`1px solid ${dragOverIdx===i?accent+"80":"rgba(${T.accentRgb},.08)"}`,
+                  border:`1px solid ${dragOverIdx===i?accent+"80":`rgba(${T.accentRgb},.08)`}`,
                   borderRadius:10,overflow:"hidden",
                   animationDelay:`${i*.05}s`,
                   transition:"border-color .18s,transform .18s,box-shadow .18s",cursor:"pointer",
                   boxShadow:dragOverIdx===i?`0 0 0 2px ${accent}50,0 12px 32px rgba(0,0,0,.7)`:"0 4px 16px rgba(0,0,0,.6)",
                   opacity:draggingIdx===i?.45:1,
-                  transform:draggingIdx===i?"scale(.97)":dragOverIdx===i?"scale(1.02)":"none"}}
+                  transform:draggingIdx===i?"scale(.97)":dragOverIdx===i?"scale(1.02)":"none",
+                  // v7.6.4: ensure the entire card region is the click target,
+                  // including the area that previously held Edit/Play buttons.
+                  display:"flex",flexDirection:"column"}}
                 onMouseOver={e=>{if(draggingIdx===null){e.currentTarget.style.borderColor=`${accent}40`;e.currentTarget.style.boxShadow=`0 12px 32px rgba(0,0,0,.7),0 0 20px ${accent}10`;}}}
                 onMouseOut={e=>{if(draggingIdx===null){e.currentTarget.style.borderColor=`${T.accent}14`;e.currentTarget.style.boxShadow="0 4px 16px rgba(0,0,0,.6)";}}} >
 
                 {/* Ink swirl canvas — sits behind art */}
                 <InkSwirlCanvas color={accent} key={deck.id}/>
 
-                {/* Full-bleed art */}
-                {thumb?(
-                  <img src={thumb} alt="" style={{
-                    position:"absolute",inset:0,width:"100%",height:"100%",
-                    objectFit:"cover",objectPosition:"top center",
-                    transition:"transform .4s"}}
-                    onMouseOver={e=>e.target.style.transform="scale(1.04)"}
-                    onMouseOut={e=>e.target.style.transform="scale(1)"}/>
-                ):(
-                  <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",
-                    justifyContent:"center",fontSize:48,
-                    background:"linear-gradient(135deg,#0a1628,#0d1f3c)"}}>⚔</div>
-                )}
+                {/* v7.6.4: art region — multi-commander grid when > 1, else full-bleed */}
+                <div style={{position:"absolute",inset:0,
+                  display:"grid",
+                  gridTemplateColumns:`repeat(${grid.cols},1fr)`,
+                  gridTemplateRows:`repeat(${grid.rows},1fr)`,
+                  gap: N > 1 ? 1 : 0,
+                  background: thumbs.length === 0 ? "linear-gradient(135deg,#0a1628,#0d1f3c)" : "transparent",
+                }}>
+                  {thumbs.length > 0 ? thumbs.map((url, idx)=>(
+                    <div key={idx} style={{position:"relative", overflow:"hidden"}}>
+                      <img src={url} alt="" style={{
+                        position:"absolute",inset:0,width:"100%",height:"100%",
+                        objectFit:"cover",objectPosition:"top center",
+                        transition:"transform .4s",
+                      }}/>
+                    </div>
+                  )) : (
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"center",fontSize:48}}>⚔</div>
+                  )}
+                </div>
 
-                {/* Gradient only right above the buttons — no dead zone */}
+                {/* Gradient — extends further up so the dropped name reads cleanly */}
                 <div style={{position:"absolute",left:0,right:0,bottom:0,
                   height:"55%",
                   background:"linear-gradient(transparent,rgba(4,8,18,.82) 42%,rgba(4,8,18,.97) 72%,rgba(4,8,18,1))",
@@ -11038,31 +11271,36 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
                     backdropFilter:"blur(4px)"}}>{deck.format.toUpperCase()}</div>
                 )}
 
-                {/* Text + buttons pinned to bottom */}
-                <div style={{position:"absolute",left:0,right:0,bottom:0,padding:"10px 13px"}}>
-                  <div style={{fontFamily:"Cinzel, serif",color:T.accent,fontSize:13,marginBottom:2,
-                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
-                    textShadow:"0 1px 6px rgba(0,0,0,.9)"}}>
-                    {deck.commanders?.length||deck.commander?"⚔ ":""}{deck.name}
-                  </div>
-                  <div style={{fontSize:9,color:"#6a8aaa",marginBottom:8,fontFamily:"Cinzel, serif",
-                    textShadow:"0 1px 4px rgba(0,0,0,.9)"}}>
-                    {total} cards{deck.commander?` · Cmdr: ${deck.commander.name}`:""}
-                  </div>
-                  <div style={{display:"flex",justifyContent:"flex-end"}} data-deck-action>
-                    {deleteConfirm===deck.id?(
-                      <button onClick={(e)=>{e.stopPropagation();onDelete(deck.id);setDeleteConfirm(null);}}
-                        data-deck-action
-                        style={{...btn("rgba(248,113,113,.2)","#f87171",{padding:"5px 7px",fontSize:10,border:"1px solid rgba(248,113,113,.35)",backdropFilter:"blur(6px)"})}}
-                        onMouseOver={hov} onMouseOut={uhov}>Sure?</button>
-                    ):(
-                      <button onClick={(e)=>{e.stopPropagation();setDeleteConfirm(deck.id);}}
-                        data-deck-action
-                        title="Delete deck"
-                        style={{...btn("rgba(10,20,40,.6)","#3a4a5a",{padding:"5px 8px",fontSize:12,border:"1px solid transparent",backdropFilter:"blur(6px)"})}}
-                        onMouseOver={e=>{e.currentTarget.style.color="#f87171";e.currentTarget.style.borderColor="rgba(248,113,113,.3)";}}
-                        onMouseOut={e=>{e.currentTarget.style.color="#3a4a5a";e.currentTarget.style.borderColor="transparent";}}>✕</button>
-                    )}
+                {/* v7.6.4: text + delete pinned to the bottom — name now sits
+                    where Edit/Play used to be so the card reads in one piece. */}
+                <div style={{position:"absolute",left:0,right:0,bottom:0,padding:"12px 13px 10px"}}>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:8}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontFamily:"Cinzel, serif",color:T.accent,fontSize:14,marginBottom:3,
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
+                        textShadow:"0 1px 6px rgba(0,0,0,.95)",letterSpacing:".02em"}}>
+                        {deck.commanders?.length||deck.commander?"⚔ ":""}{deck.name}
+                      </div>
+                      <div style={{fontSize:9,color:"#9bb0c8",fontFamily:"Cinzel, serif",
+                        textShadow:"0 1px 4px rgba(0,0,0,.95)",letterSpacing:".02em"}}>
+                        {total} cards{(deck.commanders?.length>1)?` · ${deck.commanders.length} cmdrs`:deck.commander?` · ${deck.commander.name}`:""}
+                      </div>
+                    </div>
+                    <div data-deck-action>
+                      {deleteConfirm===deck.id?(
+                        <button onClick={(e)=>{e.stopPropagation();onDelete(deck.id);setDeleteConfirm(null);}}
+                          data-deck-action
+                          style={{...btn("rgba(248,113,113,.2)","#f87171",{padding:"5px 8px",fontSize:10,border:"1px solid rgba(248,113,113,.35)",backdropFilter:"blur(6px)"})}}
+                          onMouseOver={hov} onMouseOut={uhov}>Sure?</button>
+                      ):(
+                        <button onClick={(e)=>{e.stopPropagation();setDeleteConfirm(deck.id);}}
+                          data-deck-action
+                          title="Delete deck"
+                          style={{...btn("rgba(10,20,40,.6)","#3a4a5a",{padding:"4px 8px",fontSize:12,border:"1px solid transparent",backdropFilter:"blur(6px)"})}}
+                          onMouseOver={e=>{e.currentTarget.style.color="#f87171";e.currentTarget.style.borderColor="rgba(248,113,113,.3)";}}
+                          onMouseOut={e=>{e.currentTarget.style.color="#3a4a5a";e.currentTarget.style.borderColor="transparent";}}>✕</button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -11831,6 +12069,9 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       )}
       <GameBoard
         playerIdx={myIdx} player={player} opponent={opponent}
+        // v7.6.4: pass ALL opponents (primary + extras) so the CommandBar
+        // can render one commander-damage cell per opponent.
+        allOpps={[...(opponent?[{seat:primaryIdx,player:opponent}]:[]),...extraOpponents]}
         phase={phase} turn={turn} stack={stack} gamemode={gm}
         onUpdatePlayer={updatePlayer} onUpdateGame={updateGame}
         onExit={async()=>{

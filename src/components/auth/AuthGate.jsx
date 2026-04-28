@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { signIn, signUp, resetPassword } from '../../lib/auth';
+import OAuthButtons from './OAuthButtons.jsx';
 import { hasSupabaseConfig } from '../../lib/supabase';
 
 const ACCENT = '#c8a870';
@@ -195,6 +196,11 @@ export default function AuthGate() {
             </a>
           )}
         </div>
+
+        {/* v7.6.5: OAuth providers — Google + Discord. Only shown on the
+            sign-in and sign-up screens; reset-password mode hides them since
+            you'd be on the magic-link flow at that point. */}
+        {mode !== 'reset' && <OAuthButtons />}
       </form>
     </div>
   );

@@ -1,0 +1,17 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <title>playsim favicon</title>
+  <defs>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d8b880"/>
+      <stop offset="1" stop-color="#b89860"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#050a12"/>
+  <rect x="3" y="3" width="58" height="58" rx="11" fill="none" stroke="#c8a870" stroke-width="0.5" opacity="0.35"/>
+  <g transform="translate(32, 32)">
+    <rect x="-19" y="-26" width="38" height="52" rx="5" fill="url(#card)" stroke="#7a5a28" stroke-width="1"/>
+    <rect x="-16" y="-23" width="32" height="46" rx="2.5" fill="none" stroke="#7a5a28" stroke-width="0.4" opacity="0.5"/>
+    <path d="M 0,-13 L 2.5,-2.5 L 13,0 L 2.5,2.5 L 0,13 L -2.5,2.5 L -13,0 L -2.5,-2.5 Z" fill="#050a12"/>
+    <circle cx="0" cy="0" r="1.2" fill="#c8a870"/>
+  </g>
+</svg>

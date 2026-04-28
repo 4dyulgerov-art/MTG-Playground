@@ -1,10 +1,10 @@
-# TCG Playsim — playsim.live (v7.6.4)
+# TCG Playsim — playsim.live (v7.6.5)
 
 > Formerly "MTG Playground". Rebranded in v7.6.4: the live deployment is at **playsim.live**, the product is **TCG Playsim**. Code structure is unchanged from v7.x; tab title, page metadata, and in-app titles all reflect the new brand.
 
 Browser-based trading-card-game playtester. Built on top of the v6 single-file prototype with **zero gameplay regressions** — every feature from v6 (weather, planechase, dandan, custom cards, themes, hotkeys, sound studio, mat crop editor) is preserved intact. What v7 adds:
 
-- **Real accounts** — email/password via Supabase Auth
+- **Real accounts** — email/password + Google + Discord via Supabase Auth (v7.6.5)
 - **Cross-computer rooms** — 2, 3, or 4 players gather from anywhere
 - **Game-state sync** — actions broadcast via Supabase Realtime *or* a dedicated WebSocket relay (v7.6.3+)
 - **Per-player chat + shared log** — via `game_events` append-only stream
@@ -13,6 +13,24 @@ Browser-based trading-card-game playtester. Built on top of the v6 single-file p
 - **Change deck mid-game** — right-click the deck pile → "⇄ Change Deck…"
 - **3p and 4p opponent tiles** — mini-boards for additional opponents, click to swap the main focus
 - **Vite build** — ships to Vercel with a single `git push`
+
+## What's new in v7.6.5
+
+A polish + hardening release on top of v7.6.4. No data-model changes, no relay changes — purely client-side fixes and additions.
+
+- **Steel-border bug squashed.** v7.6.4 introduced a regex error in 48 sites where `border:\`1px solid ${cond ? T.accent : "${T.border}30"}\`` used a literal string instead of a nested template. CSS rejected the value, so the browser fell back to its default 3px chrome-grey border. Fixed everywhere — borders now render correctly with the active theme.
+- **OAuth login.** Google + Discord providers wired into the auth gate via a new `OAuthButtons.jsx` component. Both providers are pre-configured on Supabase (see `AUTH-HANDOVER-BRIEF-v2.md`).
+- **CommandBar.** A toolbar replaces the `COMMAND ZONE` label at the top of the command zone. Carries the player's life total (click to type a new value, no +/- buttons) and per-opponent commander damage cells. One cell in 2p, two in 3p, three in 4p — each shows opp avatar + `dmg/21`, hovers reveal alias.
+- **HandLifeCounter and topbar life counter removed.** Life lives only in the CommandBar now.
+- **Filters into combobox.** The deck gallery's chunky format-pill row collapsed into a single `<select>` dropdown. Dandân omitted from the filter — Dandân uses premade variants, you don't build them.
+- **Deck card layout fixed.** Name + meta dropped to where Edit/Play used to live (no more dead space). Full card surface clickable to edit. Multi-commander preview: 1 = full bleed, 2 = side by side, 3 = three columns, 4 = 2x2 grid.
+- **Profile playmat: custom URL + Browse.** ProfileSettings now has a URL input plus a Browse button that opens the in-game GamematPicker (Scryfall art search / custom URL).
+- **Presence Counter actually works.** Heartbeat to `user_profiles.updated_at` every 60s while signed in (proxy for "online"); `room_players.updated_at` stamped on every join (proxy for "in game"). Previously both queries showed 0.
+- **Dandân room single-deck mode preserved.** Opening-hand routine is now host-only — non-host seats wait then draw 7 from the SHARED library.
+- **Favicons + manifest installed.** Full icon set in `/public`. index.html links them all.
+- **Password reset bug fixed.** App.jsx now installs a global `onAuthStateChange` listener that catches `PASSWORD_RECOVERY` before the normal-login path can race past the gate.
+
+See `CHANGELOG-v7.6.5.md` and `HANDOVER-BRIEF-v7.6.5.md` for full breakdown and deploy procedure.
 
 ## What's new in v7.6.4
 

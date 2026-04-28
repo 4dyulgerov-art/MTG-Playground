@@ -156,6 +156,10 @@ const shared = {
           profile: parsed.profile || null,   // full profile JSONB
           alias:  parsed.profile?.alias || '',
           avatar: parsed.profile?.avatar || '🧙',
+          // v7.6.4: stamp updated_at so PresenceCounter ("in game" tab)
+          // sees this seat as recently active. The DB default may not
+          // refresh on upsert, so we set it explicitly.
+          updated_at: new Date().toISOString(),
         };
         const { error } = await supabase
           .from('room_players').upsert(row, { onConflict: 'room_id,user_id' });

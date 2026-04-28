@@ -41,9 +41,40 @@ function SplashLoader({ label = 'Loading…' }) {
 // completion re-renders us past the gate.
 function useResetFlag() {
   const [on, setOn] = useState(() => {
-    try { return new URL(window.location.href).searchParams.get('reset') === '1'; }
+    try {
+      // v7.6.4: also catch hash fragment that supabase recovery emails carry.
+      // The link comes back as either ?reset=1 OR with #access_token=...&type=recovery.
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('reset') === '1') return true;
+      if (window.location.hash.includes('type=recovery')) return true;
+      return false;
+    }
     catch { return false; }
   });
+  // v7.6.4: ALSO listen for PASSWORD_RECOVERY events on the global auth
+  // listener — supabase fires this exactly once when the recovery link is
+  // consumed. Without this, fast page loads can race past the gate.
+  useEffect(() => {
+    let unsub = () => {};
+    (async () => {
+      try {
+        const { supabase } = await import('./lib/supabase');
+        const { data } = supabase.auth.onAuthStateChange((event) => {
+          if (event === 'PASSWORD_RECOVERY') {
+            setOn(true);
+            // Persist via search param so refreshes stay on this view too.
+            try {
+              const u = new URL(window.location.href);
+              u.searchParams.set('reset', '1');
+              window.history.replaceState({}, '', u.toString());
+            } catch {}
+          }
+        });
+        unsub = () => data.subscription.unsubscribe();
+      } catch {}
+    })();
+    return () => unsub();
+  }, []);
   return [on, setOn];
 }
 
@@ -97,6 +128,34 @@ export default function App() {
     window.addEventListener('mtg:signout', h);
     return () => window.removeEventListener('mtg:signout', h);
   }, []);
+
+  // v7.6.4: presence heartbeat. Every 60s while signed in, touch
+  // user_profiles.updated_at so the PresenceCounter can see "active in
+  // last 10 minutes" as a proxy for "online". Without this, the counter
+  // shows 0 because logging in doesn't itself bump updated_at.
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    let interval = null;
+    const ping = async () => {
+      if (cancelled) return;
+      try {
+        const { supabase } = await import('./lib/supabase');
+        await supabase.from('user_profiles')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', user.id);
+      } catch {}
+    };
+    ping();
+    interval = setInterval(ping, 60_000);
+    const onVis = () => { if (!document.hidden) ping(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [user?.id]);
 
   // 1. Reset-password mode takes precedence over everything except "still loading".
   if (loading) return <SplashLoader label="AUTHENTICATING…" />;

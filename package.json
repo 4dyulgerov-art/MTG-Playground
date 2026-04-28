@@ -1,7 +1,7 @@
 {
   "name": "playsim-live",
   "private": true,
-  "version": "7.6.4",
+  "version": "7.6.5",
   "type": "module",
   "description": "TCG Playsim (playsim.live) — browser-based trading-card-game playtester. Fast, free, no download. 2-4 player online or local.",
   "scripts": {
