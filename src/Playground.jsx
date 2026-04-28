@@ -50,6 +50,44 @@ const SFX = (() => {
     volume = parseFloat(localStorage.getItem("mtg_sfx_vol") || "0.6");
   } catch {}
 
+  // v7.6.4: seed default catalog mappings on first run.
+  // User-requested defaults (per spec):
+  //   hover         → "Fan & settle"     (rustle_fan)
+  //   toGraveyard   → "The count speaks" (vamp_count)
+  //   reanimate     → "Blood calls"      (vamp_blood)  [graveyard → BF]
+  //   toExile       → "Cathedral bell"   (holy_bell)
+  // Stored under the cat_<id> custom marker so they show up correctly in
+  // the SoundSettings UI as catalog assignments.
+  try {
+    const seeded = localStorage.getItem("mtg_sfx_seeded_v764");
+    if (!seeded) {
+      const customLibLocal = JSON.parse(localStorage.getItem("mtg_sfx_custom_lib") || "[]");
+      const ensureCatalog = (catId, label) => {
+        const id = `cat_${catId}`;
+        if (!customLibLocal.find(c => c.id === id)) {
+          customLibLocal.push({ id, name: label, params: { catalogId: catId }, assignedTo: [] });
+        }
+      };
+      ensureCatalog("rustle_fan", "Fan & settle");
+      ensureCatalog("vamp_count", "The count speaks");
+      ensureCatalog("vamp_blood", "Blood calls");
+      ensureCatalog("holy_bell",  "Cathedral bell");
+      localStorage.setItem("mtg_sfx_custom_lib", JSON.stringify(customLibLocal));
+
+      const seed = (action, catId) => {
+        if (!prefs[action] || prefs[action] === "natural") {
+          prefs[action] = `custom:cat_${catId}`;
+        }
+      };
+      seed("hover",       "rustle_fan");
+      seed("toGraveyard", "vamp_count");
+      seed("reanimate",   "vamp_blood");
+      seed("toExile",     "holy_bell");
+      localStorage.setItem("mtg_sfx_prefs_v2", JSON.stringify(prefs));
+      localStorage.setItem("mtg_sfx_seeded_v764", "1");
+    }
+  } catch {}
+
   const ac = () => {
     if (!ctx) try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch {}
     if (ctx?.state === "suspended") ctx.resume();
@@ -890,21 +928,21 @@ function SoundSettings({onClose}){
   const deleteCustom=(id)=>{SFX.deleteCustomSound(id);setCustomLib(SFX.getCustomLib());setPrefs(SFX.getPrefs());};
   const loadEdit=(cs)=>{setDraftName(cs.name);setEditingId(cs.id);setLayers((cs.params.layers||[]).map(l=>({...l,id:l.id||uid()})));setTab("create");};
 
-  const TB=(id,lbl)=><button onClick={()=>setTab(id)} style={{padding:"6px 15px",fontSize:11,cursor:"pointer",fontFamily:"Cinzel,serif",border:"none",borderRadius:5,background:tab===id?`${T.accent}20`:"transparent",color:tab===id?T.accent:"#4a6a8a",borderBottom:tab===id?`2px solid ${T.accent}`:"2px solid transparent"}} onMouseOver={hov} onMouseOut={uhov}>{lbl}</button>;
+  const TB=(id,lbl)=><button onClick={()=>setTab(id)} style={{padding:"6px 15px",fontSize:11,cursor:"pointer",fontFamily:"Cinzel,serif",border:"none",borderRadius:5,background:tab===id?`${T.accent}20`:"transparent",color:tab===id?T.accent:T.muted,borderBottom:tab===id?`2px solid ${T.accent}`:"2px solid transparent"}} onMouseOver={hov} onMouseOut={uhov}>{lbl}</button>;
 
   return(
     <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.97)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:25001,backdropFilter:"blur(8px)"}}>
       <div className="slide-in" style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid ${T.accent}40`,borderRadius:12,width:740,maxHeight:"92vh",display:"flex",flexDirection:"column",boxShadow:"0 24px 80px rgba(0,0,0,.98)",position:"relative",overflow:"hidden"}}>
-        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"linear-gradient(90deg,transparent,#c8a870,transparent)"}}/>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${T.accent},transparent)`}}/>
         {/* Header */}
         <div style={{padding:"13px 20px 0",borderBottom:`1px solid ${T.accent}18`,flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
             <div style={{color:T.accent,fontFamily:"Cinzel Decorative,serif",fontSize:13}}>🔊 Sound Studio</div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:9,color:"#4a6a8a"}}>Vol</span>
+              <span style={{fontSize:9,color: T.muted}}>Vol</span>
               <input type="range" min={0} max={1} step={.05} value={vol} onChange={e=>{const v=+e.target.value;setVol(v);SFX.setVolume(v);}} style={{width:80,accentColor:T.accent,cursor:"pointer"}}/>
               <span style={{fontSize:10,color:T.accent,minWidth:28}}>{Math.round(vol*100)}%</span>
-              <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+              <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
             </div>
           </div>
           <div style={{display:"flex",gap:2}}>{TB("assign","⚙ Assign")}{TB("library","📚 Sound Library")}{TB("create",`✦ Create${customLib.length?` (${customLib.length})`:""}`)}
@@ -916,7 +954,7 @@ function SoundSettings({onClose}){
         {/* ── ASSIGN TAB ── */}
         {tab==="assign"&&!selectedAction&&(
           <div>
-            <div style={{fontSize:9,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:10}}>Click an action to choose its sound from the library</div>
+            <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:10}}>Click an action to choose its sound from the library</div>
             {Object.entries(SOUND_PACKS).map(([action,{label}])=>{
               const info=getCurrentLabel(action);
               return(
@@ -929,7 +967,7 @@ function SoundSettings({onClose}){
                   <div style={{display:"flex",alignItems:"center",gap:8}}>
                     <span style={{fontSize:10,color:info.color,fontFamily:"Cinzel,serif"}}>{info.text}</span>
                     <button onClick={e=>{e.stopPropagation();SFX.playAction(action);}} style={{...btn(`${T.accent}15`,T.accent,{border:`1px solid ${T.accent}30`,fontSize:10,padding:"3px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>▶</button>
-                    <span style={{fontSize:11,color:"#4a6a8a"}}>›</span>
+                    <span style={{fontSize:11,color: T.muted}}>›</span>
                   </div>
                 </div>
               );
@@ -941,14 +979,14 @@ function SoundSettings({onClose}){
         {tab==="assign"&&selectedAction&&(
           <div>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-              <button onClick={()=>setSelectedAction(null)} style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:11,padding:"4px 10px"})}} onMouseOver={hov} onMouseOut={uhov}>← Back</button>
+              <button onClick={()=>setSelectedAction(null)} style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`,fontSize:11,padding:"4px 10px"})}} onMouseOver={hov} onMouseOut={uhov}>← Back</button>
               <div style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:12}}>{SOUND_PACKS[selectedAction]?.label}</div>
               <div style={{flex:1}}/>
-              <button onClick={()=>{clearAction(selectedAction);setSelectedAction(null);}} style={{...btn("transparent","#4a6a8a",{border:`1px solid ${T.border}20`,fontSize:9,padding:"3px 9px"})}} onMouseOver={hov} onMouseOut={uhov}>Reset to default</button>
+              <button onClick={()=>{clearAction(selectedAction);setSelectedAction(null);}} style={{...btn("transparent",T.muted,{border:`1px solid ${T.border}20`,fontSize:9,padding:"3px 9px"})}} onMouseOver={hov} onMouseOut={uhov}>Reset to default</button>
             </div>
 
             {/* Built-in variants */}
-            <div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".1em"}}>BUILT-IN STYLES</div>
+            <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".1em"}}>BUILT-IN STYLES</div>
             <div style={{display:"flex",gap:6,marginBottom:14}}>
               {["natural","arcade","minimal"].map(v=>{
                 const isSel=(prefs[selectedAction]||"natural")===v&&!String(prefs[selectedAction]).startsWith("custom:");
@@ -965,10 +1003,10 @@ function SoundSettings({onClose}){
             </div>
 
             {/* Catalog sounds */}
-            <div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".1em"}}>SOUND LIBRARY</div>
+            <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".1em"}}>SOUND LIBRARY</div>
             {getSoundCatalog().map(cat=>(
               <div key={cat.cat}>
-                <div style={{fontSize:8,color:"#3a5a7a",fontFamily:"Cinzel,serif",marginBottom:4,marginTop:8,letterSpacing:".08em"}}>{cat.cat.toUpperCase()}</div>
+                <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:4,marginTop:8,letterSpacing:".08em"}}>{cat.cat.toUpperCase()}</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:5,marginBottom:6}}>
                   {cat.sounds.map(sound=>{
                     const isSel=prefs[selectedAction]===`custom:cat_${sound.id}`;
@@ -992,7 +1030,7 @@ function SoundSettings({onClose}){
             {/* User custom sounds */}
             {customLib.filter(cs=>!cs.id.startsWith("cat_")).length>0&&(
               <div style={{marginTop:8}}>
-                <div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".1em"}}>YOUR CUSTOM SOUNDS</div>
+                <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".1em"}}>YOUR CUSTOM SOUNDS</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:5}}>
                   {customLib.filter(cs=>!cs.id.startsWith("cat_")).map(cs=>{
                     const isSel=prefs[selectedAction]===`custom:${cs.id}`;
@@ -1015,17 +1053,17 @@ function SoundSettings({onClose}){
         {/* ── SOUND LIBRARY BROWSE TAB ── */}
         {tab==="library"&&(
           <div>
-            <div style={{fontSize:9,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:10}}>Browse and preview all sounds — click ▶ to hear, or go to Assign to wire them to actions</div>
+            <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:10}}>Browse and preview all sounds — click ▶ to hear, or go to Assign to wire them to actions</div>
             {getSoundCatalog().map(cat=>(
               <div key={cat.cat}>
-                <div style={{fontSize:9,color:"#3a5a7a",fontFamily:"Cinzel,serif",margin:"12px 0 6px",letterSpacing:".1em"}}>{cat.cat.toUpperCase()}</div>
+                <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",margin:"12px 0 6px",letterSpacing:".1em"}}>{cat.cat.toUpperCase()}</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:6}}>
                   {cat.sounds.map(sound=>(
                     <div key={sound.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 11px",background:`${T.bg}80`,borderRadius:7,border:`.5px solid ${T.border}18`}}>
                       <button onClick={()=>auditCatalog(sound)} style={{width:22,height:22,borderRadius:"50%",border:"none",cursor:"pointer",background:playing===sound.id?"rgba(168,85,247,.6)":"rgba(168,85,247,.18)",color:"#d8b4fe",fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"background .1s"}} onMouseOver={hov} onMouseOut={uhov}>{playing===sound.id?"♪":"▶"}</button>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:11,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sound.label}</div>
-                        <div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel,serif"}}>default: {SOUND_PACKS[sound.action]?.label.replace(/[^\w\s]/gu,"").trim()||sound.action}</div>
+                        <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif"}}>default: {SOUND_PACKS[sound.action]?.label.replace(/[^\w\s]/gu,"").trim()||sound.action}</div>
                       </div>
                     </div>
                   ))}
@@ -1040,9 +1078,9 @@ function SoundSettings({onClose}){
           <div>
             <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
               <input value={draftName} onChange={e=>setDraftName(e.target.value)} placeholder="Sound name…" style={{...iS,flex:1,marginTop:0,fontSize:12,fontFamily:"Cinzel,serif",color:T.accent}}/>
-              <button onClick={testSound} style={{...btn(testPlaying?`${T.accent}25`:`${T.panel}99`,testPlaying?T.accent:"#8a99b0",{border:`1px solid ${testPlaying?T.accent:T.border}`,fontSize:11,padding:"6px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>{testPlaying?"♪ …":"▶ Test"}</button>
+              <button onClick={testSound} style={{...btn(testPlaying?`${T.accent}25`:`${T.panel}99`,testPlaying?T.accent:T.text,{border:`1px solid ${testPlaying?T.accent:T.border}`,fontSize:11,padding:"6px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>{testPlaying?"♪ …":"▶ Test"}</button>
               <button onClick={saveSound} style={{...btn(`${T.accent}18`,T.accent,{border:`1px solid ${T.accent}50`,fontSize:11,padding:"6px 14px",fontFamily:"Cinzel,serif"})}} onMouseOver={hov} onMouseOut={uhov}>{editingId?"Update":"Save"}</button>
-              {editingId&&<button onClick={()=>{setEditingId(null);setDraftName("My Sound");setLayers([{id:uid(),type:"sine",freq:440,dt:0,dur:.3,gain:.35,det:0,hp:800,lp:8000}]);}} style={{...btn("transparent","#4a6a8a",{border:`1px solid ${T.border}20`,fontSize:11,padding:"6px 10px"})}} onMouseOver={hov} onMouseOut={uhov}>+ New</button>}
+              {editingId&&<button onClick={()=>{setEditingId(null);setDraftName("My Sound");setLayers([{id:uid(),type:"sine",freq:440,dt:0,dur:.3,gain:.35,det:0,hp:800,lp:8000}]);}} style={{...btn("transparent",T.muted,{border:`1px solid ${T.border}20`,fontSize:11,padding:"6px 10px"})}} onMouseOver={hov} onMouseOut={uhov}>+ New</button>}
             </div>
 
             {/* Presets */}
@@ -1057,12 +1095,12 @@ function SoundSettings({onClose}){
                 {n:"Explosion",l:[{id:uid(),type:"noise",freq:440,dt:0,dur:.5,gain:.7,det:0,hp:40,lp:800},{id:uid(),type:"sine",freq:32,dt:0,dur:.8,gain:.8,det:0,hp:800,lp:8000}]},
               ].map(p=>(
                 <button key={p.n} onClick={()=>{setLayers(p.l.map(l=>({...l,id:uid()})));setTimeout(testSound,50);}}
-                  style={{...btn(`${T.panel}88`,"#8a99b0",{border:`1px solid ${T.border}20`,fontSize:9,padding:"3px 10px",fontFamily:"Cinzel,serif"})}}
+                  style={{...btn(`${T.panel}88`,T.text,{border:`1px solid ${T.border}20`,fontSize:9,padding:"3px 10px",fontFamily:"Cinzel,serif"})}}
                   onMouseOver={hov} onMouseOut={uhov}>{p.n}</button>
               ))}
             </div>
 
-            <div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".08em"}}>LAYERS — stack oscillators & noise to build your sound</div>
+            <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".08em"}}>LAYERS — stack oscillators & noise to build your sound</div>
             {layers.map(layer=>(
               <div key={layer.id} style={{marginBottom:5,padding:"9px 10px",background:`${T.bg}80`,borderRadius:7,border:`1px solid ${T.border}15`,display:"grid",gridTemplateColumns:"86px 1fr 1fr 1fr 1fr auto",gap:6,alignItems:"center"}}>
                 <select value={layer.type} onChange={e=>updateLayer(layer.id,"type",e.target.value)}
@@ -1071,42 +1109,42 @@ function SoundSettings({onClose}){
                 </select>
                 {layer.type==="noise"?(
                   <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                    <span style={{fontSize:7,color:"#4a6a8a"}}>HP {Math.round(layer.hp||800)}Hz</span>
+                    <span style={{fontSize:7,color: T.muted}}>HP {Math.round(layer.hp||800)}Hz</span>
                     <input type="range" min={20} max={8000} step={10} value={layer.hp||800} onChange={e=>updateLayer(layer.id,"hp",+e.target.value)} style={{accentColor:"#60a5fa",cursor:"pointer"}}/>
                   </div>
                 ):(
                   <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                    <span style={{fontSize:7,color:"#4a6a8a"}}>freq {Math.round(layer.freq)}Hz</span>
+                    <span style={{fontSize:7,color: T.muted}}>freq {Math.round(layer.freq)}Hz</span>
                     <input type="range" min={20} max={4000} step={1} value={layer.freq} onChange={e=>updateLayer(layer.id,"freq",+e.target.value)} style={{accentColor:T.accent,cursor:"pointer"}}/>
                   </div>
                 )}
                 <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                  <span style={{fontSize:7,color:"#4a6a8a"}}>dur {layer.dur.toFixed(2)}s</span>
+                  <span style={{fontSize:7,color: T.muted}}>dur {layer.dur.toFixed(2)}s</span>
                   <input type="range" min={.01} max={3} step={.01} value={layer.dur} onChange={e=>updateLayer(layer.id,"dur",+e.target.value)} style={{accentColor:T.accent,cursor:"pointer"}}/>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                  <span style={{fontSize:7,color:"#4a6a8a"}}>vol {Math.round(layer.gain*100)}%</span>
+                  <span style={{fontSize:7,color: T.muted}}>vol {Math.round(layer.gain*100)}%</span>
                   <input type="range" min={0} max={1} step={.01} value={layer.gain} onChange={e=>updateLayer(layer.id,"gain",+e.target.value)} style={{accentColor:T.accent,cursor:"pointer"}}/>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:1}}>
-                  <span style={{fontSize:7,color:"#4a6a8a"}}>delay {layer.dt.toFixed(2)}s</span>
+                  <span style={{fontSize:7,color: T.muted}}>delay {layer.dt.toFixed(2)}s</span>
                   <input type="range" min={0} max={2} step={.01} value={layer.dt} onChange={e=>updateLayer(layer.id,"dt",+e.target.value)} style={{accentColor:"#4ade80",cursor:"pointer"}}/>
                 </div>
                 <button onClick={()=>removeLayer(layer.id)} style={{...btn("rgba(248,113,113,.1)","#f87171",{border:"1px solid rgba(248,113,113,.2)",fontSize:11,padding:"3px 7px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
               </div>
             ))}
-            <button onClick={addLayer} style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}25`,fontSize:10,padding:"6px 16px",width:"100%",marginTop:4,fontFamily:"Cinzel,serif"})}} onMouseOver={hov} onMouseOut={uhov}>+ Add Layer</button>
+            <button onClick={addLayer} style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}25`,fontSize:10,padding:"6px 16px",width:"100%",marginTop:4,fontFamily:"Cinzel,serif"})}} onMouseOver={hov} onMouseOut={uhov}>+ Add Layer</button>
 
             {/* Saved custom sounds */}
             {customLib.filter(cs=>!cs.id.startsWith("cat_")).length>0&&(
               <div style={{marginTop:14}}>
-                <div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".08em"}}>SAVED SOUNDS</div>
+                <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:6,letterSpacing:".08em"}}>SAVED SOUNDS</div>
                 {customLib.filter(cs=>!cs.id.startsWith("cat_")).map(cs=>(
                   <div key={cs.id} style={{display:"flex",alignItems:"center",gap:7,padding:"7px 10px",marginBottom:5,background:`${T.bg}80`,borderRadius:7,border:`1px solid ${T.border}15`}}>
                     <button onClick={()=>SFX.playCustomById(cs.id)} style={{...btn("rgba(168,85,247,.2)","#d8b4fe",{border:"1px solid rgba(168,85,247,.3)",fontSize:10,padding:"3px 9px"})}} onMouseOver={hov} onMouseOut={uhov}>▶</button>
                     <span style={{flex:1,fontSize:11,color:T.accent,fontFamily:"Cinzel,serif"}}>{cs.name}</span>
-                    <span style={{fontSize:8,color:"#4a6a8a"}}>{(cs.params.layers||[]).length} layers</span>
-                    <button onClick={()=>loadEdit(cs)} style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:9,padding:"3px 9px"})}} onMouseOver={hov} onMouseOut={uhov}>Edit</button>
+                    <span style={{fontSize:8,color: T.muted}}>{(cs.params.layers||[]).length} layers</span>
+                    <button onClick={()=>loadEdit(cs)} style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`,fontSize:9,padding:"3px 9px"})}} onMouseOver={hov} onMouseOut={uhov}>Edit</button>
                     <button onClick={()=>deleteCustom(cs.id)} style={{...btn("rgba(248,113,113,.1)","#f87171",{border:"1px solid rgba(248,113,113,.2)",fontSize:9,padding:"3px 9px"})}} onMouseOver={hov} onMouseOut={uhov}>Delete</button>
                   </div>
                 ))}
@@ -1145,39 +1183,468 @@ const autoPos=(bf,card)=>{
 
 /* ─── Game modes ──────────────────────────────────────────────────── */
 const GAMEMODES = [
-  {id:"standard",  label:"Standard",    life:20, icon:"🃏"},
-  {id:"commander", label:"Commander",   life:40, icon:"⚔"},
-  {id:"modern",    label:"Modern",      life:20, icon:"⚡"},
-  {id:"legacy",    label:"Legacy",      life:20, icon:"📜"},
-  {id:"pioneer",   label:"Pioneer",     life:20, icon:"🌟"},
-  {id:"dandan",    label:"Dandan",      life:20, icon:"🐟", special:true},
+  {id:"standard",   label:"Standard",     life:20, icon:"🃏"},
+  {id:"commander",  label:"Commander",    life:40, icon:"⚔"},
+  {id:"oathbreaker",label:"Oathbreaker",  life:20, icon:"🛡"},
+  {id:"modern",     label:"Modern",       life:20, icon:"⚡"},
+  {id:"legacy",     label:"Legacy",       life:20, icon:"📜"},
+  {id:"pioneer",    label:"Pioneer",      life:20, icon:"🌟"},
+  {id:"dandan",     label:"Dandân",       life:20, icon:"🐟", special:true},
 ];
 
-/* Dandan premade deck — 60 cards, 40 Dandans + 20 Islands */
-const DANDAN_DECK = {
-  id:"dandan_premade", name:"🐟 Dandan Deck", format:"dandan",
-  cards:[
-    {scryfallId:"dandan_card",name:"Dandan",quantity:40,
-     imageUri:"https://cards.scryfall.io/normal/front/8/c/8c3dcea3-7c1b-4478-8bf4-a46e3b942e45.jpg",
-     manaCost:"{1}{U}",typeLine:"Creature — Fish",
-     oracleText:"Dandan cant attack unless defending player controls an Island. When there are no Islands on the battlefield, sacrifice Dandan.",
-     power:"4",toughness:"1",colors:["U"]},
-    {scryfallId:"island_basic",name:"Island",quantity:20,
-     imageUri:"https://cards.scryfall.io/normal/front/b/d/bd335f5b-a7a4-4ac7-b8c8-f0b3e1c1e23c.jpg",
-     manaCost:"",typeLine:"Basic Land — Island",oracleText:"",power:null,toughness:null,colors:[]},
+/* ─── v7.6.4 Dandân variants ──────────────────────────────────────────────
+   Dandân ("Forgetful Fish") is a 2-player shared-deck format. Both players
+   share a single 80-card library and graveyard. Hand, battlefield, exile,
+   and command zones remain per-player. Win by reducing opponent to 0 life
+   or making them deck out. Many variants exist; we ship 11.
+
+   Card data is authored as {name, quantity} only. The first time a variant
+   is selected, the same instant-import pipeline (sfCollection batched
+   fetch → mtg-deck-patch event → in-place metadata merge) used for
+   user-pasted decklists resolves the cards. Cached thereafter.
+*/
+
+// Helper: build a stub deck entry from {name, quantity}.
+const _dandanStub = (name, quantity, scryfallSlug) => ({
+  scryfallId: `pending:${(scryfallSlug || name).toLowerCase()}`,
+  name,
+  quantity,
+  imageUri: null,
+  manaCost: "",
+  typeLine: "",
+  oracleText: "",
+  power: null,
+  toughness: null,
+  colors: [],
+  _pending: true,
+});
+
+// Build a Dandân deck object from a card list spec.
+const _mkDandanDeck = (id, name, cardSpec, opts={}) => ({
+  id: `dandan_${id}`,
+  name: `🐟 ${name}`,
+  format: "dandan",
+  variantId: id,
+  cards: cardSpec.map(([n,q,slug]) => _dandanStub(n, q, slug)),
+  // No commander, no sideboard — Dandân is a flat shared library.
+  // Sleeve uses a thematic blue cardback by default.
+  sleeveUri: opts.sleeveUri || null,
+  ...opts,
+});
+
+const DANDAN_VARIANTS = [
+  // 1. Forgetful Fish — Nick Floyd's original (the canonical Dandân deck)
+  _mkDandanDeck("forgetful_fish", "Forgetful Fish (Classic)", [
+    ["Dandân", 10],
+    ["Accumulated Knowledge", 4],
+    ["Brainstorm", 2],
+    ["Crystal Spray", 2],
+    ["Dance of the Skywise", 2],
+    ["Insidious Will", 2],
+    ["Memory Lapse", 8],
+    ["Metamorphose", 2],
+    ["Mind Bend", 2],
+    ["Mystical Tutor", 2],
+    ["Predict", 2],
+    ["Ray of Command", 2],
+    ["Supplant Form", 2],
+    ["Unsubstantiate", 2],
+    ["Vision Charm", 2],
+    ["Diminishing Returns", 2],
+    ["Mystic Retrieval", 2],
+    ["Halimar Depths", 2],
+    ["Island", 18],
+    ["Izzet Boilerworks", 2],
+    ["Lonely Sandbar", 2],
+    ["Mystic Sanctuary", 2],
+    ["Remote Isle", 2],
+    ["Svyelunite Temple", 2],
+    ["Temple of Epiphany", 2],
+  ], {
+    description: "Nick Floyd's original Dandân list. The canonical Forgetful Fish experience: 10 fish, 8 Memory Lapse, all the classic blue manipulation.",
+    strategy: "Play patient blue. Use Memory Lapse to steal opponent's spells off the stack and force them onto the top of the deck (where you can draw them). Keep at least one Island in play at all times — without one, Dandân must be sacrificed. Diminishing Returns is your panic button when the deck thins out.",
+    keyCards: ["Dandân", "Memory Lapse", "Brainstorm", "Mystic Retrieval", "Diminishing Returns"],
+  }),
+
+  // 2. Forgetful Fish (Secret Lair) — your spec
+  _mkDandanDeck("secret_lair", "Forgetful Fish (Secret Lair)", [
+    ["Dandân", 10],
+    ["Accumulated Knowledge", 4],
+    ["Magical Hack", 2],
+    ["Memory Lapse", 8],
+    ["Mystic Sanctuary", 2],
+    ["Island", 20],
+    ["Brainstorm", 2],
+    ["Capture of Jingzhou", 2],
+    ["Chart a Course", 2],
+    ["Control Magic", 2],
+    ["Crystal Spray", 2],
+    ["Day's Undoing", 2],
+    ["Mental Note", 2],
+    ["Metamorphose", 2],
+    ["Predict", 2],
+    ["Telling Time", 2],
+    ["Unsubstantiate", 2],
+    ["Halimar Depths", 2],
+    ["Haunted Fengraf", 2],
+    ["Lonely Sandbar", 2],
+    ["Remote Isle", 2],
+    ["The Surgical Bay", 2],
+    ["Svyelunite Temple", 2],
+  ], {
+    description: "The 2026 Secret Lair printing. Same shape as Floyd's original but with newer tech: Capture of Jingzhou for extra turns, Day's Undoing as a deck-reset, Control Magic for stealing fish.",
+    strategy: "More aggressive than the classic — Capture of Jingzhou and Day's Undoing give you explosive turns. Magical Hack swaps 'Island' for any land type, neutralizing the opponent's fish AND yours if you misplay. Control Magic on an opposing Dandân is a swing of 8 damage per turn cycle.",
+    keyCards: ["Dandân", "Memory Lapse", "Capture of Jingzhou", "Day's Undoing", "Control Magic"],
+  }),
+
+  // 3. Test of Patience
+  _mkDandanDeck("test_of_patience", "Test of Patience", [
+    ["Test of Patience", 10],
+    ["Memory Lapse", 8],
+    ["Counterspell", 4],
+    ["Mana Leak", 4],
+    ["Brainstorm", 4],
+    ["Ponder", 4],
+    ["Preordain", 4],
+    ["Force Spike", 2],
+    ["Spell Pierce", 2],
+    ["Telling Time", 2],
+    ["Predict", 2],
+    ["Unsubstantiate", 2],
+    ["Mystic Sanctuary", 2],
+    ["Halimar Depths", 2],
+    ["Island", 28],
+  ], {
+    description: "A Forgetful Fish variant where the win condition is Test of Patience itself — exile a counterspell to gain 5 life. Stalls the game out until the deck runs dry.",
+    strategy: "Pure control. Test of Patience exiles spells at high mana costs to let you gain life. Memory Lapse keeps recycling threats. The win condition is making opponent deck out, not killing them with creatures.",
+    keyCards: ["Test of Patience", "Memory Lapse", "Counterspell", "Mystic Sanctuary"],
+  }),
+
+  // 4. Rat King — Pied Piper of Cabal Coffers
+  _mkDandanDeck("rat_king", "Rat King", [
+    ["Pack Rat", 10],
+    ["Rat Colony", 8],
+    ["Relentless Rats", 4],
+    ["Throat Slitter", 2],
+    ["Marrow-Gnawer", 2],
+    ["Persistent Specimen", 2],
+    ["Dark Ritual", 4],
+    ["Duress", 4],
+    ["Funeral Charm", 2],
+    ["Sign in Blood", 2],
+    ["Night's Whisper", 2],
+    ["Bake into a Pie", 2],
+    ["Cabal Coffers", 2],
+    ["Bojuka Bog", 2],
+    ["Polluted Mire", 2],
+    ["Barren Moor", 2],
+    ["Swamp", 28],
+  ], {
+    description: "Rats, but a lot of them. The shared deck is stuffed with Pack Rats, Rat Colonies, and Relentless Rats — discard fuel for Pack Rat tokens.",
+    strategy: "Pack Rat's discard ability is busted in a shared-deck format: every rat in hand is a potential 2/2 token. Cabal Coffers ramps for board-wide pumps. Hand disruption (Duress, Funeral Charm) prevents the opponent from finding answers.",
+    keyCards: ["Pack Rat", "Rat Colony", "Cabal Coffers", "Marrow-Gnawer"],
+  }),
+
+  // 5. Nuts and Bolts — artifact go-wide
+  _mkDandanDeck("nuts_and_bolts", "Nuts and Bolts", [
+    ["Ornithopter", 8],
+    ["Memnite", 8],
+    ["Phyrexian Walker", 4],
+    ["Shield Sphere", 4],
+    ["Steel Overseer", 4],
+    ["Cranial Plating", 4],
+    ["Galvanic Blast", 4],
+    ["Shrapnel Blast", 2],
+    ["Welding Jar", 2],
+    ["Mox Opal", 2],
+    ["Springleaf Drum", 2],
+    ["Inventors' Fair", 2],
+    ["Darksteel Citadel", 4],
+    ["Spire of Industry", 4],
+    ["Wastes", 26],
+  ], {
+    description: "All-artifact Dandân — every card is an artifact or interacts with them. Token swarms, equipment, and artifact-loving lands.",
+    strategy: "Drop free creatures (Ornithopter, Memnite, Phyrexian Walker), pump them with Steel Overseer and Cranial Plating, finish with Shrapnel Blast. Mox Opal turns on with three artifacts in play.",
+    keyCards: ["Steel Overseer", "Cranial Plating", "Mox Opal", "Shrapnel Blast"],
+  }),
+
+  // 6. Elf Football — green tribal stomp
+  _mkDandanDeck("elf_football", "Elf Football", [
+    ["Llanowar Elves", 8],
+    ["Elvish Mystic", 8],
+    ["Heritage Druid", 4],
+    ["Elvish Archdruid", 4],
+    ["Elvish Visionary", 4],
+    ["Priest of Titania", 4],
+    ["Joraga Treespeaker", 2],
+    ["Wirewood Symbiote", 2],
+    ["Lys Alana Huntmaster", 2],
+    ["Ezuri, Renegade Leader", 2],
+    ["Craterhoof Behemoth", 2],
+    ["Collected Company", 4],
+    ["Glimpse of Nature", 2],
+    ["Cavern of Souls", 2],
+    ["Gilt-Leaf Palace", 2],
+    ["Forest", 28],
+  ], {
+    description: "Mono-green elves. The shared deck is wall-to-wall mana dorks and lords — get there before the other player does.",
+    strategy: "Race. Whoever resolves their first lord (Elvish Archdruid) typically wins. Collected Company is a four-mana 'win the game' card if it hits two lords. Craterhoof Behemoth ends games. No counterspells — it's an aggro mirror.",
+    keyCards: ["Elvish Archdruid", "Collected Company", "Heritage Druid", "Craterhoof Behemoth"],
+  }),
+
+  // 7. Skelementals — your custom Jund aggro spec, scaled to 80
+  _mkDandanDeck("skelementals", "Skelementals", [
+    ["Flamekin Harbinger", 6],
+    ["Hellspark Elemental", 8],
+    ["Thunderkin Awakener", 6],
+    ["Ball Lightning", 6],
+    ["Lightning Skelemental", 6],
+    ["Emptiness", 4],
+    ["Fatal Push", 4],
+    ["Lightning Bolt", 4],
+    ["Unearth", 6],
+    ["Collected Company", 4],
+    ["Bloodstained Mire", 2],
+    ["Wooded Foothills", 2],
+    ["Blood Crypt", 2],
+    ["Stomping Ground", 2],
+    ["Ziatora's Proving Ground", 2],
+    ["Cavern of Souls", 2],
+    ["Snow-Covered Mountain", 8],
+    ["Snow-Covered Swamp", 4],
+    ["Snow-Covered Forest", 2],
+  ], {
+    description: "Jund aggro Dandân — a custom variant. The shared deck is loaded with one-shot Elementals (Hellspark Elemental, Ball Lightning, Lightning Skelemental) and reanimation effects (Unearth, Thunderkin Awakener) to use them again.",
+    strategy: "Hit fast, hit twice. Hellspark and Ball Lightning hit for 3-6 then die — Unearth and Thunderkin Awakener bring them back from the shared graveyard for another swing. Flamekin Harbinger searches the shared library, which is huge in this format because what you tutor is what your OPPONENT might draw next.",
+    keyCards: ["Lightning Skelemental", "Thunderkin Awakener", "Unearth", "Collected Company"],
+  }),
+
+  // 8. Ichorid (LV MTG)
+  _mkDandanDeck("ichorid", "Ichorid", [
+    ["Ichorid", 18],
+    ["Unburial Rites", 4],
+    ["Darkblast", 2],
+    ["Fade from Memory", 4],
+    ["Funeral Charm", 4],
+    ["Gods Willing", 4],
+    ["Gravepurge", 4],
+    ["Lapse of Certainty", 8],
+    ["Caves of Koilos", 4],
+    ["Drifting Meadow", 2],
+    ["Polluted Mire", 2],
+    ["Swamp", 22],
+    ["Tainted Field", 2],
+  ], {
+    description: "Black Dandân variant by LV MTG. 18 copies of Ichorid as the haste-y win condition; lower life totals and faster pace than classic Forgetful Fish.",
+    strategy: "Mill and reanimate. Self-mill with Darkblast and Funeral Charm to fill the shared graveyard with Ichorid, then return them with their built-in dredge-style ability. Lapse of Certainty is the white Memory Lapse.",
+    keyCards: ["Ichorid", "Lapse of Certainty", "Unburial Rites", "Darkblast"],
+  }),
+
+  // 9. Forgetful Ship (Tagazok2012)
+  _mkDandanDeck("forgetful_ship", "Forgetful Ship", [
+    ["Phoenix Fleet Airship", 8],
+    ["Bile Blight", 4],
+    ["Deadly Dispute", 4],
+    ["Eviscerator's Insight", 4],
+    ["Beacon of Unrest", 1],
+    ["Curse of the Cabal", 1],
+    ["Hellish Sideswipe", 6],
+    ["Lost Hours", 4],
+    ["Painful Memories", 4],
+    ["Scrounge", 4],
+    ["Ichor Wellspring", 4],
+    ["Planar Atlas", 4],
+    ["Barren Moor", 2],
+    ["Buried Ruin", 2],
+    ["Midgar, City of Mako", 2],
+    ["Polluted Mire", 2],
+    ["Swamp", 22],
+    ["Zhalfirin Void", 2],
+  ], {
+    description: "Black artifact-sacrifice variant by u/Tagazok2012. Built around Phoenix Fleet Airship as the shared deck's centerpiece.",
+    strategy: "Sacrifice synergies. Hellish Sideswipe and Deadly Dispute let you cash in artifacts for value AND make Airship copies. Painful Memories is brutal in a shared-deck format — they discard from THEIR hand but the deck itself is yours too.",
+    keyCards: ["Phoenix Fleet Airship", "Hellish Sideswipe", "Deadly Dispute", "Painful Memories"],
+  }),
+
+  // 10. Gingerbread (electricbaba)
+  _mkDandanDeck("gingerbread", "Gingerbread", [
+    ["Academy Manufactor", 2],
+    ["Caustic Caterpillar", 2],
+    ["Dockside Chef", 4],
+    ["Feasting Troll King", 2],
+    ["Fierce Witchstalker", 2],
+    ["Gilded Goose", 4],
+    ["Gingerbrute", 2],
+    ["Green Slime", 2],
+    ["Gyome, Master Chef", 2],
+    ["Royal Assassin", 2],
+    ["Taunting Elf", 2],
+    ["Tireless Provisioner", 2],
+    ["Bake into a Pie", 2],
+    ["Crop Rotation", 2],
+    ["Dash Hopes", 2],
+    ["Fell the Pheasant", 2],
+    ["Poison the Cup", 2],
+    ["Bala Ged Recovery", 2],
+    ["Giant Opportunity", 2],
+    ["Mire's Toll", 2],
+    ["Pest Infestation", 2],
+    ["Taste of Death", 2],
+    ["Booby Trap", 2],
+    ["Golden Egg", 2],
+    ["The Underworld Cookbook", 4],
+    ["Trading Post", 4],
+    ["Witch's Oven", 2],
+    ["Fae Offering", 2],
+    ["Trail of Crumbs", 2],
+    ["Forest", 12],
+    ["Gingerbread Cabin", 8],
+    ["Haunted Mire", 4],
+    ["Jungle Hollow", 4],
+    ["Swamp", 10],
+  ], {
+    description: "Golgari Food variant by u/electricbaba. Special rules: Food tokens track life; first to 20 Food (or to make opponent run out) wins. Supports 2-4 players.",
+    strategy: "Make Food, eat Food. Gilded Goose, Witch's Oven, and Trail of Crumbs are token engines. Dockside Chef and Bake into a Pie convert anything into more Food. The lifegain becomes lifecount.",
+    keyCards: ["The Underworld Cookbook", "Gilded Goose", "Trading Post", "Feasting Troll King"],
+  }),
+
+  // 11. Top Deck (Sarusta)
+  _mkDandanDeck("top_deck", "Top Deck", [
+    ["Brainstorm", 8],
+    ["Memory Lapse", 8],
+    ["Predict", 6],
+    ["Swerve", 2],
+    ["Misdirection", 2],
+    ["Thunderous Wrath", 11],
+    ["Portent", 8],
+    ["Mishra's Bauble", 3],
+    ["Halimar Depths", 2],
+    ["Island", 8],
+    ["Izzet Boilerworks", 4],
+    ["Lonely Sandbar", 6],
+    ["Smoldering Crater", 4],
+    ["Temple of Epiphany", 8],
+  ], {
+    description: "Izzet miracles by u/Sarusta. The only listed variant with a non-creature win condition: Thunderous Wrath for its miracle cost (RR off the top of the deck).",
+    strategy: "Top-deck Thunderous Wrath for 5 damage off RR. Brainstorm, Portent, and Mishra's Bauble manipulate the top of the deck so you reveal Wrath at the right moment. Memory Lapse + Predict turn opponent's draws into your draws.",
+    keyCards: ["Thunderous Wrath", "Brainstorm", "Memory Lapse", "Mishra's Bauble"],
+  }),
+];
+
+// Backwards-compat: code that still references DANDAN_DECK gets the first
+// variant (Forgetful Fish classic) by default.
+const DANDAN_DECK = DANDAN_VARIANTS[0];
+
+// v7.6.4: in-memory cache of resolved Dandân variant cards. Keyed by
+// variant id. Populated lazily by resolveDandanVariant() the first time a
+// variant is touched.
+const _dandanResolvedCache = new Map();
+const _dandanResolvingNow = new Set();
+
+async function resolveDandanVariant(variantId){
+  const v = DANDAN_VARIANTS.find(x=>x.variantId===variantId);
+  if(!v) return null;
+  if(_dandanResolvedCache.has(variantId)){
+    return _dandanResolvedCache.get(variantId);
+  }
+  if(_dandanResolvingNow.has(variantId)){
+    // Already resolving — wait briefly and return whatever's in cache.
+    await new Promise(r=>setTimeout(r,200));
+    return _dandanResolvedCache.get(variantId) || v;
+  }
+  _dandanResolvingNow.add(variantId);
+  try {
+    const names = v.cards.map(c=>c.name);
+    const lookup = await sfCollection(names);
+    const resolvedCards = v.cards.map(stub => {
+      const card = lookup.get(stub.name.toLowerCase());
+      if(card){
+        return {
+          ...buildDeckEntry(card),
+          quantity: stub.quantity,
+        };
+      }
+      // Couldn't resolve — keep stub. User sees nameplate-only.
+      return stub;
+    });
+    const resolved = {
+      ...v,
+      cards: resolvedCards,
+    };
+    // Pick a sleeve from the first non-basic-land card image as a fallback.
+    if(!resolved.sleeveUri){
+      const firstWithImage = resolvedCards.find(c=>c.imageUri);
+      if(firstWithImage) resolved.sleeveUri = firstWithImage.imageUri;
+    }
+    _dandanResolvedCache.set(variantId, resolved);
+    // Pre-warm images for the resolved deck.
+    try { prefetchDeckImages(resolved, {priority:'low'}); } catch {}
+    return resolved;
+  } catch (e) {
+    console.warn('[resolveDandanVariant] failed', e);
+    return v;
+  } finally {
+    _dandanResolvingNow.delete(variantId);
+  }
+}
+
+// Synchronous accessor — returns the resolved deck if cached, else the stub.
+function getDandanVariant(variantId){
+  if(_dandanResolvedCache.has(variantId)){
+    return _dandanResolvedCache.get(variantId);
+  }
+  return DANDAN_VARIANTS.find(x=>x.variantId===variantId) || DANDAN_VARIANTS[0];
+}
+
+// Shared rules text — same for every variant, shown in the in-game info modal.
+const DANDAN_RULES = {
+  title: "Dandân — Shared-Deck Format",
+  intro: "Two players share a single 80-card library and graveyard. Hand, battlefield, exile, and command zones remain per-player. Created by Nick Floyd; popularized as 'Forgetful Fish'.",
+  rules: [
+    "Both players share ONE library (in the center of the play area) and ONE graveyard (also center).",
+    "Each player has their own hand, battlefield, exile, and life total (start at 20).",
+    "Mulligan: free first mulligan to prevent stall-outs.",
+    "Win conditions: reduce opponent to 0 life, or opponent cannot draw (deck out).",
+    "Card ownership: when you cast a card from the shared library, YOU control it. The card returns to the shared graveyard when it dies.",
+    "Dandân (the creature) cannot attack unless the DEFENDING player controls an Island. If you control no Islands, sacrifice your Dandân.",
+    "Memory Lapse counters a spell and puts it on top of the shared library. Whoever draws next sees it — usually the opponent.",
+    "All Magic rules otherwise apply. No sideboards. No bans, but silver-bordered cards are typically excluded.",
   ],
+  noteOnEnforcement: "Rules are enforced manually by the players — TCG Playsim does not auto-enforce the Island-attack restriction or any other Dandân-specific rule.",
+};
+
+
+// v7.6.4: gamemats are now solid-color gradients with vignette + faint
+// diagonal hatching, generated as inline CSS. No more stock photos.
+// Each preset has a name, an accent color (used elsewhere for ui glow),
+// and a base color. The `bg` is a multi-layer CSS background that creates
+// a vignette via radial gradient + faint diagonal lines via repeating-
+// linear-gradient + a base linear gradient for color depth.
+const _mkMatBg = (base, accent) => {
+  // Compose three layers: vignette → diagonal lines → base color gradient.
+  // CSS `background` accepts a comma-separated stack rendered top-down.
+  return [
+    // Vignette (darken edges)
+    `radial-gradient(ellipse at 50% 50%, transparent 35%, rgba(0,0,0,.55) 100%)`,
+    // Faint diagonal lines (1px @ 14px spacing)
+    `repeating-linear-gradient(135deg, ${accent}10 0px, ${accent}10 1px, transparent 1px, transparent 14px)`,
+    // Base color gradient — gives it depth, slightly lighter at top
+    `linear-gradient(170deg, ${base} 0%, color-mix(in srgb, ${base} 78%, #000) 100%)`,
+  ].join(", ");
 };
 
 const GAMEMATS=[
-  {name:"Deep Ocean",  url:"https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=1400&q=80", accent:"#3b82f6"},
-  {name:"Ancient Forest",url:"https://images.unsplash.com/photo-1448375240586-882707db888b?w=1400&q=80",accent:"#16a34a"},
-  {name:"Volcanic",    url:"https://images.unsplash.com/photo-1562016600-ece13e8ba570?w=1400&q=80",accent:"#ef4444"},
-  {name:"Arcane Tower",url:"https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1400&q=80",accent:"#a855f7"},
-  {name:"Desert Ruins",url:"https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1400&q=80",accent:"#d97706"},
-  {name:"Starfield",   url:"https://images.unsplash.com/photo-1462331940025-496dfbfc7564?w=1400&q=80",accent:"#8b5cf6"},
-  {name:"Mountain Pass",url:"https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1400&q=80",accent:"#60a5fa"},
-  {name:"Swamp",       url:"https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1400&q=80",accent:"#22c55e"},
-].map(g=>({...g,bg:`url(${g.url}) center/cover no-repeat`})).concat([{name:"Custom",bg:null,url:null,accent:"#c8a870"}]);
+  {name:"Deep Ocean",     base:"#0c2240",  accent:"#3b82f6"},
+  {name:"Ancient Forest", base:"#0e2a18",  accent:"#16a34a"},
+  {name:"Volcanic",       base:"#2a0a0a",  accent:"#ef4444"},
+  {name:"Arcane Tower",   base:"#1a0f2a",  accent:"#a855f7"},
+  {name:"Starfield",      base:"#0a0a1f",  accent:"#8b5cf6"},
+  {name:"Mountain Pass",  base:"#142235",  accent:"#60a5fa"},
+  {name:"Swamp",          base:"#13201a",  accent:"#22c55e"},
+  {name:"Obsidian",       base:"#0a0d12",  accent:"#94a3b8"},
+  {name:"Wine Cellar",    base:"#251020",  accent:"#e11d48"},
+  {name:"Old Parchment",  base:"#2a2010",  accent:"#c8a870"},
+].map(g=>({...g,url:null,bg:_mkMatBg(g.base, g.accent)})).concat([{name:"Custom",bg:null,url:null,base:null,accent:"#c8a870"}]);
 const AVATARS=["🧙","⚔️","🐉","🌙","⚡","🔮","🗡️","🛡️","🌊","🔥","🌿","💀","🦅","🎭","✨","🪄","🌸","🏔️","🦁","🐺","🦋","🌑","⭐","🌺"];
 
 /* ─── All MTG counter types ───────────────────────────────────────── */
@@ -1302,8 +1769,10 @@ const T = {
   bg:       '#050a12',
   panel:    '#080f1c',
   border:   '#1e3a5f',
-  accent:   '#c8a870',
+  accent:   '${T.accent}',
+  accentRgb:'200,168,112',
   text:     '#d4c5a0',
+  muted:    '#6a7a8a',
   headerBg: 'linear-gradient(180deg,#080f1c,#050a12)',
   panelTex: '',
 };
@@ -1313,11 +1782,9 @@ const WEATHER_OPTIONS = [
   { id:"none",       name:"Clear",       icon:"☀️" },
   { id:"rain",       name:"Rain",        icon:"🌧️" },
   { id:"snow",       name:"Snow",        icon:"❄️" },
-  { id:"heat",       name:"Desert Heat", icon:"🌵" },
   { id:"stars",      name:"Starfield",   icon:"✨" },
   { id:"fireflies",  name:"Fireflies",   icon:"🪲" },
   { id:"embers",     name:"Embers",      icon:"🔥" },
-  { id:"aurora",     name:"Aurora",      icon:"🌌" },
 ];
 
 
@@ -1504,8 +1971,16 @@ function prefetchDeckImages(deck, {priority='low'}={}){
   }
 }
 
-const getStartingLife=(format)=>format==="commander"?40:format==="dandan"?20:20;
-const initPlayer=(deck,profile,life=20)=>({
+const getStartingLife=(format)=>format==="commander"?40:format==="oathbreaker"?20:format==="dandan"?20:20;
+const initPlayer=(deck,profile,life=20)=>{
+  // v7.6.4: sleeve priority — deck.sleeveUri > profile.sleeveUri > null.
+  // The deck object passed in is the source of truth for the in-game cardback,
+  // so we mutate it (in this seat's local copy) to the resolved value.
+  const resolvedDeck = deck ? {
+    ...deck,
+    sleeveUri: deck.sleeveUri || profile?.sleeveUri || null,
+  } : deck;
+  return {
   profile:(()=>{
     const base = profile||{alias:"Player",avatar:"🧙",gamemat:GAMEMATS[0].bg,gamematCustom:""};
     // v7.6.1: if the deck has its own playmat, use it (but don't overwrite profile object).
@@ -1514,12 +1989,13 @@ const initPlayer=(deck,profile,life=20)=>({
     if(deck?.playmatUri) return {...base, gamemat: `url(${deck.playmatUri}) center/cover no-repeat`, gamematCustom: deck.playmatUri};
     return base;
   })(),
-  deck,
-  library:shuffleArr((deck?.cards||[]).flatMap(c=>Array.from({length:c.quantity},()=>mkCard(c,"library")))),
+  deck: resolvedDeck,
+  library:shuffleArr((resolvedDeck?.cards||[]).flatMap(c=>Array.from({length:c.quantity},()=>mkCard(c,"library")))),
   hand:[],battlefield:[],graveyard:[],exile:[],
-  command:(deck?.commanders||[]).map(c=>mkCard({...c,castCount:0,isCommander:true},"command")).concat(deck?.commander&&!(deck?.commanders?.length)?[mkCard({...deck.commander,castCount:0,isCommander:true},"command")]:[]),
+  command:(resolvedDeck?.commanders||[]).map(c=>mkCard({...c,castCount:0,isCommander:true},"command")).concat(resolvedDeck?.commander&&!(resolvedDeck?.commanders?.length)?[mkCard({...resolvedDeck.commander,castCount:0,isCommander:true},"command")]:[]),
   life,poison:0,energy:0,commanderDamage:{},revealTop:false,revealTopOnce:null,log:[],
-});
+  };
+};
 
 /* ─── v7.6.3 Slim broadcast + hydration ────────────────────────────────
    The full state carries fully-hydrated card objects for every seat's
@@ -1737,6 +2213,27 @@ const applyRemoteStateFull = (remote, current, mySeat) => {
       if (i === mySeat && current.players[i]) out[i] = current.players[i];
       else out[i] = hydrated.players[i] || current.players[i] || null;
     }
+    // v7.6.4: Dandân — sync shared library/graveyard across all seats.
+    // Take the shared zones from the most-up-to-date source (any non-self seat)
+    // and mirror onto every seat (including ours).
+    if (current.gamemode === 'dandan' || remote.gamemode === 'dandan') {
+      // Pick a donor seat: prefer a non-self seat from hydrated.
+      let donor = null;
+      for (let i = 0; i < out.length; i++) {
+        if (i !== mySeat && hydrated.players[i]) { donor = hydrated.players[i]; break; }
+      }
+      // Fall back to ours if we're alone.
+      if (!donor && current.players[mySeat]) donor = current.players[mySeat];
+      if (donor) {
+        const sharedLib = donor.library;
+        const sharedGrave = donor.graveyard;
+        for (let i = 0; i < out.length; i++) {
+          if (!out[i]) continue;
+          if (out[i].library === sharedLib && out[i].graveyard === sharedGrave) continue;
+          out[i] = { ...out[i], library: sharedLib, graveyard: sharedGrave };
+        }
+      }
+    }
     merged.players = out;
   }
   return merged;
@@ -1783,6 +2280,22 @@ const applyRemoteStateBySeat = (remote, current, mySeat, fromSeat) => {
   const players = Array.isArray(current.players) ? current.players.slice() : [];
   players[fromSeat] = hydratedSeat;
 
+  // v7.6.4: Dandân — library and graveyard are SHARED across all seats. The
+  // sender mirrored their library/graveyard onto every seat in their broadcast,
+  // but the per-seat patch above only updated `players[fromSeat]`. Copy the
+  // shared zones from the freshly-hydrated sender seat onto every other seat
+  // (including OUR own) so the shared-deck and shared-graveyard counts stay in
+  // sync everywhere. Hand/battlefield/exile/command/life remain per-player.
+  if ((current.gamemode === 'dandan' || remote.gamemode === 'dandan') && hydratedSeat) {
+    const sharedLib   = hydratedSeat.library;
+    const sharedGrave = hydratedSeat.graveyard;
+    for (let i = 0; i < players.length; i++) {
+      if (i === fromSeat || !players[i]) continue;
+      if (players[i].library === sharedLib && players[i].graveyard === sharedGrave) continue;
+      players[i] = { ...players[i], library: sharedLib, graveyard: sharedGrave };
+    }
+  }
+
   // Top-level: spread remote (gets phase/turn/activePlayer/stack and any
   // other shared session field), then override with strictly-local fields
   // from current. `players` is replaced last with our per-seat-patched array.
@@ -1825,14 +2338,40 @@ const btn=(bg,color="white",ex={})=>({
   cursor:"pointer",fontSize:11,fontFamily:"Cinzel, serif",letterSpacing:"0.05em",
   transition:"filter .12s,transform .1s,box-shadow .15s",flexShrink:0,...ex
 });
-const iS={display:"block",width:"100%",padding:"7px 10px",background:"rgba(5,10,18,.8)",
-  border:"1px solid #1e3a5f",color:"#d4c5a0",borderRadius:5,fontSize:12,
-  fontFamily:"Crimson Text, serif",marginTop:3,transition:"border-color .15s,box-shadow .15s"};
+// v7.6.4: input style — theme-aware via Object property accessors so colors
+// update at render-read time instead of being baked at module-load time.
+const _iSDynamic = (prop) => {
+  if (prop === "border") return `1px solid ${T.border}`;
+  if (prop === "color")  return T.text;
+  return undefined;
+};
+const iS = new Proxy({
+  display:"block",width:"100%",padding:"7px 10px",background:"rgba(5,10,18,.8)",
+  borderRadius:5,fontSize:12,
+  fontFamily:"Crimson Text, serif",marginTop:3,transition:"border-color .15s,box-shadow .15s",
+}, {
+  get(target, prop){
+    const dyn = _iSDynamic(prop);
+    if (dyn !== undefined) return dyn;
+    return target[prop];
+  },
+  // For the spread operator { ...iS } to work: we need ownKeys to include
+  // border and color so they're enumerated.
+  ownKeys(target){
+    return [...Object.keys(target), "border", "color"];
+  },
+  getOwnPropertyDescriptor(target, prop){
+    if (prop === "border" || prop === "color") {
+      return { enumerable: true, configurable: true, writable: false, value: _iSDynamic(prop) };
+    }
+    return Object.getOwnPropertyDescriptor(target, prop);
+  },
+});
 const hov=e=>{e.currentTarget.style.filter="brightness(1.4)";e.currentTarget.style.transform="translateY(-1px)";};
 const uhov=e=>{e.currentTarget.style.filter="none";e.currentTarget.style.transform="none";};
 
 /* ─── Particle burst ───────────────────────────────────────────────── */
-function SparkBurst({x,y,color="#c8a870",count=12,onDone}){
+function SparkBurst({x,y,color=`${T.accent}`,count=12,onDone}){
   const [alive,setAlive]=useState(true);
   useEffect(()=>{const t=setTimeout(()=>{setAlive(false);onDone&&onDone();},700);return()=>clearTimeout(t);},[]);
   if(!alive)return null;
@@ -1955,7 +2494,7 @@ function LifeCounter({life,prevLife,onChange}){
         <div onClick={()=>{setInput(String(life));setEditing(true);}} className={glowCls}
           style={{minWidth:38,textAlign:"center",cursor:"pointer",position:"relative",
             animation:flash==="gain"?"lifeFlash .5s ease":flash==="lose"?"lifeFlash .5s ease":undefined}}>
-          <div style={{fontSize:7,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".1em",marginBottom:1}}>LIFE</div>
+          <div style={{fontSize:7,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".1em",marginBottom:1}}>LIFE</div>
           <div style={{fontSize:20,fontFamily:"Cinzel Decorative, serif",color,lineHeight:1,
             textShadow:life<=5?`0 0 20px #f87171`:`0 0 10px ${color}50`}}>
             {life}
@@ -1972,6 +2511,135 @@ function LifeCounter({life,prevLife,onChange}){
       <button onClick={()=>onChange(life+1)}
         style={{...btn("rgba(74,222,128,.12)","#4ade80",{padding:"2px 7px",fontSize:14,borderRadius:"50%",width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center"}),border:"1px solid rgba(74,222,128,.3)"}}
         onMouseOver={hov} onMouseOut={uhov}>+</button>
+    </div>
+  );
+}
+
+/* ─── v7.6.4 HandLifeCounter ─────────────────────────────────────────────
+   Big circular life total overlaid on the local player's hand area, or
+   on each opponent's hand strip. Pulsing radial-gradient elliptic glow.
+   - Local: position:fixed bottom-center, hooked to arrow-up/down keys.
+   - Opp:   position:fixed top-center (per-opponent x offset), read-only.
+   Click the number to type a new life total directly.
+*/
+function HandLifeCounter({life, prevLife, onChange, position="bottom", side=0, size=64, alias, readOnly=false}){
+  const [editing,setEditing]=useState(false);
+  const [input,setInput]=useState("");
+  const [flash,setFlash]=useState(null);
+  const prevRef=useRef(life);
+
+  useEffect(()=>{
+    if(prevRef.current!==life){
+      const delta=life-prevRef.current;
+      setFlash(delta>0?"gain":"lose");
+      const tm = setTimeout(()=>setFlash(null),700);
+      prevRef.current=life;
+      return () => clearTimeout(tm);
+    }
+  },[life]);
+
+  const color = life<=5?"#f87171" : life<=10?"#fbbf24" : life<=15?"#e8e2d0" : `${T.accent}`;
+  // Local-player keyboard: arrow up/down ±1
+  useEffect(()=>{
+    if(readOnly || !onChange) return;
+    const onKey = (e) => {
+      // Don't fire when user is typing in inputs
+      const tag = document.activeElement?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+      if (e.key === "ArrowUp") { e.preventDefault(); onChange(life + 1); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); onChange(life - 1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  },[life, onChange, readOnly]);
+
+  // Position: bottom for local, top for opp.
+  const posStyle = position === "bottom"
+    ? { bottom: 6, left: "50%", transform: "translateX(-50%)" }
+    : { top: 142, left: `${50 + side * 22}%`, transform: "translateX(-50%)" }; // top sits below the OppHandStrip strip (~96+50=146px)
+
+  return (
+    <div style={{
+      position: "fixed",
+      ...posStyle,
+      zIndex: 9100,
+      pointerEvents: "none",
+      width: size + 40, height: size + 40,
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      {/* Pulsing radial gradient backdrop */}
+      <div style={{
+        position: "absolute", inset: 0, borderRadius: "50%",
+        background: `radial-gradient(ellipse at center, ${color}25 0%, ${color}12 30%, transparent 70%)`,
+        animation: "lifePulseGlow 2.4s ease-in-out infinite",
+        pointerEvents: "none",
+      }}/>
+      {/* The counter itself */}
+      <div onClick={readOnly?undefined:()=>{ if(onChange){ setInput(String(life)); setEditing(true); } }}
+        style={{
+          position: "relative",
+          width: size, height: size, borderRadius: "50%",
+          background: `radial-gradient(ellipse at 30% 25%, ${color}33, ${color}11 60%, rgba(0,0,0,.6) 100%)`,
+          border: `2px solid ${color}`,
+          boxShadow: `0 0 18px ${color}55, inset 0 0 12px ${color}33`,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          cursor: readOnly?"default":"pointer",
+          fontFamily: "Cinzel Decorative, serif",
+          color: color,
+          textShadow: `0 0 14px ${color}80, 0 1px 4px rgba(0,0,0,.95)`,
+          pointerEvents: "auto",
+          userSelect: "none",
+        }}
+        title={readOnly ? `${alias || "Opponent"} — ${life} life` : "Click to set life · ↑/↓ to ±1"}>
+        {alias && readOnly && (
+          <div style={{
+            position:"absolute", top: -16, left:"50%", transform:"translateX(-50%)",
+            fontSize: 9, fontFamily:"Cinzel, serif", color: "#c0bcd0",
+            letterSpacing: ".1em", textShadow:"0 1px 4px rgba(0,0,0,.95)",
+            whiteSpace:"nowrap",
+          }}>
+            {alias}
+          </div>
+        )}
+        {editing ? (
+          <input autoFocus value={input}
+            onChange={e=>setInput(e.target.value)}
+            onClick={e=>e.stopPropagation()}
+            onBlur={()=>{const v=parseInt(input);if(!isNaN(v))onChange(v);setEditing(false);}}
+            onKeyDown={e=>{
+              if(e.key==="Enter"){const v=parseInt(input);if(!isNaN(v))onChange(v);setEditing(false);}
+              if(e.key==="Escape")setEditing(false);
+            }}
+            style={{
+              width: size-16, fontSize: size*0.36, textAlign:"center",
+              fontFamily:"Cinzel Decorative, serif", color: color,
+              background: "transparent", border:`1px solid ${color}`, borderRadius: 4,
+              padding: 0, outline: "none",
+            }}/>
+        ) : (
+          <div style={{ fontSize: size*0.42, lineHeight: 1, fontWeight: 700 }}>{life}</div>
+        )}
+        {/* Flash overlay */}
+        {flash && (
+          <div style={{
+            position:"absolute", inset:0, borderRadius:"50%",
+            background: flash==="gain" ? "rgba(74,222,128,.18)" : "rgba(248,113,113,.22)",
+            animation: "lifeFlash .6s ease",
+            pointerEvents:"none",
+          }}/>
+        )}
+        {flash && (
+          <div style={{
+            position:"absolute", top: -22, left:"50%", transform:"translateX(-50%)",
+            fontSize: 14, color: flash==="gain" ? "#4ade80" : "#f87171",
+            fontFamily:"Cinzel Decorative, serif", fontWeight: 700,
+            animation:"slideUp .6s ease forwards", pointerEvents:"none",
+            textShadow:"0 0 8px currentColor",
+          }}>
+            {flash==="gain"?"+":"−"}{Math.abs(life - prevRef.current)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2301,43 +2969,64 @@ function ThemePicker({current,weather,onTheme,onWeather,onClose}){
         width:640,maxHeight:"85vh",overflowY:"auto",
         boxShadow:"0 24px 80px rgba(0,0,0,.95)",position:"relative"}}>
         <div style={{position:"absolute",top:0,left:0,right:0,height:2,
-          background:"linear-gradient(90deg,transparent,#c8a870,transparent)"}}/>
+          background:`linear-gradient(90deg,transparent,${T.accent},transparent)`}}/>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
           <h3 style={{color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:14,margin:0}}>🎨 Themes & Weather</h3>
-          <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+          <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
         </div>
         {/* Themes */}
-        <div style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:10}}>UI Theme</div>
+        <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:10}}>UI Theme</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:8,marginBottom:22}}>
-          {THEMES.map(t=>(
-            <button key={t.id} onClick={()=>onTheme(t)}
-              style={{
-                background:T.headerBg||T.bg,
-                border:`2px solid ${current.id===t.id?T.accent:"rgba(255,255,255,.08)"}`,
-                borderRadius:8,padding:"10px 8px",cursor:"pointer",
-                transition:"all .15s",color:T.accent,
-                fontFamily:"Cinzel, serif",fontSize:10,letterSpacing:".05em",
-                boxShadow:current.id===t.id?`0 0 16px ${T.accent}40`:"none",
-                transform:current.id===t.id?"scale(1.04)":"scale(1)",
-              }}
-              onMouseOver={e=>{e.currentTarget.style.transform="scale(1.06)";e.currentTarget.style.boxShadow=`0 0 12px ${T.accent}30`;}}
-              onMouseOut={e=>{e.currentTarget.style.transform=current.id===t.id?"scale(1.04)":"scale(1)";e.currentTarget.style.boxShadow=current.id===t.id?`0 0 16px ${T.accent}40`:"none";}}>
-              <div style={{fontSize:18,marginBottom:4}}>
-                {t.id==="default"?"🔮":t.id==="ravnica"?"🏙️":t.id==="zendikar"?"🌿":t.id==="innistrad"?"🌙":t.id==="theros"?"☀️":t.id==="ixalan"?"🌊":t.id==="eldraine"?"🏰":t.id==="kamigawa"?"🎋":t.id==="phyrexia"?"⚙️":t.id==="mirrodin"?"🔩":t.id==="amonkhet"?"🏺":t.id==="tarkir"?"🐲":"🌟"}
-              </div>
-              {t.name}
-            </button>
-          ))}
+          {THEMES.map(t=>{
+            // v7.6.4: icon mapping uses actual theme IDs from the THEMES
+            // array (not stale IDs from a previous theme set).
+            const themeIcon = {
+              default:   "🔮",
+              stone:     "⛰️",
+              cobble:    "🧱",
+              wood:      "🪵",
+              forest:    "🌿",
+              parchment: "📜",
+              ocean:     "🌊",
+              volcanic:  "🌋",
+              arcane:    "✨",
+              theros:    "☀️",
+              ice:       "❄️",
+              bone:      "💀",
+            }[t.id] || "🌟";
+            const isSelected = current.id === t.id;
+            // v7.6.4: use the THEME'S OWN colors for its preview tile so
+            // each theme's button visually previews what it'll look like.
+            // Previously every tile used T (the active theme), so they all
+            // looked identical and clicking felt like nothing changed.
+            return (
+              <button key={t.id} onClick={()=>onTheme(t)}
+                style={{
+                  background: t.headerBg || t.bg || t.panel,
+                  border: `2px solid ${isSelected ? t.accent : "rgba(255,255,255,.08)"}`,
+                  borderRadius: 8, padding: "10px 8px", cursor: "pointer",
+                  transition: "all .15s", color: t.accent,
+                  fontFamily: "Cinzel, serif", fontSize: 10, letterSpacing: ".05em",
+                  boxShadow: isSelected ? `0 0 16px ${t.accent}60` : "none",
+                  transform: isSelected ? "scale(1.04)" : "scale(1)",
+                }}
+                onMouseOver={e=>{e.currentTarget.style.transform="scale(1.06)";e.currentTarget.style.boxShadow=`0 0 12px ${t.accent}40`;}}
+                onMouseOut={e=>{e.currentTarget.style.transform=isSelected?"scale(1.04)":"scale(1)";e.currentTarget.style.boxShadow=isSelected?`0 0 16px ${t.accent}60`:"none";}}>
+                <div style={{fontSize:18,marginBottom:4}}>{themeIcon}</div>
+                {t.name}
+              </button>
+            );
+          })}
         </div>
         {/* Weather */}
-        <div style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:10}}>Weather Effect</div>
+        <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:10}}>Weather Effect</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
           {WEATHER_OPTIONS.map(w=>(
             <button key={w.id} onClick={()=>onWeather(w.id)}
               style={{
                 ...btn(weather===w.id?`${T.accent}26`:"rgba(8,15,28,.7)",
-                  weather===w.id?T.accent:"#6a7a8a",
-                  {border:`1px solid ${weather===w.id?"rgba(200,168,112,.4)":"#1e3a5f20"}`,
+                  weather===w.id?T.accent:T.muted,
+                  {border:`1px solid ${weather===w.id?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,
                   padding:"8px 14px",fontSize:11,gap:6,display:"flex",alignItems:"center",
                   boxShadow:weather===w.id?"0 0 12px rgba(200,168,112,.2)":"none"}),
               }}
@@ -2364,15 +3053,15 @@ function CounterPicker({card, onAdd, onClose}){
         border:`1px solid ${T.accent}50`,borderRadius:12,padding:22,
         width:480,maxHeight:"82vh",overflowY:"auto",
         boxShadow:"0 24px 80px rgba(0,0,0,.95)",position:"relative"}}>
-        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"linear-gradient(90deg,transparent,#c8a870,transparent)"}}/>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${T.accent},transparent)`}}/>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
           <h3 style={{color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:13,margin:0}}>◈ Counters — {card.name}</h3>
-          <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+          <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
         </div>
         {/* Current counters */}
         {Object.entries(card.counters||{}).filter(([,v])=>v!==0).length>0&&(
           <div style={{marginBottom:14,padding:"8px 10px",background:`${T.bg}99`,borderRadius:6,border:`1px solid ${T.border}20`}}>
-            <div style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".12em",marginBottom:6}}>CURRENT COUNTERS</div>
+            <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".12em",marginBottom:6}}>CURRENT COUNTERS</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
               {Object.entries(card.counters||{}).filter(([,v])=>v!==0).map(([k,v])=>{
                 const ct=COUNTER_TYPES.find(c=>c.key===k)||{color:T.accent};
@@ -2393,7 +3082,7 @@ function CounterPicker({card, onAdd, onClose}){
         {/* Counter groups */}
         {Object.entries(groups).map(([group,types])=>(
           <div key={group} style={{marginBottom:12}}>
-            <div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:5,borderBottom:`1px solid ${T.border}20`,paddingBottom:3}}>{group}</div>
+            <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:5,borderBottom:`1px solid ${T.border}20`,paddingBottom:3}}>{group}</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
               {types.map(ct=>(
                 <div key={ct.key} style={{display:"flex",alignItems:"center",gap:0,borderRadius:5,
@@ -2446,13 +3135,13 @@ function PlanechasePanel({active, onPlaneswalk, onChaos, onClose}){
       border:`1px solid ${T.accent}60`,borderRadius:12,padding:16,
       width:320,boxShadow:"0 12px 48px rgba(0,0,0,.95),0 0 40px rgba(200,168,112,.05)"}}>
       <div style={{position:"absolute",top:0,left:0,right:0,height:2,
-        background:"linear-gradient(90deg,transparent,#c8a870,transparent)"}}/>
+        background:`linear-gradient(90deg,transparent,${T.accent},transparent)`}}/>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
         <div style={{fontSize:9,color:T.accent,fontFamily:"Cinzel, serif",letterSpacing:".15em"}}>🌌 PLANECHASE</div>
-        <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:13,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:13,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
       </div>
       <div style={{color:"#f0d080",fontFamily:"Cinzel Decorative, serif",fontSize:14,marginBottom:3}}>{plane.name}</div>
-      <div style={{fontSize:9,color:"#8a99b0",fontFamily:"Cinzel, serif",marginBottom:6}}>{plane.type}</div>
+      <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",marginBottom:6}}>{plane.type}</div>
       <div style={{fontSize:11,color:T.text,fontFamily:"Crimson Text, serif",lineHeight:1.6,marginBottom:10,
         fontStyle:"italic",padding:"8px 10px",background:"rgba(5,10,18,.5)",borderRadius:5,
         border:"1px solid rgba(200,168,112,.1)"}}>{plane.text}</div>
@@ -2462,17 +3151,17 @@ function PlanechasePanel({active, onPlaneswalk, onChaos, onClose}){
       {dieResult&&(
         <div style={{textAlign:"center",marginBottom:8,padding:"6px",borderRadius:5,
           background:dieResult==="planeswalk"?`${T.accent}26`:dieResult==="chaos"?"rgba(249,115,22,.15)":"rgba(10,22,40,.5)",
-          border:`1px solid ${dieResult==="planeswalk"?"rgba(200,168,112,.3)":dieResult==="chaos"?"rgba(249,115,22,.3)":"#1e3a5f20"}`,
+          border:`1px solid ${dieResult==="planeswalk"?"rgba(${T.accentRgb},.3)":dieResult==="chaos"?"rgba(249,115,22,.3)":"${T.border}20"}`,
           animation:"slideIn .2s ease"}}>
           <span style={{fontSize:13,fontFamily:"Cinzel, serif",
-            color:dieResult==="planeswalk"?T.accent:dieResult==="chaos"?"#f97316":"#6a7a8a"}}>
+            color:dieResult==="planeswalk"?T.accent:dieResult==="chaos"?"#f97316":T.muted}}>
             {dieResult==="planeswalk"?"🌀 Planeswalk!":dieResult==="chaos"?"⚡ Chaos!":"⬛ Blank"}
           </span>
         </div>
       )}
       <div style={{display:"flex",gap:6}}>
         <button onClick={rollPlanarDie} disabled={rolling}
-          style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700,opacity:rolling?.7:1})}}
+          style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700,opacity:rolling?.7:1})}}
           onMouseOver={hov} onMouseOut={uhov}>{rolling?"🎲 Rolling…":"🎲 Roll Planar Die"}</button>
         <button onClick={onPlaneswalk}
           style={{...btn(`${T.accent}14`,T.accent,{flex:1,border:`1px solid ${T.accent}40`,fontSize:10})}}
@@ -2600,8 +3289,8 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
           <span style={{fontSize:8,opacity:.6}}>{isOpen?"▼":"▲"}</span>
         </button>
         <button onClick={onToggleLog}
-          style={{...btn(showLog?`${T.accent}20`:`${T.panel}f2`,showLog?T.accent:"#6a7a8a",{
-            border:`1px solid ${showLog?"rgba(200,168,112,.3)":"#1e3a5f20"}`,borderRadius:showLog?"8px 8px 0 0":"8px",
+          style={{...btn(showLog?`${T.accent}20`:`${T.panel}f2`,showLog?T.accent:T.muted,{
+            border:`1px solid ${showLog?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,borderRadius:showLog?"8px 8px 0 0":"8px",
             padding:"6px 10px",fontSize:10,fontFamily:"Cinzel, serif"}),
           }}
           onMouseOver={hov} onMouseOut={uhov}>📜</button>
@@ -2621,7 +3310,7 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
                 {!m.system&&<div style={{fontSize:8,color:T.accent,fontFamily:"Cinzel, serif",marginBottom:2}}>
                   {m.avatar} {m.sender}
                 </div>}
-                <div style={{fontSize:11,color:m.system?"#3a5a7a":T.text,fontFamily:"Crimson Text, serif",lineHeight:1.4,
+                <div style={{fontSize:11,color:m.system?T.muted:T.text,fontFamily:"Crimson Text, serif",lineHeight:1.4,
                   fontStyle:m.system?"italic":"normal"}}>{m.text}</div>
               </div>
             ))}
@@ -2669,7 +3358,7 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
           <div style={{fontSize:7,color:T.accent,fontFamily:"Cinzel,serif",letterSpacing:".12em",marginBottom:4}}>📜 GAME LOG</div>
           {(!combinedLog||combinedLog.length===0)&&<div style={{fontSize:8,color:"#2a3a5a",fontStyle:"italic"}}>No events yet</div>}
           {(combinedLog||[]).map((e,i)=>(
-            <div key={i} style={{fontSize:8,color:i===0?T.accent:"#3a5a7a",padding:"1px 0",borderBottom:"1px solid #0d1f3c15",lineHeight:1.4}}>{e}</div>
+            <div key={i} style={{fontSize:8,color:i===0?T.accent:T.muted,padding:"1px 0",borderBottom:"1px solid #0d1f3c15",lineHeight:1.4}}>{e}</div>
           ))}
         </div>
       )}
@@ -2686,19 +3375,19 @@ function RevealHandModal({hand,playerName,onClose}){
         background:`linear-gradient(160deg,${T.panel},${T.bg})`,
         border:`1px solid ${T.accent}50`,borderRadius:12,padding:22,
         maxWidth:560,boxShadow:"0 24px 80px rgba(0,0,0,.95)",position:"relative"}}>
-        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"linear-gradient(90deg,transparent,#c8a870,transparent)"}}/>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${T.accent},transparent)`}}/>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
           <h3 style={{color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:13,margin:0}}>👁 {playerName}'s Hand</h3>
-          <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+          <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
         </div>
         {hand.length===0?(
-          <div style={{color:"#3a5a7a",fontFamily:"Cinzel, serif",fontSize:11,textAlign:"center",padding:20}}>Empty hand</div>
+          <div style={{color: T.muted,fontFamily:"Cinzel, serif",fontSize:11,textAlign:"center",padding:20}}>Empty hand</div>
         ):(
           <div style={{display:"flex",flexWrap:"wrap",gap:6,justifyContent:"center",maxHeight:"70vh",overflowY:"auto"}}>
             {hand.map(card=>(
               <div key={card.iid}>
                 <CardImg card={card} size="md" noHover/>
-                <div style={{fontSize:8,color:"#8a99b0",textAlign:"center",marginTop:3,maxWidth:72,
+                <div style={{fontSize:8,color: T.muted,textAlign:"center",marginTop:3,maxWidth:72,
                   overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.name}</div>
               </div>
             ))}
@@ -2756,9 +3445,9 @@ function CardImg({card,tapped,faceDown,selected,size="md",onClick,onCtx,onHover,
           transform:flipping?"rotateY(90deg)":"rotateY(0deg)",
         }}>
           <div style={{width:"100%",height:"100%",borderRadius:6,overflow:"hidden",
-            border:selected?"2px solid #c8a870":card?.isClone?"2px solid #818cf8":card?.isToken?"2px solid #a855f7":isDFC?"1px solid #34d39980":"1px solid #2a3a5a",
+            border:selected?`2px solid ${T.accent}`:card?.isClone?"2px solid #818cf8":card?.isToken?"2px solid #a855f7":isDFC?"1px solid #34d39980":"1px solid #2a3a5a",
             boxShadow:selected
-              ?"0 0 0 1px #c8a870,0 0 20px #c8a87080,0 0 40px #c8a87030,0 8px 16px rgba(0,0,0,.8)"
+              ?`0 0 0 1px ${T.accent},0 0 20px ${T.accent}80,0 0 40px ${T.accent}30,0 8px 16px rgba(0,0,0,.8)`
               :hover&&!noHover
                 ?"0 0 0 1px #4a6a8a40,0 8px 20px rgba(0,0,0,.7),0 0 12px rgba(200,168,112,.1)"
                 :"0 3px 8px rgba(0,0,0,.7)",
@@ -2814,7 +3503,7 @@ function CardImg({card,tapped,faceDown,selected,size="md",onClick,onCtx,onHover,
           boxShadow:"0 0 6px #818cf870",pointerEvents:"none"}}>🪞</div>
       )}
       {card?.isCommander&&card?.zone==="battlefield"&&(
-        <div style={{position:"absolute",top:2,left:2,fontSize:9,background:"rgba(200,168,112,.9)",
+        <div style={{position:"absolute",top:2,left:2,fontSize:9,background:`rgba(${T.accentRgb},.9)`,
           color:"#050a12",padding:"0 3px",borderRadius:2,fontFamily:"Cinzel,serif",fontWeight:700,
           boxShadow:"0 0 6px rgba(200,168,112,.7)",pointerEvents:"none"}}>⚔</div>
       )}
@@ -2897,10 +3586,10 @@ function CardPreview({card}){
         </div>
       ):(
         <div style={{width:190,background:"linear-gradient(180deg,#0d1f3c,#080f1c)",
-          border:"1px solid #c8a870",borderRadius:12,padding:14,
+          border:`1px solid ${T.accent}`,borderRadius:12,padding:14,
           boxShadow:"0 12px 48px rgba(0,0,0,.95),0 0 30px rgba(200,168,112,.15)"}}>
           <div style={{fontSize:13,color:T.accent,fontFamily:"Cinzel, serif",marginBottom:5}}>{name}</div>
-          <div style={{fontSize:10,color:"#8a99b0",marginBottom:6}}>{typeLine}</div>
+          <div style={{fontSize:10,color: T.muted,marginBottom:6}}>{typeLine}</div>
           {oracleText&&
             <div style={{fontSize:11,color:T.text,fontStyle:"italic",lineHeight:1.6}}>{oracleText}</div>}
           {power&&<div style={{fontSize:12,color:T.accent,marginTop:8,textAlign:"right",fontFamily:"Cinzel, serif"}}>{power}/{toughness}</div>}
@@ -2927,13 +3616,13 @@ function ContextMenu({x,y,items,onClose}){
       minWidth:205,boxShadow:"0 16px 48px rgba(0,0,0,.95),0 0 0 1px rgba(200,168,112,.08)",
       overflow:"hidden",backdropFilter:"blur(4px)"}}>
       <div style={{position:"absolute",top:0,left:0,right:0,height:1,
-        background:"linear-gradient(90deg,transparent,#c8a87040,transparent)"}}/>
+        background:`linear-gradient(90deg,transparent,${T.accent}40,transparent)`}}/>
       {items.map((item,i)=>
         item==="---"?(
           <div key={i} style={{borderTop:`1px solid ${T.border}20`,margin:"3px 0",
-            borderImage:"linear-gradient(90deg,transparent,#c8a87030,transparent) 1"}}/>
+            borderImage:`linear-gradient(90deg,transparent,${T.accent}30,transparent) 1`}}/>
         ):item.header?(
-          <div key={i} style={{padding:"5px 12px 3px",fontSize:8,color:"#c8a87090",
+          <div key={i} style={{padding:"5px 12px 3px",fontSize:8,color:`${T.accent}90`,
             letterSpacing:".15em",fontFamily:"Cinzel, serif",textTransform:"uppercase"}}>{item.header}</div>
         ):(
           <div key={i} onClick={()=>{item.action();onClose();}}
@@ -2948,7 +3637,7 @@ function ContextMenu({x,y,items,onClose}){
         )
       )}
       <div style={{position:"absolute",bottom:0,left:0,right:0,height:1,
-        background:"linear-gradient(90deg,transparent,#c8a87020,transparent)"}}/>
+        background:`linear-gradient(90deg,transparent,${T.accent}20,transparent)`}}/>
     </div>
   );
 }
@@ -2960,7 +3649,7 @@ function ZonePanel({title,color,icon,cards,zone,onCtx,onDragStart,onHover,isOpen
   return(
     <div className="drop-target mtg-zone" data-zone={zone}
       style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
-        border:`1px solid ${isOpen?color+"30":"#1e3a5f20"}`,borderRadius:7,padding:"8px 10px",
+        border:`1px solid ${isOpen?color+"30":"${T.border}20"}`,borderRadius:7,padding:"8px 10px",
         transition:"border-color .2s"}}>
       <div style={{color,fontFamily:"Cinzel, serif",fontSize:9,marginBottom:4,
         display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",
@@ -3037,7 +3726,7 @@ function SearchCardRow({card,count,onAdd,onHover,onSetCommander}){
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:12,color:T.text,overflow:"hidden",textOverflow:"ellipsis",
           whiteSpace:"nowrap",fontFamily:"Cinzel, serif"}}>{card.name}</div>
-        <div style={{fontSize:9,color:"#4a6a8a",marginBottom:2}}>{card.type_line||card.typeLine}</div>
+        <div style={{fontSize:9,color: T.muted,marginBottom:2}}>{card.type_line||card.typeLine}</div>
         <ManaCost cost={card.mana_cost||card.manaCost}/>
       </div>
       {count>0&&<span style={{fontSize:9,color:T.accent,minWidth:16,fontFamily:"Cinzel, serif",
@@ -3107,7 +3796,7 @@ function DiceRoller(){
       )}
       {[6,20].map(n=>(
         <button key={n} onClick={()=>roll(n)}
-          style={{...btn(`${T.bg}cc`,"#8a99b0",{border:`1px solid ${T.border}`})}
+          style={{...btn(`${T.bg}cc`,T.text,{border:`1px solid ${T.border}`})}
           } onMouseOver={hov} onMouseOut={uhov}>d{n}</button>
       ))}
       <button onClick={coin} style={{...btn(`${T.bg}cc`,"#fbbf24",{border:"1px solid #fbbf2430",fontSize:13})}} onMouseOver={hov} onMouseOut={uhov}>🪙</button>
@@ -3189,12 +3878,12 @@ function TokenSearch({onCreate,onClose}){
         background:`linear-gradient(180deg,${T.panel},transparent)`,borderBottom:`1px solid ${T.accent}30`,flexShrink:0}}>
         {/* Tab switcher */}
         <button onClick={()=>{setTab("tokens");setQuery("");setResults([]);}}
-          style={{...btn(tab==="tokens"?`${T.accent}20`:"transparent",tab==="tokens"?T.accent:"#4a6a8a",
-            {border:`1px solid ${tab==="tokens"?"rgba(200,168,112,.4)":"#1e3a5f20"}`,fontSize:11,padding:"4px 12px"})}}
+          style={{...btn(tab==="tokens"?`${T.accent}20`:"transparent",tab==="tokens"?T.accent:T.muted,
+            {border:`1px solid ${tab==="tokens"?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,fontSize:11,padding:"4px 12px"})}}
           onMouseOver={hov} onMouseOut={uhov}>✦ Tokens</button>
         <button onClick={()=>{setTab("cards");setQuery("");setResults([]);}}
-          style={{...btn(tab==="cards"?`${T.accent}20`:"transparent",tab==="cards"?T.accent:"#4a6a8a",
-            {border:`1px solid ${tab==="cards"?"rgba(200,168,112,.4)":"#1e3a5f20"}`,fontSize:11,padding:"4px 12px"})}}
+          style={{...btn(tab==="cards"?`${T.accent}20`:"transparent",tab==="cards"?T.accent:T.muted,
+            {border:`1px solid ${tab==="cards"?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,fontSize:11,padding:"4px 12px"})}}
           onMouseOver={hov} onMouseOut={uhov}>🔍 Any Card</button>
         <input value={query} onChange={e=>setQuery(e.target.value)}
           placeholder={tab==="tokens"?"Search tokens (all printings + Secret Lair)…":"Search any MTG card…"}
@@ -3203,25 +3892,25 @@ function TokenSearch({onCreate,onClose}){
           onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}
           autoFocus/>
         <div style={{flex:1}}/>
-        <span style={{fontSize:9,color:"#3a5a7a",fontFamily:"Cinzel,serif"}}>
+        <span style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif"}}>
           {results.length>0?`${results.length}${hasMore?"+":""} results`:""}
         </span>
-        <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
       </div>
       {/* Token type filters */}
       {tab==="tokens"&&(
         <div style={{display:"flex",gap:3,padding:"5px 16px",flexShrink:0,flexWrap:"wrap",borderBottom:`1px solid ${T.accent}15`}}>
           {TYPE_FILTERS.map(t=>(
             <button key={t} onClick={()=>setTypeFilter(t)}
-              style={{...btn(typeFilter===t?`${T.accent}20`:"transparent",typeFilter===t?T.accent:"#4a6a8a",
-                {fontSize:9,border:`1px solid ${typeFilter===t?"rgba(200,168,112,.3)":"#1e3a5f20"}`,padding:"2px 8px",borderRadius:3})}}
+              style={{...btn(typeFilter===t?`${T.accent}20`:"transparent",typeFilter===t?T.accent:T.muted,
+                {fontSize:9,border:`1px solid ${typeFilter===t?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"2px 8px",borderRadius:3})}}
               onMouseOver={hov} onMouseOut={uhov}>{t}</button>
           ))}
         </div>
       )}
       {tab==="cards"&&(
         <div style={{padding:"6px 18px",flexShrink:0,borderBottom:`1px solid ${T.accent}15`}}>
-          <span style={{fontSize:9,color:"#4a6a8a",fontFamily:"Cinzel,serif"}}>
+          <span style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif"}}>
             Shows all printings & art variants. Click to place on battlefield. Shift+click to insert as token (no death trigger).
           </span>
         </div>
@@ -3252,7 +3941,7 @@ function TokenSearch({onCreate,onClose}){
                   {card.power&&<div style={{fontSize:10,color:T.text,fontWeight:"bold"}}>{card.power}/{card.toughness}</div>}
                 </div>
               )}
-              <div style={{fontSize:7,color:"#6a7a8a",textAlign:"center",marginTop:2,maxWidth:CW,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
+              <div style={{fontSize:7,color: T.muted,textAlign:"center",marginTop:2,maxWidth:CW,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                 {card.name}
               </div>
               {card.set&&<div style={{fontSize:6,color:"#2a3a5a",textAlign:"center",maxWidth:CW,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
@@ -3278,7 +3967,7 @@ function TokenSearch({onCreate,onClose}){
               onMouseOver={hov} onMouseOut={uhov}>Load More…</button>
           </div>
         )}
-        {loading&&results.length>0&&<div style={{width:"100%",textAlign:"center",padding:10,color:"#4a6a8a",fontSize:9,fontFamily:"Cinzel,serif"}}>Loading…</div>}
+        {loading&&results.length>0&&<div style={{width:"100%",textAlign:"center",padding:10,color: T.muted,fontSize:9,fontFamily:"Cinzel,serif"}}>Loading…</div>}
       </div>
       {hovered&&<CardPreview card={hovered}/>}
     </div>
@@ -3294,36 +3983,36 @@ function CustomCardCreator({onSave,onClose}){
       display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000,backdropFilter:"blur(4px)"}}>
       <div className="slide-in" style={{
         background:"linear-gradient(160deg,#0d1f3c,#0a1628)",
-        border:"1px solid #c8a87050",borderRadius:10,padding:22,width:390,
+        border:`1px solid ${T.accent}50`,borderRadius:10,padding:22,width:390,
         maxHeight:"92vh",overflowY:"auto",
         boxShadow:"0 24px 80px rgba(0,0,0,.95)",position:"relative"}}>
         <RitualCircle color="#a855f7"/>
         <h3 style={{margin:"0 0 16px",color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:14,position:"relative"}}>🪄 Forge Custom Card</h3>
         {[["Name *","name","text"],["Mana Cost","manaCost","text"],["Type Line","typeLine","text"],["Image URL","imageUri","text"]].map(([l,k])=>(
           <label key={k} style={{display:"block",marginBottom:9,position:"relative"}}>
-            <span style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".1em",textTransform:"uppercase"}}>{l}</span>
+            <span style={{fontSize:8,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".1em",textTransform:"uppercase"}}>{l}</span>
             <input value={f[k]} onChange={set(k)} style={iS}
               onFocus={e=>{e.target.style.borderColor=T.accent;e.target.style.boxShadow="0 0 8px rgba(200,168,112,.15)";}}
               onBlur={e=>{e.target.style.borderColor=T.border;e.target.style.boxShadow="none";}}/>
           </label>
         ))}
         <label style={{display:"block",marginBottom:9,position:"relative"}}>
-          <span style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".1em",textTransform:"uppercase"}}>Rules Text</span>
+          <span style={{fontSize:8,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".1em",textTransform:"uppercase"}}>Rules Text</span>
           <textarea value={f.oracleText} onChange={set("oracleText")} rows={3} style={{...iS,resize:"vertical"}}/>
         </label>
         <div style={{display:"flex",gap:8,marginBottom:16}}>
           {[["Power","power"],["Toughness","toughness"]].map(([l,k])=>(
             <label key={k} style={{flex:1}}>
-              <span style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".1em",textTransform:"uppercase"}}>{l}</span>
+              <span style={{fontSize:8,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".1em",textTransform:"uppercase"}}>{l}</span>
               <input value={f[k]} onChange={set(k)} style={iS}/>
             </label>
           ))}
         </div>
         {f.imageUri&&<img src={f.imageUri} alt="" style={{width:"100%",borderRadius:5,marginBottom:12,maxHeight:100,objectFit:"cover",border:`1px solid ${T.border}`}} onError={e=>e.target.style.display="none"}/>}
         <div style={{display:"flex",gap:8}}>
-          <button onClick={onClose} style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+          <button onClick={onClose} style={{...btn(`${T.panel}99`,T.text,{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
           <button onClick={()=>{if(f.name.trim()){onSave({id:`custom_${uid()}`,...f,isCustom:true});onClose();}}}
-            style={{...btn("linear-gradient(135deg,#c8a870,#a0804a)",T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700})}}
+            style={{...btn(`linear-gradient(135deg,${T.accent},#a0804a)`,T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700})}}
             onMouseOver={hov} onMouseOut={uhov}>✦ Forge</button>
         </div>
       </div>
@@ -3349,9 +4038,9 @@ function StackPanel({stack,onResolve,onCounter,onAdd}){
       {[...stack].reverse().map((item,i)=>(
         <div key={item.id} className="slide-in" style={{
           background:i===0?`${T.panel}cc`:`${T.panel}99`,
-          border:`1px solid ${i===0?"#c8a87040":"#1e3a5f20"}`,borderRadius:5,
+          border:`1px solid ${i===0?`${T.accent}40`:"${T.border}20"}`,borderRadius:5,
           padding:"5px 8px",marginBottom:3,animation:"stackEntry .2s ease"}}>
-          <div style={{fontSize:10,color:i===0?T.text:"#6a7a8a",marginBottom:3,lineHeight:1.4}}>{item.description}</div>
+          <div style={{fontSize:10,color:i===0?T.text:T.muted,marginBottom:3,lineHeight:1.4}}>{item.description}</div>
           <div style={{display:"flex",gap:3}}>
             {i===stack.length-1&&(
               <button onClick={()=>onResolve(item.id)}
@@ -3417,7 +4106,7 @@ function ProfileSetup({existing,onSave}){
       x:Math.random()*canvas.width,y:Math.random()*canvas.height,
       vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3,
       r:Math.random()*2+.5,
-      color:[`rgba(200,168,112,${Math.random()*.3+.1})`,`rgba(168,85,247,${Math.random()*.2+.05})`,`rgba(59,130,246,${Math.random()*.15+.05})`][Math.floor(Math.random()*3)]
+      color:[`rgba(${T.accentRgb},${Math.random()*.3+.1})`,`rgba(168,85,247,${Math.random()*.2+.05})`,`rgba(59,130,246,${Math.random()*.15+.05})`][Math.floor(Math.random()*3)]
     }));
     let raf;
     const draw=()=>{
@@ -3452,7 +4141,7 @@ function ProfileSetup({existing,onSave}){
         border:`1px solid ${T.accent}40`,borderRadius:14,padding:32,width:540,maxHeight:"92vh",overflowY:"auto",
         boxShadow:"0 32px 100px rgba(0,0,0,.95),0 0 80px rgba(200,168,112,.04)",
         position:"relative",overflow:"hidden"}}>
-        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:"linear-gradient(90deg,transparent,#c8a870,transparent)"}}/>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:`linear-gradient(90deg,transparent,${T.accent},transparent)`}}/>
 
         {/* Header with avatar preview */}
         <div style={{textAlign:"center",marginBottom:24}}>
@@ -3460,12 +4149,12 @@ function ProfileSetup({existing,onSave}){
             {currentAvatarDisplay}
           </div>
           <h2 className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:20,letterSpacing:".06em",marginBottom:4}}>TCG Playsim</h2>
-          <p style={{color:"#3a5a7a",fontSize:10,letterSpacing:".1em",fontFamily:"Cinzel, serif"}}>ENTER THE ARENA</p>
+          <p style={{color: T.muted,fontSize:10,letterSpacing:".1em",fontFamily:"Cinzel, serif"}}>ENTER THE ARENA</p>
         </div>
 
         {/* Alias */}
         <label style={{display:"block",marginBottom:18}}>
-          <span style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase"}}>Planeswalker Alias</span>
+          <span style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase"}}>Planeswalker Alias</span>
           <input value={alias} onChange={e=>setAlias(e.target.value)} placeholder="Your name in the Multiverse"
             style={{...iS,fontSize:15,fontFamily:"Cinzel, serif",color:T.accent,marginTop:5}}
             onFocus={e=>{e.target.style.borderColor=T.accent;e.target.style.boxShadow="0 0 12px rgba(200,168,112,.2)";}}
@@ -3474,13 +4163,13 @@ function ProfileSetup({existing,onSave}){
 
         {/* Avatar section */}
         <div style={{marginBottom:20}}>
-          <div style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:10}}>Avatar</div>
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:10}}>Avatar</div>
           {/* Tabs */}
           <div style={{display:"flex",gap:4,marginBottom:12}}>
             {[["emoji","😀 Emoji"],["art","🔍 MTG Art"],["url","🔗 Custom URL"]].map(([t,l])=>(
               <button key={t} onClick={()=>setAvatarTab(t)}
-                style={{...btn(avatarTab===t?`${T.accent}20`:"transparent",avatarTab===t?T.accent:"#4a6a8a",
-                  {fontSize:9,border:`1px solid ${avatarTab===t?"rgba(200,168,112,.4)":"#1e3a5f20"}`,padding:"4px 10px",borderRadius:4})}}
+                style={{...btn(avatarTab===t?`${T.accent}20`:"transparent",avatarTab===t?T.accent:T.muted,
+                  {fontSize:9,border:`1px solid ${avatarTab===t?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,padding:"4px 10px",borderRadius:4})}}
                 onMouseOver={hov} onMouseOut={uhov}>{l}</button>
             ))}
           </div>
@@ -3491,7 +4180,7 @@ function ProfileSetup({existing,onSave}){
               {AVATARS.map(a=>(
                 <button key={a} onClick={()=>{setAvatar(a);setAvatarImg("");}} style={{
                   fontSize:20,background:(a===avatar&&!avatarImg)?`${T.accent}26`:`${T.panel}99`,
-                  border:`1px solid ${(a===avatar&&!avatarImg)?T.accent:"#1e3a5f30"}`,borderRadius:7,
+                  border:`1px solid ${(a===avatar&&!avatarImg)?T.accent:"${T.border}30"}`,borderRadius:7,
                   padding:"4px 6px",cursor:"pointer",transition:"all .15s",
                   boxShadow:(a===avatar&&!avatarImg)?"0 0 12px rgba(200,168,112,.3)":"none",
                   transform:(a===avatar&&!avatarImg)?"scale(1.1)":"scale(1)"}}>
@@ -3513,8 +4202,8 @@ function ProfileSetup({existing,onSave}){
               <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>
                 {ART_PRESETS.map(p=>(
                   <button key={p} onClick={()=>setArtQuery(p)}
-                    style={{...btn(artQuery===p?`${T.accent}20`:"transparent",artQuery===p?T.accent:"#4a6a8a",
-                      {fontSize:8,border:`1px solid ${artQuery===p?"rgba(200,168,112,.3)":"#1e3a5f20"}`,padding:"2px 7px",borderRadius:3})}}
+                    style={{...btn(artQuery===p?`${T.accent}20`:"transparent",artQuery===p?T.accent:T.muted,
+                      {fontSize:8,border:`1px solid ${artQuery===p?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"2px 7px",borderRadius:3})}}
                     onMouseOver={hov} onMouseOut={uhov}>{p}</button>
                 ))}
               </div>
@@ -3535,7 +4224,7 @@ function ProfileSetup({existing,onSave}){
                 {!artLoading&&artResults.length===0&&artQuery&&(
                   <div style={{fontSize:9,color:T.border,fontStyle:"italic",padding:8}}>No art found — try a different search</div>
                 )}
-                {!artQuery&&<div style={{fontSize:9,color:"#4a6a8a",padding:8,fontStyle:"italic"}}>Type a planeswalker or card name above</div>}
+                {!artQuery&&<div style={{fontSize:9,color: T.muted,padding:8,fontStyle:"italic"}}>Type a planeswalker or card name above</div>}
               </div>
             </div>
           )}
@@ -3560,21 +4249,21 @@ function ProfileSetup({existing,onSave}){
                   {avatarImg===customAvatarUrl&&<span style={{fontSize:9,color:"#4ade80",fontFamily:"Cinzel,serif"}}>✓ Active</span>}
                 </div>
               )}
-              <div style={{fontSize:8,color:"#3a5a7a",fontStyle:"italic"}}>Works with Imgur, direct image links, Scryfall art crops, etc.</div>
+              <div style={{fontSize:8,color: T.muted,fontStyle:"italic"}}>Works with Imgur, direct image links, Scryfall art crops, etc.</div>
             </div>
           )}
         </div>
 
         {/* Gamemat */}
         <div style={{marginBottom:22}}>
-          <div style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:8}}>Gamemat</div>
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:8}}>Gamemat</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
             {GAMEMATS.map((gm,i)=>(
               <button key={gm.name} onClick={()=>setGmIdx(i)} style={{
                 fontSize:9,fontFamily:"Cinzel, serif",padding:"5px 10px",borderRadius:5,
-                border:`1px solid ${i===gmIdx?gm.accent||T.accent:"#1e3a5f20"}`,
+                border:`1px solid ${i===gmIdx?gm.accent||T.accent:"${T.border}20"}`,
                 background:i===gmIdx?`${T.accent}14`:"rgba(8,15,28,.5)",
-                color:i===gmIdx?gm.accent||T.accent:"#4a6a8a",
+                color:i===gmIdx?gm.accent||T.accent:T.muted,
                 cursor:"pointer",transition:"all .15s",
                 boxShadow:i===gmIdx?`0 0 8px ${gm.accent||T.accent}30`:"none"}}>
                 {gm.name}
@@ -3593,7 +4282,7 @@ function ProfileSetup({existing,onSave}){
           const gm=GAMEMATS[gmIdx];
           onSave({alias:alias.trim(),avatar,avatarImg,gamematIdx:gmIdx,gamemat:gm.bg||(gmCustom||T.panel),gamematCustom:gmCustom});
         }} style={{
-          ...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,
+          ...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,
             {width:"100%",padding:"12px",fontSize:13,fontFamily:"Cinzel Decorative, serif",
             fontWeight:700,letterSpacing:".06em",boxShadow:"0 8px 24px rgba(200,168,112,.3)"}),
           border:`1px solid ${T.accent}60`}}
@@ -3619,6 +4308,16 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   const [mySeat,setMySeat]=useState(null);
   const [waitingMeta,setWaitingMeta]=useState(null); // v7: live meta for progress bar
   const [gamemode,setGamemode]=useState("standard");
+  // v7.6.4: Dandân variant the host has chosen. Only meaningful when
+  // gamemode==='dandan'. Joiner reads this from room meta.
+  const [dandanVariantId,setDandanVariantId]=useState(DANDAN_VARIANTS[0].variantId);
+  // v7.6.4: kick off resolution of the chosen variant in the background so
+  // by the time the room fills the deck is fully populated.
+  useEffect(()=>{
+    if(gamemode==="dandan" && dandanVariantId){
+      resolveDandanVariant(dandanVariantId);
+    }
+  },[gamemode, dandanVariantId]);
   // v7.4: when joining another host's room, we can pick our deck from our
   // own library OR from the host's library (the host publishes their decks
   // alongside their player row).
@@ -3648,15 +4347,33 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
 
   const createRoom=async()=>{
     if(!roomName.trim())return;
-    if(!selDeckId){alert("Please select a deck first");return;}
+    // v7.6.4: Dandân doesn't need a per-player deck — variants are shared
+    // premade lists chosen by the host. Skip the "select a deck" gate.
+    if(gamemode!=="dandan" && !selDeckId){alert("Please select a deck first");return;}
     setLoading(true);
     // v7.6.2: sweep any stale rows from previous rooms (e.g. browser closes
     // without explicit Leave). Otherwise those rooms linger at 2/2 forever.
     try{ const { cleanupMyStaleRooms } = await import("./lib/storage"); await cleanupMyStaleRooms(); }catch(e){ console.warn("[createRoom cleanup]",e); }
     const id=uid();
+    // For Dandân, the deck is the chosen variant; otherwise the player's selected deck.
+    const dandanDeck = gamemode==="dandan"
+      ? (DANDAN_VARIANTS.find(v=>v.variantId===dandanVariantId) || DANDAN_VARIANTS[0])
+      : null;
+    const playerDeck = gamemode==="dandan" ? dandanDeck : decks.find(d=>d.id===selDeckId);
     // v7.4: host publishes their entire deck library so guests can pick from it
-    const meta={id,name:roomName.trim(),host:profile.alias,hostAvatar:profile.avatar,maxPlayers:maxP,gamemode,players:[{alias:profile.alias,avatar:profile.avatar,ready:false}],status:"waiting",created:Date.now(),hostDecks:decks};
-    try{await storage.set(`room_${id}_meta`,JSON.stringify(meta),true);await storage.set(`room_${id}_player_0`,JSON.stringify({profile,deckId:selDeckId,deck:decks.find(d=>d.id===selDeckId)||null,ready:false,decks}),true);setMyRoomId(id);setMySeat(0);setWaitingMeta(meta);}catch{alert("Could not create room");}
+    const meta={
+      id,name:roomName.trim(),host:profile.alias,hostAvatar:profile.avatar,
+      maxPlayers:maxP,gamemode,
+      // v7.6.4: include Dandân variant id so joiners can display it.
+      dandanVariantId: gamemode==="dandan" ? dandanVariantId : null,
+      players:[{alias:profile.alias,avatar:profile.avatar,ready:false}],
+      status:"waiting",created:Date.now(),hostDecks:decks,
+    };
+    try{
+      await storage.set(`room_${id}_meta`,JSON.stringify(meta),true);
+      await storage.set(`room_${id}_player_0`,JSON.stringify({profile,deckId:gamemode==="dandan"?dandanDeck.id:selDeckId,deck:playerDeck||null,ready:false,decks}),true);
+      setMyRoomId(id);setMySeat(0);setWaitingMeta(meta);
+    }catch{alert("Could not create room");}
     setLoading(false);};
 
   const joinRoom=async(roomId)=>{
@@ -3704,11 +4421,20 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
         if(pIdx>=meta.maxPlayers){alert("Room is full");setLoading(false);return;}
         meta.players.push({alias:profile.alias,avatar:profile.avatar,ready:false});
         await storage.set(`room_${roomId}_meta`,JSON.stringify(meta),true);
-        // v7.5.1: write player row WITHOUT a deck — user must explicitly pick in waiting lobby
-        await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:null,deck:null,ready:false}),true);
+        // v7.6.4: if Dandân, the deck is the host-chosen variant — auto-assign
+        // it to the joiner instead of forcing a deck-pick.
+        if(meta.gamemode==="dandan"){
+          const dvId = meta.dandanVariantId || DANDAN_VARIANTS[0].variantId;
+          const variant = DANDAN_VARIANTS.find(v=>v.variantId===dvId) || DANDAN_VARIANTS[0];
+          await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:variant.id,deck:variant,ready:false}),true);
+          setSelDeckId(variant.id);
+        } else {
+          // v7.5.1: write player row WITHOUT a deck — user must explicitly pick in waiting lobby
+          await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:null,deck:null,ready:false}),true);
+          setSelDeckId(""); // force deck-pick prompt
+        }
         setMyRoomId(roomId);
         setMySeat(pIdx);
-        setSelDeckId(""); // force deck-pick prompt
       }
     }catch(e){alert("Error: "+e.message);}
     setLoading(false);};
@@ -3790,24 +4516,24 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
       <div style={{position:"absolute",inset:0,background:"radial-gradient(ellipse at 50% 30%,rgba(168,85,247,.05) 0%,transparent 60%)",pointerEvents:"none"}}/>
       <div className="fade-in" style={{width:"100%",maxWidth:580,padding:20,zIndex:1}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:24}}>
-          <button onClick={onBack} style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>← Back</button>
+          <button onClick={onBack} style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>← Back</button>
           <span style={{color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:18,letterSpacing:".06em"}}>Game Rooms</span>
           <span style={{fontSize:18}}>{profile.avatar}</span>
-          <span style={{fontSize:13,color:"#4a6a8a"}}>{profile.alias}</span>
+          <span style={{fontSize:13,color: T.muted}}>{profile.alias}</span>
         </div>
 
         <div style={{marginBottom:16,background:`${T.bg}cc`,border:`1px solid ${T.border}30`,borderRadius:8,padding:14}}>
-          <div style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>Your Deck</div>
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>Your Deck</div>
           {/* v7.4: when joining someone else's room, let the guest pick from host's deck library too */}
           {isJoinedGuest && hostDecks.length>0 && (
             <div style={{display:"flex",gap:4,marginBottom:8}}>
               <button onClick={()=>setDeckSource("mine")}
-                style={{...btn(deckSource==="mine"?`${T.accent}1a`:`${T.panel}60`,deckSource==="mine"?T.accent:"#6a7a8a",
-                  {border:`1px solid ${deckSource==="mine"?T.accent:"#1e3a5f30"}`,fontSize:10,flex:1})}}
+                style={{...btn(deckSource==="mine"?`${T.accent}1a`:`${T.panel}60`,deckSource==="mine"?T.accent:T.muted,
+                  {border:`1px solid ${deckSource==="mine"?T.accent:"${T.border}30"}`,fontSize:10,flex:1})}}
                 onMouseOver={hov} onMouseOut={uhov}>Play with my deck</button>
               <button onClick={()=>setDeckSource("host")}
-                style={{...btn(deckSource==="host"?`${T.accent}1a`:`${T.panel}60`,deckSource==="host"?T.accent:"#6a7a8a",
-                  {border:`1px solid ${deckSource==="host"?T.accent:"#1e3a5f30"}`,fontSize:10,flex:1})}}
+                style={{...btn(deckSource==="host"?`${T.accent}1a`:`${T.panel}60`,deckSource==="host"?T.accent:T.muted,
+                  {border:`1px solid ${deckSource==="host"?T.accent:"${T.border}30"}`,fontSize:10,flex:1})}}
                 onMouseOver={hov} onMouseOut={uhov}>Play with opponent's deck</button>
             </div>
           )}
@@ -3832,32 +4558,60 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                   }catch{}
                 }
               }}
-                style={{...btn(d.id===selDeckId?`${T.accent}1a`:`${T.panel}99`,d.id===selDeckId?T.accent:"#6a7a8a",
-                  {border:`1px solid ${d.id===selDeckId?T.accent:"#1e3a5f30"}`,fontSize:10})}}
+                style={{...btn(d.id===selDeckId?`${T.accent}1a`:`${T.panel}99`,d.id===selDeckId?T.accent:T.muted,
+                  {border:`1px solid ${d.id===selDeckId?T.accent:"${T.border}30"}`,fontSize:10})}}
                 onMouseOver={hov} onMouseOut={uhov}>{d.name}{deckSource==="host"?" ⚔":""}</button>
             ))}
             {deckSource==="host" && hostDecks.length===0 && (
-              <span style={{fontSize:9,color:"#6a7a8a",fontStyle:"italic"}}>Host hasn't published any decks yet</span>
+              <span style={{fontSize:9,color: T.muted,fontStyle:"italic"}}>Host hasn't published any decks yet</span>
             )}
           </div>
         </div>
 
         {/* Gamemode selector */}
         <div style={{marginBottom:16,background:`${T.bg}cc`,border:`1px solid ${T.border}30`,borderRadius:8,padding:12}}>
-          <div style={{fontSize:9,color:"#6a7a8a",fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>Game Mode</div>
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>Game Mode</div>
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
             {GAMEMODES.map(gm=>(
               <button key={gm.id} onClick={()=>setGamemode(gm.id)}
                 style={{...btn(gm.id===gamemode?(gm.special?"rgba(168,85,247,.15)":`${T.accent}1a`):`${T.panel}99`,
-                  gm.id===gamemode?(gm.special?"#a855f7":T.accent):"#6a7a8a",
-                  {border:`1px solid ${gm.id===gamemode?(gm.special?"rgba(168,85,247,.4)":"rgba(200,168,112,.3)"):"#1e3a5f30"}`,fontSize:10,
+                  gm.id===gamemode?(gm.special?"#a855f7":T.accent):T.muted,
+                  {border:`1px solid ${gm.id===gamemode?(gm.special?"rgba(168,85,247,.4)":"rgba(${T.accentRgb},.3)"):"${T.border}30"}`,fontSize:10,
                    boxShadow:gm.id===gamemode&&gm.special?"0 0 12px rgba(168,85,247,.3)":"none"})}}
                 onMouseOver={hov} onMouseOut={uhov}>{gm.icon} {gm.label}</button>
             ))}
           </div>
-          {gamemode==="dandan"&&<div style={{marginTop:8,fontSize:10,color:"#a855f7",fontFamily:"Crimson Text,serif",fontStyle:"italic",lineHeight:1.5}}>
-            🐟 Both players start with 40 Dandans + 20 Islands. First to run out of Islands loses.
-          </div>}
+          {gamemode==="dandan"&&(
+            <div style={{marginTop:10,padding:10,background:"rgba(168,85,247,.06)",border:"1px solid rgba(168,85,247,.25)",borderRadius:6,fontFamily:"Crimson Text,serif"}}>
+              <div style={{fontSize:11,color:"#c084fc",fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:6}}>🐟 DANDÂN — SHARED DECK FORMAT</div>
+              <div style={{fontSize:10,color:"#c0a0e0",lineHeight:1.55,marginBottom:8}}>
+                Both players share <b>one 80-card library and one graveyard</b> (rendered in the center). Hands, battlefields, exile, and life totals stay separate. Win by reducing opponent to 0 life or making them deck out. The host picks the variant — joiners don't choose a deck.
+              </div>
+              <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",marginBottom:5}}>Choose a Variant (host)</div>
+              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                {DANDAN_VARIANTS.map(v=>{
+                  const sel = (dandanVariantId||DANDAN_VARIANTS[0].variantId)===v.variantId;
+                  return(
+                    <button key={v.variantId} onClick={()=>setDandanVariantId(v.variantId)}
+                      title={v.description}
+                      style={{...btn(sel?"rgba(168,85,247,.2)":`${T.panel}99`,sel?"#c084fc":T.text,
+                        {fontSize:9,padding:"4px 8px",border:`1px solid ${sel?"rgba(168,85,247,.5)":"${T.border}30"}`,borderRadius:4})}}
+                      onMouseOver={hov} onMouseOut={uhov}>
+                      {v.name.replace(/^🐟 /,"")}
+                    </button>
+                  );
+                })}
+              </div>
+              {(() => {
+                const v = DANDAN_VARIANTS.find(x=>x.variantId===(dandanVariantId||DANDAN_VARIANTS[0].variantId)) || DANDAN_VARIANTS[0];
+                return (
+                  <div style={{marginTop:8,padding:"6px 8px",background:"rgba(0,0,0,.25)",borderRadius:4,fontSize:10,color:"#a8a0c0",lineHeight:1.5,fontStyle:"italic"}}>
+                    <b style={{color:"#c084fc",fontStyle:"normal"}}>{v.name.replace(/^🐟 /,"")}</b> — {v.description}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
           {gamemode==="commander"&&<div style={{marginTop:6,fontSize:10,color:T.accent,fontFamily:"Crimson Text,serif"}}>⚔ 40 life · Commander damage · Command zone</div>}
         </div>
 
@@ -3869,8 +4623,17 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           <div style={{background:`${T.bg}cc`,border:`1px solid ${T.accent}60`,borderRadius:8,padding:18,marginBottom:16}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
               <div style={{color:T.accent,fontFamily:"Cinzel, serif",fontSize:13}}>Waiting for players… {curr}/{max}</div>
-              <div style={{fontSize:11,color:"#8a99b0"}}>Room <span style={{color:T.text,fontFamily:"Cinzel, serif",letterSpacing:".05em",userSelect:"text"}}>{myRoomId}</span></div>
+              <div style={{fontSize:11,color: T.muted}}>Room <span style={{color:T.text,fontFamily:"Cinzel, serif",letterSpacing:".05em",userSelect:"text"}}>{myRoomId}</span></div>
             </div>
+            {/* v7.6.4: when in Dandân mode, show the host's chosen variant. */}
+            {waitingMeta?.gamemode==="dandan" && (() => {
+              const v = DANDAN_VARIANTS.find(x=>x.variantId===waitingMeta.dandanVariantId) || DANDAN_VARIANTS[0];
+              return (
+                <div style={{marginBottom:10,padding:"8px 10px",background:"rgba(168,85,247,.08)",border:"1px solid rgba(168,85,247,.3)",borderRadius:5,fontSize:10,color:"#c0a0e0",fontFamily:"Crimson Text,serif"}}>
+                  🐟 <b style={{color:"#c084fc"}}>{v.name.replace(/^🐟 /,"")}</b> — shared deck chosen by host. Joiners do not select a deck.
+                </div>
+              );
+            })()}
             <div style={{display:"flex",gap:8,marginBottom:10}}>
               {slots.map((p,i)=>(
                 <div key={i} style={{
@@ -3880,7 +4643,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                   textAlign:"center",transition:"all .2s",
                 }}>
                   <div style={{fontSize:20,opacity:p?1:.3}}>{p?.avatar||"·"}</div>
-                  <div style={{fontSize:10,color:p?T.text:"#4a6a8a",fontFamily:"Cinzel,serif",marginTop:3}}>
+                  <div style={{fontSize:10,color:p?T.text:T.muted,fontFamily:"Cinzel,serif",marginTop:3}}>
                     {p?.alias || `Seat ${i+1}`}
                   </div>
                 </div>
@@ -3895,7 +4658,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                 setMyRoomId(null);setMySeat(null);setWaitingMeta(null);
                 try{ const { leaveRoom } = await import("./lib/storage"); await leaveRoom(id); }catch(e){ console.warn("[leaveRoom]",e); }
               }}
-                style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:10,padding:"5px 10px"})}}
+                style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`,fontSize:10,padding:"5px 10px"})}}
                 onMouseOver={hov} onMouseOut={uhov}>Leave Room</button>
             </div>
           </div>);
@@ -3908,15 +4671,15 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
               </select>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setCreating(false)} style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+              <button onClick={()=>setCreating(false)} style={{...btn(`${T.panel}99`,T.text,{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
               <button onClick={createRoom} disabled={loading}
-                style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700,opacity:loading?.7:1})}}
+                style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700,opacity:loading?.7:1})}}
                 onMouseOver={hov} onMouseOut={uhov}>{loading?"Creating…":"✦ Create Room"}</button>
             </div>
           </div>
         ):(
           <button onClick={()=>setCreating(true)}
-            style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{width:"100%",padding:"11px",fontSize:12,fontFamily:"Cinzel, serif",fontWeight:700,marginBottom:14,boxShadow:"0 6px 20px rgba(200,168,112,.25)"})}}
+            style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{width:"100%",padding:"11px",fontSize:12,fontFamily:"Cinzel, serif",fontWeight:700,marginBottom:14,boxShadow:"0 6px 20px rgba(200,168,112,.25)"})}}
             onMouseOver={hov} onMouseOut={uhov}>✦ Create Room</button>
         )}
 
@@ -3927,20 +4690,28 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             onMouseOver={hov} onMouseOut={uhov}>Join</button>
         </div>
 
-        <button onClick={()=>onJoinGame({isLocal:true,myDeck:decks.find(d=>d.id===selDeckId)||decks[0],otherDeck:decks.find(d=>d.id===selDeckId)||decks[0],gamemode})}
+        <button onClick={()=>{
+          // v7.6.4: for Dandân local 2P, use the host-picked variant.
+          if(gamemode==="dandan"){
+            const v = DANDAN_VARIANTS.find(x=>x.variantId===dandanVariantId) || DANDAN_VARIANTS[0];
+            onJoinGame({isLocal:true,myDeck:v,otherDeck:v,gamemode});
+            return;
+          }
+          onJoinGame({isLocal:true,myDeck:decks.find(d=>d.id===selDeckId)||decks[0],otherDeck:decks.find(d=>d.id===selDeckId)||decks[0],gamemode});
+        }}
           style={{...btn("rgba(167,139,250,.08)","#a78bfa",{width:"100%",padding:"9px",marginBottom:18,fontFamily:"Cinzel, serif",border:"1px solid rgba(167,139,250,.2)"})}}
           onMouseOver={hov} onMouseOut={uhov}>⇄ Local 2-Player (same device)</button>
 
-        <div style={{color:"#4a6a8a",fontFamily:"Cinzel, serif",fontSize:9,marginBottom:10,letterSpacing:".12em",textTransform:"uppercase"}}>Open Rooms</div>
+        <div style={{color: T.muted,fontFamily:"Cinzel, serif",fontSize:9,marginBottom:10,letterSpacing:".12em",textTransform:"uppercase"}}>Open Rooms</div>
         {rooms.length===0?(
           <div style={{color:T.border,fontSize:11,textAlign:"center",padding:16,fontStyle:"italic"}}>No open rooms — create one above</div>
         ):rooms.map(room=>(
           <div key={room.id} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:`${T.bg}b3`,borderRadius:7,border:`1px solid ${T.border}30`,marginBottom:6,transition:"border-color .15s"}}
-            onMouseOver={e=>e.currentTarget.style.borderColor="#c8a87040"}
-            onMouseOut={e=>e.currentTarget.style.borderColor="#1e3a5f30"}>
+            onMouseOver={e=>e.currentTarget.style.borderColor=`${T.accent}40`}
+            onMouseOut={e=>e.currentTarget.style.borderColor=`${T.border}30`}>
             <div style={{flex:1}}>
               <div style={{color:T.accent,fontFamily:"Cinzel, serif",fontSize:12}}>{room.name}</div>
-              <div style={{fontSize:10,color:"#4a6a8a"}}>{room.host} {room.hostAvatar} · {room.players.length}/{room.maxPlayers} players</div>
+              <div style={{fontSize:10,color: T.muted}}>{room.host} {room.hostAvatar} · {room.players.length}/{room.maxPlayers} players</div>
             </div>
             {/* v7.6.1: always allow clicking. joinRoom detects rejoin via user_id;
                 if a non-rejoining user clicks a truly full room, joinRoom alerts. */}
@@ -3974,7 +4745,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
               fontSize:17,letterSpacing:".06em",textAlign:"center",marginBottom:5}}>
               ⚔ Choose Your Deck
             </div>
-            <div style={{color:"#8a99b0",fontSize:11,textAlign:"center",marginBottom:18,
+            <div style={{color: T.muted,fontSize:11,textAlign:"center",marginBottom:18,
               fontStyle:"italic",fontFamily:"Crimson Text, serif"}}>
               The game can't start until every player has selected a deck.
             </div>
@@ -3983,11 +4754,11 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             {isJoinedGuest && hostDecks.length>0 && (
               <div style={{display:"flex",gap:6,marginBottom:12}}>
                 <button onClick={()=>setDeckSource("mine")}
-                  style={{...btn(deckSource==="mine"?`${T.accent}22`:`${T.bg}90`,deckSource==="mine"?T.accent:"#8a99b0",
+                  style={{...btn(deckSource==="mine"?`${T.accent}22`:`${T.bg}90`,deckSource==="mine"?T.accent:T.text,
                     {border:`1px solid ${deckSource==="mine"?T.accent:T.border}`,fontSize:11,flex:1,padding:"7px"})}}
                   onMouseOver={hov} onMouseOut={uhov}>📖 My library</button>
                 <button onClick={()=>setDeckSource("host")}
-                  style={{...btn(deckSource==="host"?`${T.accent}22`:`${T.bg}90`,deckSource==="host"?T.accent:"#8a99b0",
+                  style={{...btn(deckSource==="host"?`${T.accent}22`:`${T.bg}90`,deckSource==="host"?T.accent:T.text,
                     {border:`1px solid ${deckSource==="host"?T.accent:T.border}`,fontSize:11,flex:1,padding:"7px"})}}
                   onMouseOver={hov} onMouseOut={uhov}>⚔ Host's decks</button>
               </div>
@@ -3996,7 +4767,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             {/* Deck list — same click handler as main picker (writes to player_row) */}
             <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
               {(deckSource==="host"?hostDecks:decks).length===0?(
-                <div style={{color:"#6a7a8a",fontSize:11,textAlign:"center",
+                <div style={{color: T.muted,fontSize:11,textAlign:"center",
                   padding:16,fontStyle:"italic",
                   border:`1px dashed ${T.border}`,borderRadius:6}}>
                   {deckSource==="host"
@@ -4030,7 +4801,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                   <span style={{color:T.accent,marginRight:8}}>✦</span>
                   {d.name}
                   {deckSource==="host" && <span style={{color:"#a855f7",marginLeft:6,fontSize:10}}>(borrowed)</span>}
-                  {Array.isArray(d.mainboard) && <span style={{color:"#6a7a8a",marginLeft:8,fontSize:10}}>· {d.mainboard.length} cards</span>}
+                  {Array.isArray(d.mainboard) && <span style={{color: T.muted,marginLeft:8,fontSize:10}}>· {d.mainboard.length} cards</span>}
                 </button>
               ))}
             </div>
@@ -4041,7 +4812,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
               setMyRoomId(null);setMySeat(null);setWaitingMeta(null);
               try{ const { leaveRoom } = await import("./lib/storage"); await leaveRoom(id); }catch(e){ console.warn("[leaveRoom]",e); }
             }}
-              style={{...btn(`${T.panel}99`,"#8a99b0",{width:"100%",border:`1px solid ${T.border}`,fontSize:10,padding:"7px"})}}
+              style={{...btn(`${T.panel}99`,T.text,{width:"100%",border:`1px solid ${T.border}`,fontSize:10,padding:"7px"})}}
               onMouseOver={hov} onMouseOut={uhov}>← Leave Room</button>
           </div>
         </div>
@@ -4097,21 +4868,16 @@ function OppHandStrip({hand, sleeveUri, alias, onZoneRequest}){
         height:STRIP_H,
         pointerEvents:"none",
         zIndex:9000,
-        display:"flex", alignItems:"center", justifyContent:"center",
         transform:"rotate(180deg)",
       }}>
+        {/* v7.6.4: invisible interactive zone — right-click anywhere along
+            the top strip to open the zone-request modal. No visible label. */}
         <div onContextMenu={handleCtx} style={{
-          padding:"6px 18px",
-          border:"1px dashed rgba(200,168,112,.22)",
-          borderRadius:6,
-          background:"linear-gradient(180deg,rgba(200,168,112,.05),rgba(200,168,112,0))",
-          color:"rgba(200,168,112,.55)",
-          fontFamily:"Cinzel, serif", fontSize:10, letterSpacing:"0.15em",
+          position:"absolute",
+          left:"30%", right:"30%", top:0, bottom:0,
           pointerEvents:"auto",
           cursor: onZoneRequest ? "context-menu" : "default",
-        }}>
-          ✋ {alias ? `${alias.toUpperCase()} · HAND` : "OPPONENT HAND"} · 0
-        </div>
+        }}/>
       </div>
     );
   }
@@ -4132,16 +4898,9 @@ function OppHandStrip({hand, sleeveUri, alias, onZoneRequest}){
       transform:"rotate(180deg)",
       transformOrigin:"center center",
     }}>
-      <div onContextMenu={handleCtx} style={{
-        position:"absolute", top:6, left:14,
-        fontSize:10, fontFamily:"Cinzel, serif",
-        color:"rgba(200,168,112,.6)", letterSpacing:"0.12em",
-        textShadow:"0 1px 3px rgba(0,0,0,.8)",
-        pointerEvents:"auto",
-        cursor: onZoneRequest ? "context-menu" : "default",
-      }}>
-        ✋ {alias ? `${alias.toUpperCase()} · HAND` : "OPP HAND"} · {total}
-      </div>
+      {/* v7.6.4: label removed — users found "✋ ALIAS · HAND · N" noisy. The
+          face-down sleeves themselves communicate the zone clearly. Right-
+          click is still bound to each sleeve to open the zone-request modal. */}
       {(hand || []).map((_card, idx) => {
         const x = startX + idx * step;
         const mid = (total - 1) / 2;
@@ -4269,7 +5028,7 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
               transition:"transform .18s cubic-bezier(0.34,1.5,0.64,1)",
               outline:"none",
               borderRadius:7,
-              boxShadow:isSel?"0 0 0 3px #c8a870,0 0 18px #c8a87080,0 0 6px #c8a87040":
+              boxShadow:isSel?`0 0 0 3px ${T.accent},0 0 18px ${T.accent}80,0 0 6px ${T.accent}40`:
                         isHov?"0 8px 24px rgba(0,0,0,.85),0 0 16px rgba(200,168,112,.25)":"none",
             }}
             onMouseEnter={()=>setHovered(card)}
@@ -4328,7 +5087,7 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
 
 /* Deck Viewer panel - bottom strip like Untap.in */
 /* ─── ZoneViewerModal ─────────────────────────────────────────────── */
-function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,onClose,onBulkExile,onBulkShuffle}){
+function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,onClose,onBulkExile,onBulkShuffle,onRequestCardAction}){
   const [search,setSearch]=useState("");
   const [typeTab,setTypeTab]=useState("All");
   const [localCtx,setLocalCtx]=useState(null);
@@ -4388,6 +5147,19 @@ function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,
       items.push({icon:"↑",label:`→ Top of Library${suffix}`,   action:()=>applyToTargets(card,"library-top")});
       items.push({icon:"↓",label:`→ Bottom of Library${suffix}`,action:()=>applyToTargets(card,"library-bottom")});
       items.push({icon:"🔀",label:`Shuffle into Library${suffix}`,action:()=>applyToTargets(card,"shuffle")});
+    }
+    // v7.6.4: opponent zones — actions are REQUESTS that the owner approves.
+    // On grant the cards actually move zones (handled by the receiver of
+    // the card_action_request event; not enforced as a rules engine here).
+    if(zone==="opp_hand" && onRequestCardAction){
+      const targets=getTargets(card);
+      const reqAction=(action,actionLabel)=>{
+        onRequestCardAction({zone, action, actionLabel, cards: targets});
+        setSelected(new Set());
+      };
+      items.push({icon:"⚔",label:`Request: put under my control${suffix}`,action:()=>reqAction("steal","put under requester's control"),color:"#fbbf24"});
+      items.push({icon:"☠",label:`Request: discard${suffix}`,            action:()=>reqAction("discard","discarded to graveyard"),color:"#a78bfa"});
+      items.push({icon:"✦",label:`Request: exile${suffix}`,              action:()=>reqAction("exile","exiled"),color:"#60a5fa"});
     }
     return items;
   };
@@ -4449,22 +5221,45 @@ function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,
             style={{...btn("rgba(251,191,36,.08)","#fbbf24",{border:"1px solid rgba(251,191,36,.2)",fontSize:9,padding:"4px 11px",fontFamily:"Cinzel,serif"})}}
             onMouseOver={hov} onMouseOut={uhov} title="Shuffle all into library">🔀 Shuffle All</button>
         )}
-        <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        {/* v7.6.4: opp_hand bulk request buttons. Send a card_action_request
+            for whatever's in `selected`. Owner gets a prompt; on grant the
+            cards actually move zones. */}
+        {zone==="opp_hand" && onRequestCardAction && selected.size>0 && (() => {
+          const targets = cards.filter(c=>selected.has(c.iid));
+          const req = (action, label) => {
+            onRequestCardAction({zone, action, actionLabel: label, cards: targets});
+            setSelected(new Set());
+          };
+          return (
+            <>
+              <button onClick={e=>{e.stopPropagation();req("steal","put under requester's control");}}
+                style={{...btn("rgba(251,191,36,.1)","#fbbf24",{border:"1px solid rgba(251,191,36,.3)",fontSize:9,padding:"4px 11px",fontFamily:"Cinzel,serif"})}}
+                onMouseOver={hov} onMouseOut={uhov} title="Request to steal these cards">⚔ Request Steal ({selected.size})</button>
+              <button onClick={e=>{e.stopPropagation();req("discard","discarded to graveyard");}}
+                style={{...btn("rgba(167,139,250,.1)","#a78bfa",{border:"1px solid rgba(167,139,250,.3)",fontSize:9,padding:"4px 11px",fontFamily:"Cinzel,serif"})}}
+                onMouseOver={hov} onMouseOut={uhov} title="Request to discard these cards">☠ Request Discard ({selected.size})</button>
+              <button onClick={e=>{e.stopPropagation();req("exile","exiled");}}
+                style={{...btn("rgba(96,165,250,.1)","#60a5fa",{border:"1px solid rgba(96,165,250,.3)",fontSize:9,padding:"4px 11px",fontFamily:"Cinzel,serif"})}}
+                onMouseOver={hov} onMouseOut={uhov} title="Request to exile these cards">✦ Request Exile ({selected.size})</button>
+            </>
+          );
+        })()}
+        <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
       </div>
 
       {/* Type filter tabs */}
       <div style={{display:"flex",gap:3,padding:"6px 16px",flexShrink:0,flexWrap:"wrap",borderBottom:`1px solid ${color}15`}}>
         {typesPresent.map(t=>(
           <button key={t} onClick={e=>{e.stopPropagation();setTypeTab(t);}}
-            style={{...btn(typeTab===t?`${color}20`:"transparent",typeTab===t?color:"#4a6a8a",
-              {fontSize:9,border:`1px solid ${typeTab===t?color+"40":"#1e3a5f20"}`,padding:"3px 9px",borderRadius:4})}}
+            style={{...btn(typeTab===t?`${color}20`:"transparent",typeTab===t?color: T.muted,
+              {fontSize:9,border:`1px solid ${typeTab===t?color+"40":"${T.border}20"}`,padding:"3px 9px",borderRadius:4})}}
             onMouseOver={hov} onMouseOut={uhov}>{t}</button>
         ))}
       </div>
 
       {/* Selection hint */}
       {filtered.length>0&&(
-        <div style={{padding:"4px 18px",fontSize:8,color:"#3a5a7a",fontFamily:"Cinzel,serif",flexShrink:0}}>
+        <div style={{padding:"4px 18px",fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",flexShrink:0}}>
           Left-click to select · Shift+click for range · Right-click for actions
         </div>
       )}
@@ -4610,7 +5405,7 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
         {searchZone==="library"&&<button onClick={()=>{onShuffle();onClose();}}
           style={{...btn("rgba(251,191,36,.08)","#fbbf24",{border:"1px solid rgba(251,191,36,.2)",fontSize:10})}}
           onMouseOver={hov} onMouseOut={uhov}>🔀 Shuffle & Close</button>}
-        <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
       </div>
       <div style={{display:"flex",gap:3,padding:"5px 16px",flexShrink:0,flexWrap:"wrap",borderBottom:`1px solid ${col}15`}}>
         {Object.keys(zoneCards).map(z=>(
@@ -4619,8 +5414,8 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
             setSearchZone(z);setLibTypeTab("All");
           }}
             style={{...btn(searchZone===z?`${zoneColor[z]}25`:"transparent",
-              needsRequest[z]?"#3a4a5a":searchZone===z?zoneColor[z]:"#4a6a8a",
-              {fontSize:9,border:`1px solid ${searchZone===z?zoneColor[z]+"50":"#1e3a5f20"}`,
+              needsRequest[z]?"#3a4a5a":searchZone===z?zoneColor[z]:T.muted,
+              {fontSize:9,border:`1px solid ${searchZone===z?zoneColor[z]+"50":"${T.border}20"}`,
                padding:"3px 8px",borderRadius:4,opacity:needsRequest[z]?.7:1})}}
             title={needsRequest[z]?"Click to request access from opponent":undefined}
             onMouseOver={hov} onMouseOut={uhov}>
@@ -4631,8 +5426,8 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
       <div style={{display:"flex",gap:3,padding:"4px 16px",flexShrink:0,flexWrap:"wrap",borderBottom:`1px solid ${col}10`}}>
         {typesPresent.map(t=>(
           <button key={t} onClick={()=>setLibTypeTab(t)}
-            style={{...btn(libTypeTab===t?`${col}20`:"transparent",libTypeTab===t?col:"#4a6a8a",
-              {fontSize:8,border:`1px solid ${libTypeTab===t?col+"40":"#1e3a5f15"}`,padding:"2px 7px",borderRadius:3})}}
+            style={{...btn(libTypeTab===t?`${col}20`:"transparent",libTypeTab===t?col:T.muted,
+              {fontSize:8,border:`1px solid ${libTypeTab===t?col+"40":"${T.border}15"}`,padding:"2px 7px",borderRadius:3})}}
             onMouseOver={hov} onMouseOut={uhov}>{t}</button>
         ))}
       </div>
@@ -4699,7 +5494,7 @@ function DeckViewer({library,revealTop,onClose,onCtx,onHover,onDragStart,onDraw,
         </span>
         {revealTop&&(
           <div style={{display:"flex",alignItems:"center",gap:4,flex:1}}>
-            <span style={{fontSize:12,color:"#6a7a8a"}}>🔍</span>
+            <span style={{fontSize:12,color: T.muted}}>🔍</span>
             <input value={search} onChange={e=>setSearch(e.target.value)}
               placeholder="Find card in deck…"
               style={{...{display:"block",width:"100%",padding:"3px 8px",background:"rgba(5,10,18,.8)",
@@ -4712,7 +5507,7 @@ function DeckViewer({library,revealTop,onClose,onCtx,onHover,onDragStart,onDraw,
         <div style={{flex:1}}/>
         <button onClick={onDraw} style={{...btn("rgba(59,130,246,.1)","#60a5fa",{fontSize:9,border:"1px solid rgba(59,130,246,.2)",padding:"3px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>Draw</button>
         <button onClick={onShuffle} style={{...btn("rgba(251,191,36,.08)","#fbbf24",{fontSize:9,border:"1px solid rgba(251,191,36,.15)",padding:"3px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>Shuffle</button>
-        <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:14,border:"none",padding:"2px 6px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:14,border:"none",padding:"2px 6px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
       </div>
       <div style={{display:"flex",gap:3,padding:"6px 8px",overflowX:"auto",alignItems:"center",minHeight:90}}>
         {!revealTop&&(
@@ -4732,7 +5527,7 @@ function DeckViewer({library,revealTop,onClose,onCtx,onHover,onDragStart,onDraw,
           </div>
         ))}
         {revealTop&&search&&filtered.length===0&&(
-          <div style={{color:"#3a5a7a",fontFamily:"Cinzel,serif",fontSize:10,padding:"0 20px"}}>No cards match "{search}"</div>
+          <div style={{color: T.muted,fontFamily:"Cinzel,serif",fontSize:10,padding:"0 20px"}}>No cards match "{search}"</div>
         )}
       </div>
     </div>
@@ -4740,6 +5535,217 @@ function DeckViewer({library,revealTop,onClose,onCtx,onHover,onDragStart,onDraw,
 }
 
 /* Scry modal — show top N cards, drag to reorder, send top/bottom/grave/exile */
+/* ─── v7.6.4 SharedZones — Dandân shared library + graveyard ─────────────
+   Rendered as a fixed-position overlay at the center of the screen when
+   gamemode === 'dandan'. Visualizes the SHARED library and graveyard
+   (which both players' player.library/player.graveyard already point at,
+   thanks to the shared-array trick in startGame). Click the library pile
+   to draw to your own hand; right-click for a small menu. Click the
+   graveyard pile to open the existing graveyard viewer.
+*/
+function SharedZones({ player, draw, mill, onOpenGrave, onOpenLib, addLog, T }){
+  if(!player) return null;
+  const libCount = (player.library || []).length;
+  const graveCount = (player.graveyard || []).length;
+  const sleeve = player.deck?.sleeveUri || CARD_BACK;
+  // Top of graveyard for thumbnail
+  const topGrave = graveCount > 0 ? player.graveyard[graveCount - 1] : null;
+  const topGraveImg = topGrave ? (getImg(topGrave) || CARD_BACK) : null;
+
+  const PILE_W = 70;
+  const PILE_H = Math.round(PILE_W * 1.4);
+
+  return (
+    <div style={{
+      position:"fixed",
+      top:"50%", left:"50%",
+      transform:"translate(-50%, -50%)",
+      zIndex:850,
+      pointerEvents:"none",
+      display:"flex", gap:18, alignItems:"center",
+    }}>
+      {/* Shared library */}
+      <div
+        onClick={() => { draw(1); }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          // Quick menu
+          const choice = window.prompt(`Draw how many cards from shared library? (${libCount} remaining)`, "1");
+          const n = Math.max(1, Math.min(libCount, parseInt(choice||"1",10) || 1));
+          if(n > 0) draw(n);
+        }}
+        title={`🐟 Shared Library — ${libCount} cards · click to draw, right-click to draw N`}
+        style={{
+          width: PILE_W, height: PILE_H,
+          borderRadius: 6,
+          border: "2px solid rgba(168,85,247,.55)",
+          background: `linear-gradient(160deg, rgba(168,85,247,.15), rgba(2,4,10,.85))`,
+          boxShadow: "0 6px 20px rgba(0,0,0,.7), 0 0 14px rgba(168,85,247,.25)",
+          cursor: "pointer",
+          pointerEvents: "auto",
+          position: "relative", overflow: "hidden",
+          transition: "transform .15s ease, box-shadow .15s ease",
+        }}
+        onMouseOver={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 10px 24px rgba(0,0,0,.8), 0 0 22px rgba(168,85,247,.45)";}}
+        onMouseOut={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="0 6px 20px rgba(0,0,0,.7), 0 0 14px rgba(168,85,247,.25)";}}
+      >
+        {/* Card-back image as the library "spine" */}
+        <img src={sleeve} alt="" loading="eager" draggable={false}
+          style={{position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity:.65}}
+          onError={(e)=>{ e.currentTarget.src = CARD_BACK; }}
+        />
+        {/* Tinted overlay so this reads as 'shared' not just a normal deck */}
+        <div style={{position:"absolute", inset:0, background:"linear-gradient(180deg, rgba(168,85,247,.0), rgba(168,85,247,.35))", pointerEvents:"none"}}/>
+        {/* Count + label */}
+        <div style={{
+          position:"absolute", left:0, right:0, top:4,
+          textAlign:"center",
+          fontFamily:"Cinzel, serif", fontSize:8, color:"#e0d4ff",
+          letterSpacing:".15em", textShadow:"0 1px 3px rgba(0,0,0,.95)",
+        }}>SHARED</div>
+        <div style={{
+          position:"absolute", left:0, right:0, bottom:6,
+          textAlign:"center",
+          fontFamily:"Cinzel Decorative, serif", fontSize:18, color:"#fff",
+          textShadow:"0 1px 4px rgba(0,0,0,.95), 0 0 6px rgba(168,85,247,.8)",
+        }}>{libCount}</div>
+      </div>
+
+      {/* Center label between the piles */}
+      <div style={{
+        fontFamily:"Cinzel Decorative, serif",
+        fontSize:11, letterSpacing:".25em",
+        color:"#c084fc",
+        textShadow:"0 2px 6px rgba(0,0,0,.9), 0 0 12px rgba(168,85,247,.5)",
+        opacity:.85,
+      }}>🐟 DANDÂN</div>
+
+      {/* Shared graveyard */}
+      <div
+        onClick={() => { if(onOpenGrave) onOpenGrave(); }}
+        title={`☠ Shared Graveyard — ${graveCount} cards · click to view`}
+        style={{
+          width: PILE_W, height: PILE_H,
+          borderRadius: 6,
+          border: "2px solid rgba(167,139,250,.5)",
+          background: graveCount === 0
+            ? "linear-gradient(160deg, rgba(167,139,250,.06), rgba(2,4,10,.85))"
+            : "rgba(2,4,10,.85)",
+          boxShadow: "0 6px 20px rgba(0,0,0,.7)",
+          cursor: graveCount > 0 ? "pointer" : "default",
+          pointerEvents: "auto",
+          position: "relative", overflow: "hidden",
+          transition: "transform .15s ease, box-shadow .15s ease",
+          opacity: graveCount === 0 ? .5 : 1,
+        }}
+        onMouseOver={e=>{ if(graveCount>0){ e.currentTarget.style.transform="translateY(-2px)"; e.currentTarget.style.boxShadow="0 10px 24px rgba(0,0,0,.8), 0 0 16px rgba(167,139,250,.4)"; } }}
+        onMouseOut={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow="0 6px 20px rgba(0,0,0,.7)";}}
+      >
+        {topGraveImg && (
+          <img src={topGraveImg} alt="" loading="eager" draggable={false}
+            style={{position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover"}}
+          />
+        )}
+        <div style={{position:"absolute", inset:0, background:"linear-gradient(180deg, rgba(167,139,250,.0), rgba(167,139,250,.3))", pointerEvents:"none"}}/>
+        <div style={{
+          position:"absolute", left:0, right:0, top:4,
+          textAlign:"center",
+          fontFamily:"Cinzel, serif", fontSize:8, color:"#d8c4ff",
+          letterSpacing:".15em", textShadow:"0 1px 3px rgba(0,0,0,.95)",
+        }}>☠ GRAVE</div>
+        <div style={{
+          position:"absolute", left:0, right:0, bottom:6,
+          textAlign:"center",
+          fontFamily:"Cinzel Decorative, serif", fontSize:18, color:"#fff",
+          textShadow:"0 1px 4px rgba(0,0,0,.95)",
+        }}>{graveCount}</div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ─── v7.6.4 Dandân info modal ──────────────────────────────────────────
+   Shown when player clicks the 📜 button in the in-game header during a
+   Dandân match. Displays format rules + the chosen variant's strategy. */
+function DandanInfoModal({variantId, onClose}){
+  const v = DANDAN_VARIANTS.find(x=>x.variantId===variantId) || DANDAN_VARIANTS[0];
+  return(
+    <div className="fade-in" onClick={onClose}
+      style={{position:"fixed",inset:0,background:"rgba(2,4,10,.92)",zIndex:99990,
+        display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(6px)"}}>
+      <div onClick={e=>e.stopPropagation()} className="slide-in"
+        style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+          border:"1px solid rgba(168,85,247,.5)",borderRadius:12,padding:24,
+          width:640,maxHeight:"86vh",overflowY:"auto",
+          boxShadow:"0 24px 80px rgba(0,0,0,.95), 0 0 30px rgba(168,85,247,.15)",
+          fontFamily:"Crimson Text,serif",position:"relative"}}>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:2,
+          background:"linear-gradient(90deg,transparent,#a855f7,transparent)"}}/>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <h3 style={{color:"#c084fc",fontFamily:"Cinzel Decorative,serif",fontSize:16,margin:0,letterSpacing:".05em"}}>
+            🐟 {DANDAN_RULES.title}
+          </h3>
+          <button onClick={onClose} style={{...btn("transparent",T.text,{fontSize:18,border:"none"})}}>✕</button>
+        </div>
+
+        <div style={{fontSize:11,color:"#a8a0c0",lineHeight:1.6,marginBottom:16,padding:"8px 10px",background:"rgba(168,85,247,.05)",borderLeft:"2px solid rgba(168,85,247,.4)",borderRadius:3}}>
+          {DANDAN_RULES.intro}
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:10,color:"#c084fc",fontFamily:"Cinzel,serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:6}}>
+            Rules
+          </div>
+          <ul style={{margin:0,paddingLeft:18,fontSize:11,color:"#c0bcd0",lineHeight:1.7}}>
+            {DANDAN_RULES.rules.map((r,i)=><li key={i} style={{marginBottom:3}}>{r}</li>)}
+          </ul>
+          <div style={{marginTop:10,padding:"6px 10px",background:"rgba(251,191,36,.08)",border:"1px solid rgba(251,191,36,.25)",borderRadius:4,fontSize:10,color:"#fbbf24",fontStyle:"italic"}}>
+            ⚠ {DANDAN_RULES.noteOnEnforcement}
+          </div>
+        </div>
+
+        <div style={{marginBottom:16,padding:14,background:"rgba(168,85,247,.06)",border:"1px solid rgba(168,85,247,.25)",borderRadius:6}}>
+          <div style={{fontSize:10,color:"#c084fc",fontFamily:"Cinzel,serif",letterSpacing:".15em",textTransform:"uppercase",marginBottom:6}}>
+            Active Variant
+          </div>
+          <div style={{fontSize:14,color:"#e0d4ff",fontFamily:"Cinzel,serif",marginBottom:8,letterSpacing:".03em"}}>
+            {v.name}
+          </div>
+          <div style={{fontSize:11,color:"#c0bcd0",lineHeight:1.6,marginBottom:10}}>
+            {v.description}
+          </div>
+          <div style={{fontSize:10,color:"#a78bfa",fontFamily:"Cinzel,serif",letterSpacing:".1em",marginBottom:4,textTransform:"uppercase"}}>
+            Strategy
+          </div>
+          <div style={{fontSize:11,color:"#c0bcd0",lineHeight:1.6,marginBottom:10}}>
+            {v.strategy}
+          </div>
+          {v.keyCards && v.keyCards.length>0 && (
+            <>
+              <div style={{fontSize:10,color:"#a78bfa",fontFamily:"Cinzel,serif",letterSpacing:".1em",marginBottom:4,textTransform:"uppercase"}}>
+                Key Cards
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                {v.keyCards.map((kc,i)=>(
+                  <span key={i} style={{fontSize:10,padding:"2px 8px",background:"rgba(168,85,247,.1)",border:"1px solid rgba(168,85,247,.25)",borderRadius:3,color:"#d8c4ff"}}>
+                    {kc}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div style={{textAlign:"right"}}>
+          <button onClick={onClose} style={{...btn("rgba(168,85,247,.15)","#c084fc",{padding:"6px 16px",fontFamily:"Cinzel,serif",border:"1px solid rgba(168,85,247,.35)"})}}
+            onMouseOver={hov} onMouseOut={uhov}>Got it</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScryModal({cards,mode,onConfirm,onClose}){
   const [order,setOrder]=useState(cards.map((_,i)=>i));
   const [decisions,setDecisions]=useState({}); // idx -> "top"|"bottom"|"graveyard"|"exile"
@@ -4766,8 +5772,8 @@ function ScryModal({cards,mode,onConfirm,onClose}){
   };
   const dBtn=(idx,d,label,col)=>(
     <button onClick={()=>decide(idx,d)}
-      style={{...btn(decisions[idx]===d?`${col}30`:`${T.bg}99`,decisions[idx]===d?col:"#4a6a8a",
-        {fontSize:8,padding:"2px 5px",border:`1px solid ${decisions[idx]===d?col+"50":"#1e3a5f30"}`,borderRadius:3})}}
+      style={{...btn(decisions[idx]===d?`${col}30`:`${T.bg}99`,decisions[idx]===d?col:T.muted,
+        {fontSize:8,padding:"2px 5px",border:`1px solid ${decisions[idx]===d?col+"50":"${T.border}30"}`,borderRadius:3})}}
       onMouseOver={hov} onMouseOut={uhov}>{label}</button>
   );
   return(
@@ -4777,7 +5783,7 @@ function ScryModal({cards,mode,onConfirm,onClose}){
         border:`1px solid ${T.accent}50`,borderRadius:12,padding:22,
         maxWidth:600,width:"90vw",boxShadow:"0 24px 80px rgba(0,0,0,.95)"}}>
         <h3 style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:14,marginBottom:6}}>{mode==="surveil"?"🔍 Surveil":"🔮 Scry"} {cards.length}</h3>
-        <div style={{fontSize:9,color:"#6a7a8a",marginBottom:12,fontFamily:"Crimson Text,serif"}}>
+        <div style={{fontSize:9,color: T.muted,marginBottom:12,fontFamily:"Crimson Text,serif"}}>
           {mode==="look"?"Drag to reorder, then confirm to put back on top in this order."
            :mode==="surveil"?"Drag to reorder. Cards default to top. Send to graveyard if desired."
            :"Default = keep on top. Drag to reorder. Use buttons to send to bottom, graveyard, or exile."}
@@ -4798,7 +5804,7 @@ function ScryModal({cards,mode,onConfirm,onClose}){
                     {d==="bottom"?"⬇":d==="graveyard"?"☠":"✦"}
                   </div>}
                 </div>
-                <div style={{fontSize:8,color:"#6a7a8a",maxWidth:52,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{card.name}</div>
+                <div style={{fontSize:8,color: T.muted,maxWidth:52,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{card.name}</div>
                 <div style={{display:"flex",gap:2,flexWrap:"wrap",justifyContent:"center"}}>
                   {mode!=="look"&&dBtn(i,"top","⬆Top","#4ade80")}
                   {mode!=="look"&&dBtn(i,"bottom","⬇Bot","#60a5fa")}
@@ -4810,8 +5816,8 @@ function ScryModal({cards,mode,onConfirm,onClose}){
           })}
         </div>
         <div style={{display:"flex",gap:8}}>
-          <button onClick={onClose} style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
-          <button onClick={confirm} style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,fontFamily:"Cinzel,serif",fontWeight:700})}} onMouseOver={hov} onMouseOut={uhov}>✦ Confirm</button>
+          <button onClick={onClose} style={{...btn(`${T.panel}99`,T.text,{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+          <button onClick={confirm} style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:2,fontFamily:"Cinzel,serif",fontWeight:700})}} onMouseOver={hov} onMouseOut={uhov}>✦ Confirm</button>
         </div>
       </div>
     </div>
@@ -4861,7 +5867,7 @@ function HotkeyHelp({onClose}){
   const Row=({k,label})=>(
     <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0",
       borderBottom:"1px solid rgba(200,168,112,.06)"}}>
-      <span style={{background:"rgba(200,168,112,.12)",color:T.accent,fontFamily:"Cinzel,serif",
+      <span style={{background:`rgba(${T.accentRgb},.12)`,color:T.accent,fontFamily:"Cinzel,serif",
         fontSize:10,padding:"2px 7px",borderRadius:4,border:"1px solid rgba(200,168,112,.25)",
         minWidth:70,textAlign:"center",whiteSpace:"nowrap",flexShrink:0}}>{k}</span>
       <span style={{fontSize:11,color:"#d4c5a0",fontFamily:"Crimson Text,serif"}}>{label}</span>
@@ -4880,21 +5886,21 @@ function HotkeyHelp({onClose}){
           display:"flex",alignItems:"center",justifyContent:"space-between",zIndex:1}}>
           <div>
             <div style={{color:T.accent,fontFamily:"Cinzel Decorative,serif",fontSize:15}}>⌨ Hotkey Help</div>
-            <div style={{fontSize:10,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginTop:2}}>
+            <div style={{fontSize:10,color: T.muted,fontFamily:"Cinzel,serif",marginTop:2}}>
               Hover card hotkeys work when your mouse is over a card
             </div>
           </div>
-          <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:18,border:"none"})}}
+          <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:18,border:"none"})}}
             onMouseOver={hov} onMouseOut={uhov}>✕</button>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:24}}>
           <div>
-            <div style={{fontSize:10,color:"#6a7a8a",fontFamily:"Cinzel,serif",letterSpacing:".15em",
+            <div style={{fontSize:10,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".15em",
               textTransform:"uppercase",marginBottom:10}}>Global Hotkeys</div>
             {GLOBAL.map(([k,l])=><Row key={k} k={k} label={l}/>)}
           </div>
           <div>
-            <div style={{fontSize:10,color:"#6a7a8a",fontFamily:"Cinzel,serif",letterSpacing:".15em",
+            <div style={{fontSize:10,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".15em",
               textTransform:"uppercase",marginBottom:10}}>Hover Card Hotkeys</div>
             {HOVER.map(([k,l])=><Row key={k} k={k} label={l}/>)}
           </div>
@@ -4946,7 +5952,7 @@ function MatCropEditor({url,onApply,onSave,name}){
   const Slider=({label,value,min,max,onChange,unit="%",step=1})=>(
     <div style={{marginBottom:8}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-        <span style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel,serif",letterSpacing:".08em"}}>{label}</span>
+        <span style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".08em"}}>{label}</span>
         <span style={{fontSize:8,color:T.accent,fontFamily:"Cinzel,serif"}}>{value}{unit}</span>
       </div>
       <input type="range" min={min} max={max} step={step} value={value}
@@ -4974,18 +5980,18 @@ function MatCropEditor({url,onApply,onSave,name}){
             userSelect:"none",
           }}/>
         {/* Playmat-ratio preview */}
-        <div style={{fontSize:7,color:"#3a5a7a",fontFamily:"Cinzel,serif",marginTop:4,textAlign:"center"}}>Drag to reposition · Zoom with slider below</div>
+        <div style={{fontSize:7,color: T.muted,fontFamily:"Cinzel,serif",marginTop:4,textAlign:"center"}}>Drag to reposition · Zoom with slider below</div>
       </div>
 
       {/* Controls */}
       <div style={{flex:1,minWidth:200}}>
         <div style={{marginBottom:12}}>
-          <div style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:6}}>SIZING MODE</div>
+          <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:6}}>SIZING MODE</div>
           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
             {[["cover","Fill (Cover)"],["contain","Fit (Contain)"],["scale","Zoom %"],["custom","Custom"]].map(([v,l])=>(
               <button key={v} onClick={()=>setSize(v)}
-                style={{...btn(size===v?`${T.accent}20`:"transparent",size===v?T.accent:"#4a6a8a",
-                  {fontSize:8,border:`1px solid ${size===v?"rgba(200,168,112,.3)":"#1e3a5f20"}`,padding:"3px 8px",borderRadius:3})}}
+                style={{...btn(size===v?`${T.accent}20`:"transparent",size===v?T.accent:T.muted,
+                  {fontSize:8,border:`1px solid ${size===v?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"3px 8px",borderRadius:3})}}
                 onMouseOver={hov} onMouseOut={uhov}>{l}</button>
             ))}
           </div>
@@ -4994,7 +6000,7 @@ function MatCropEditor({url,onApply,onSave,name}){
         {size==="scale"&&<Slider label="ZOOM" value={scale} min={50} max={400} onChange={setScale}/>}
         {size==="custom"&&(
           <div style={{marginBottom:8}}>
-            <div style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel,serif",marginBottom:3}}>CUSTOM SIZE (e.g. 120% or 800px)</div>
+            <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:3}}>CUSTOM SIZE (e.g. 120% or 800px)</div>
             <input value={customSize} onChange={e=>setCustomSize(e.target.value)} style={{...iS,fontSize:10,marginTop:0}}
               onFocus={e=>e.target.style.borderColor=T.accent} onBlur={e=>e.target.style.borderColor=T.border}/>
           </div>
@@ -5014,7 +6020,7 @@ function MatCropEditor({url,onApply,onSave,name}){
             onMouseOver={hov} onMouseOut={uhov}>💾 Save & Apply</button>
         </div>
         <button onClick={()=>{setScale(100);setPosX(50);setPosY(50);setBrightness(100);setSaturation(100);setSize("cover");}}
-          style={{...btn("transparent","#4a6a8a",{width:"100%",marginTop:6,fontSize:8,border:"none"})}}
+          style={{...btn("transparent",T.muted,{width:"100%",marginTop:6,fontSize:8,border:"none"})}}
           onMouseOver={hov} onMouseOut={uhov}>↺ Reset</button>
       </div>
     </div>
@@ -5077,8 +6083,8 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
         {/* Tabs */}
         {[["presets","🎨 Presets"],["art","🔍 MTG Art"],["custom","🔗 Custom URL"]].map(([t,l])=>(
           <button key={t} onClick={()=>setTab(t)}
-            style={{...btn(tab===t?`${T.accent}20`:"transparent",tab===t?T.accent:"#4a6a8a",
-              {border:`1px solid ${tab===t?"rgba(200,168,112,.4)":"#1e3a5f20"}`,fontSize:10,padding:"4px 12px"})}}
+            style={{...btn(tab===t?`${T.accent}20`:"transparent",tab===t?T.accent:T.muted,
+              {border:`1px solid ${tab===t?"rgba(${T.accentRgb},.4)":"${T.border}20"}`,fontSize:10,padding:"4px 12px"})}}
             onMouseOver={hov} onMouseOut={uhov}>{l}</button>
         ))}
         {tab==="art"&&(
@@ -5089,7 +6095,7 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
             autoFocus/>
         )}
         <div style={{flex:1}}/>
-        <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
       </div>
 
       {/* Art preset chips */}
@@ -5097,8 +6103,8 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
         <div style={{display:"flex",gap:4,padding:"6px 18px",flexShrink:0,flexWrap:"wrap",borderBottom:`1px solid ${T.accent}15`}}>
           {ART_PRESETS.map(p=>(
             <button key={p} onClick={()=>setQuery(p)}
-              style={{...btn(query===p?`${T.accent}20`:"transparent",query===p?T.accent:"#4a6a8a",
-                {fontSize:9,border:`1px solid ${query===p?"rgba(200,168,112,.3)":"#1e3a5f20"}`,padding:"2px 9px",borderRadius:3})}}
+              style={{...btn(query===p?`${T.accent}20`:"transparent",query===p?T.accent:T.muted,
+                {fontSize:9,border:`1px solid ${query===p?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"2px 9px",borderRadius:3})}}
               onMouseOver={hov} onMouseOut={uhov}>{p}</button>
           ))}
         </div>
@@ -5188,7 +6194,7 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
                 onMouseOver={hov} onMouseOut={uhov}>Load More…</button>
             </div>
           )}
-          {artLoading&&artResults.length>0&&<div style={{width:"100%",textAlign:"center",padding:10,color:"#4a6a8a",fontSize:9,fontFamily:"Cinzel,serif"}}>Loading…</div>}
+          {artLoading&&artResults.length>0&&<div style={{width:"100%",textAlign:"center",padding:10,color: T.muted,fontSize:9,fontFamily:"Cinzel,serif"}}>Loading…</div>}
           {!artLoading&&artResults.length===0&&query&&(
             <div style={{width:"100%",padding:20,textAlign:"center",color:T.border,fontFamily:"Cinzel,serif",fontSize:11,fontStyle:"italic"}}>
               No art found — try a different search
@@ -5199,7 +6205,7 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
             <div style={{width:"100%",borderTop:`1px solid ${T.accent}30`,paddingTop:14,marginTop:10}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
                 <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:11}}>✂ Crop & Adjust — {selectedArtForCrop.name}</span>
-                <button onClick={()=>setSelectedArtForCrop(null)} style={{...btn("transparent","#6a7a8a",{fontSize:13,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+                <button onClick={()=>setSelectedArtForCrop(null)} style={{...btn("transparent",T.muted,{fontSize:13,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
               </div>
               <MatCropEditor
                 url={selectedArtForCrop.url}
@@ -5214,7 +6220,7 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
         {/* CUSTOM URL TAB — with crop/resize/pan controls */}
         {tab==="custom"&&(
           <div style={{width:"100%",maxWidth:600}}>
-            <div style={{fontSize:9,color:"#4a6a8a",fontFamily:"Cinzel,serif",lineHeight:1.7,marginBottom:12}}>
+            <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",lineHeight:1.7,marginBottom:12}}>
               Paste any image URL, then use the controls to crop, zoom and pan it exactly how you want it on the playmat.
             </div>
             <input value={customUrl} onChange={e=>{setCustomUrl(e.target.value);}}
@@ -5232,7 +6238,7 @@ function GamematPicker({currentBg,customMats,onSelect,onSaveCustom,onClose}){
               name={customName}/>
             }
             {!customUrl&&(
-              <div style={{padding:"40px 20px",textAlign:"center",border:`1px dashed ${T.border}40`,borderRadius:8,color:"#3a5a7a",fontFamily:"Cinzel,serif",fontSize:10,fontStyle:"italic"}}>
+              <div style={{padding:"40px 20px",textAlign:"center",border:`1px dashed ${T.border}40`,borderRadius:8,color: T.muted,fontFamily:"Cinzel,serif",fontSize:10,fontStyle:"italic"}}>
                 Paste an image URL above to begin
               </div>
             )}
@@ -5298,7 +6304,7 @@ function FlyingCardAnim({cards,onDone}){
             width:"100%",height:"100%",
             transformStyle:"preserve-3d",
             borderRadius:5,
-            boxShadow:`0 10px 30px rgba(0,0,0,.9),0 0 20px ${c.glow||"rgba(200,168,112,.5)"}`,
+            boxShadow:`0 10px 30px rgba(0,0,0,.9),0 0 20px ${c.glow||"rgba(${T.accentRgb},.5)"}`,
             animation:`flyFlip_${id} ${dur}ms cubic-bezier(0.4,0,0.2,1) ${delay}ms both`,
           }}>
             <div style={{position:"absolute",inset:0,borderRadius:5,overflow:"hidden",backfaceVisibility:"hidden",WebkitBackfaceVisibility:"hidden"}}>
@@ -5358,7 +6364,7 @@ function OpponentTile({opp, seat, isActive, onPromote}){
           <div style={{fontSize:11,color:T.text,fontFamily:"Cinzel,serif",letterSpacing:".03em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
             {opp.profile?.alias||`Player ${seat+1}`}
           </div>
-          <div style={{fontSize:8,color:"#6a7a8a",letterSpacing:".08em",fontFamily:"Cinzel,serif",textTransform:"uppercase"}}>
+          <div style={{fontSize:8,color: T.muted,letterSpacing:".08em",fontFamily:"Cinzel,serif",textTransform:"uppercase"}}>
             Seat {seat+1} {isActive && <span style={{color:T.accent}}>· ACTIVE</span>}
           </div>
         </div>
@@ -5396,7 +6402,7 @@ function OpponentTile({opp, seat, isActive, onPromote}){
       </div>
 
       {/* Hand-as-sleeves + counts */}
-      <div style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:"#6a7a8a"}}>
+      <div style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color: T.muted}}>
         <span title="Library">📚{(opp.library||[]).length}</span>
         <span title="Graveyard">☠{(opp.graveyard||[]).length}</span>
         <span title="Exile">✦{(opp.exile||[]).length}</span>
@@ -5453,6 +6459,9 @@ function BoardSide({
   // a parent transform:rotate(180deg) (Phase 3), the overlay rotates with us.
   containerRef, hand, handRef, hovered, floatDrag,
   readOnly = false,
+  // v7.6.4: when 'dandan', hide the per-side library and graveyard piles
+  // (replaced by the central SharedZones component).
+  gamemode = null,
   // ── v7.6 Phase 4-B: zone-request trigger (opp side only) ──────────────
   // Called with (zoneName, event) when the viewer right-clicks the hand,
   // graveyard, or exile tile on a readOnly BoardSide. Only wired on the opp
@@ -5485,7 +6494,7 @@ function BoardSide({
               background:"radial-gradient(ellipse at 20% 30%,rgba(200,168,112,.015) 0%,transparent 50%),radial-gradient(ellipse at 80% 70%,rgba(96,165,250,.01) 0%,transparent 50%)",
               pointerEvents:"none"}}/>
             <div style={{position:"absolute",top:5,left:8,fontSize:7,
-              color:"rgba(200,168,112,.12)",fontFamily:"Cinzel,serif",letterSpacing:".2em",pointerEvents:"none",userSelect:"none"}}>
+              color:`rgba(${T.accentRgb},.12)`,fontFamily:"Cinzel,serif",letterSpacing:".2em",pointerEvents:"none",userSelect:"none"}}>
               {player.profile?.alias||""}
             </div>
             {/* Gamemat background — clipped to BF bounds */}
@@ -5565,10 +6574,10 @@ function BoardSide({
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
                     <h3 className="shimmer-text" style={{fontFamily:"Cinzel Decorative,serif",fontSize:16,letterSpacing:".06em"}}>⇄ Change Deck</h3>
                     <button onClick={()=>setShowChangeDeck(false)}
-                      style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,fontSize:10,padding:"4px 10px"})}}
+                      style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`,fontSize:10,padding:"4px 10px"})}}
                       onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
                   </div>
-                  <div style={{fontSize:11,color:"#6a7a8a",fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:16,padding:"8px 10px",borderRadius:6,background:"rgba(220,38,38,.06)",border:"1px solid rgba(220,38,38,.15)"}}>
+                  <div style={{fontSize:11,color: T.muted,fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:16,padding:"8px 10px",borderRadius:6,background:"rgba(220,38,38,.06)",border:"1px solid rgba(220,38,38,.15)"}}>
                     ⚠ This will scoop all your current cards (battlefield, hand, graveyard, exile, command)
                     and replace them with a fresh shuffled library + opening hand from the chosen deck.
                     Life, turn number, and phase are preserved.
@@ -5588,7 +6597,7 @@ function BoardSide({
                           <span style={{fontFamily:"Cinzel,serif",fontSize:12}}>
                             {d.id===player.deck?.id?"◉ ":""}{d.name}
                           </span>
-                          <span style={{fontSize:10,color:"#6a7a8a"}}>
+                          <span style={{fontSize:10,color: T.muted}}>
                             {(d.cards||[]).reduce((s,c)=>s+(c.count||1),0)} cards · {d.format||"standard"}
                           </span>
                         </button>
@@ -5643,19 +6652,22 @@ function BoardSide({
                         )}
                       </div>
                       {/* Name */}
-                      <div style={{fontSize:8,color:card.status?"#4a6a8a":T.accent,fontFamily:"Cinzel,serif",
+                      <div style={{fontSize:8,color:card.status?T.muted:T.accent,fontFamily:"Cinzel,serif",
                         textAlign:"center",maxWidth:player.command.length>2?46:72,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1}}>{card.name}</div>
                       {/* Tax counter — below portrait, symmetrical −/number/+. In
                           readOnly, buttons are hidden and the pill is display-only
                           so viewers still see opp's commander tax value. */}
                       <div style={{display:"flex",alignItems:"center",gap:3}}>
                         {!readOnly&&<button
-                          onClick={e=>{e.stopPropagation();upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:Math.max(0,(c.castCount||0)-1)}:c)}));}}
-                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:"rgba(200,168,112,.08)",border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
+                          onClick={e=>{e.stopPropagation();
+                            upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:Math.max(0,(c.castCount||0)-1)}:c)}));
+                            addLog(`💎 Commander tax −1 on ${card.name}`);
+                          }}
+                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:`rgba(${T.accentRgb},.08)`,border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
                           onMouseOver={hov} onMouseOut={uhov}>−</button>}
                         <div style={{display:"flex",alignItems:"center",gap:2,
-                          background:(card.castCount||0)>0?"rgba(251,191,36,.1)":"rgba(200,168,112,.06)",
-                          border:`1px solid ${(card.castCount||0)>0?"rgba(251,191,36,.4)":"rgba(200,168,112,.2)"}`,
+                          background:(card.castCount||0)>0?"rgba(251,191,36,.1)":`rgba(${T.accentRgb},.06)`,
+                          border:`1px solid ${(card.castCount||0)>0?"rgba(251,191,36,.4)":"rgba(${T.accentRgb},.2)"}`,
                           borderRadius:4,padding:player.command.length>2?"0 3px":"1px 5px",cursor:readOnly?"default":"pointer",minWidth:player.command.length>2?28:42,justifyContent:"center"}}
                           onClick={readOnly?undefined:(e=>{
                             e.stopPropagation();
@@ -5663,7 +6675,10 @@ function BoardSide({
                             const input=window.prompt("Set cast count:",String(cur));
                             if(input===null)return;
                             const n=parseInt(input);
-                            if(!isNaN(n)&&n>=0) upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:n}:c)}));
+                            if(!isNaN(n)&&n>=0){
+                              upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:n}:c)}));
+                              addLog(`💎 Commander tax set to ${n} on ${card.name}`);
+                            }
                           })}
                           title={readOnly?"Commander cast count":"Click to edit cast count"}>
                           <span style={{fontSize:player.command.length>2?7:9}}>💎</span>
@@ -5673,8 +6688,11 @@ function BoardSide({
                           </span>
                         </div>
                         {!readOnly&&<button
-                          onClick={e=>{e.stopPropagation();upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:(c.castCount||0)+1}:c)}));}}
-                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:"rgba(200,168,112,.08)",border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
+                          onClick={e=>{e.stopPropagation();
+                            upd(p=>({...p,command:p.command.map(c=>c.iid===card.iid?{...c,castCount:(c.castCount||0)+1}:c)}));
+                            addLog(`💎 Commander tax +1 on ${card.name}`);
+                          }}
+                          style={{width:player.command.length>2?13:18,height:player.command.length>2?13:18,borderRadius:3,background:`rgba(${T.accentRgb},.08)`,border:"1px solid rgba(200,168,112,.2)",color:T.accent,fontSize:player.command.length>2?9:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"Cinzel,serif",lineHeight:1}}
                           onMouseOver={hov} onMouseOut={uhov}>+</button>}
                       </div>
                     </div>
@@ -5685,14 +6703,17 @@ function BoardSide({
             )}
 
             {/* ── Deck widget ── */}
+            {/* v7.6.4: in Dandân, the library is shared and rendered in the
+                center of the screen by SharedZones — hide the per-side pile. */}
+            {gamemode!=="dandan" && (
             <div ref={libRef} className="drop-target"
               style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid ${T.border}20`,borderRadius:7,padding:"3px 3px 3px"}}>
               {/* Title row — compact, centered */}
               <div style={{textAlign:"center",lineHeight:1,marginBottom:2,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
                 <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em"}}>DECK</span>
                 <span style={{color:player.library.length<=5?"#f87171":player.library.length<=10?"#fbbf24":T.accent,fontSize:8}}>{player.library.length}</span>
-                {!readOnly&&<button onClick={()=>setShowSearchLib(v=>!v)}
-                  style={{...btn(`${T.panel}99`,"#8a99b0",{fontSize:7,border:`1px solid ${T.border}20`,padding:"0px 3px",lineHeight:"14px"})}}
+                {!readOnly&&<button onClick={()=>{addLog(`🔍 Searching library`); setShowSearchLib(v=>!v);}}
+                  style={{...btn(`${T.panel}99`,T.text,{fontSize:7,border:`1px solid ${T.border}20`,padding:"0px 3px",lineHeight:"14px"})}}
                   onMouseOver={hov} onMouseOut={uhov}>🔍</button>}
               </div>
               {/* Card landscape: portrait img rotated 90deg, centered via absolute positioning */}
@@ -5701,7 +6722,13 @@ function BoardSide({
                 onMouseDown={e=>{
                   if(e.button!==0||!player.library[0])return;
                   e.preventDefault();
-                  const t=setTimeout(()=>startFloatDrag(e,{...player.library[0],zone:"library"},"library"),300);
+                  const t=setTimeout(()=>{
+                    // v7.6.4 anti-cheat: log when the player begins dragging
+                    // the top of the library. This is a cheat-suspicious
+                    // action — the player is interacting with a private zone.
+                    addLog(`👁 Picked up top of library`);
+                    startFloatDrag(e,{...player.library[0],zone:"library"},"library");
+                  },300);
                   const cancel=()=>{clearTimeout(t);window.removeEventListener("mouseup",cancel);};
                   window.addEventListener("mouseup",cancel);
                 }}>
@@ -5713,7 +6740,7 @@ function BoardSide({
                     position:"absolute",
                     top:"50%",left:"50%",
                     transform:"translate(-50%,-50%) rotate(90deg)",
-                    border:`1px solid ${(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?T.accent:"#1e3a5f40"}`,
+                    border:`1px solid ${(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?T.accent:"${T.border}40"}`,
                     boxShadow:(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?`0 0 12px ${T.accent}40`:"0 3px 10px rgba(0,0,0,.7)",
                     cursor:player.library[0]?"grab":"default",
                   }}/>
@@ -5724,13 +6751,18 @@ function BoardSide({
                 </div>
               )}
             </div>
+            )}
 
             {/* Graveyard */}
             {/* Graveyard + Exile side by side */}
             <div style={{display:"flex",gap:3}}>
 
+              {/* v7.6.4: in Dandân the graveyard is shared and rendered in
+                  the center by SharedZones — hide the per-side pile. Exile
+                  remains per-player so it stays visible. */}
+              {gamemode!=="dandan" && (
               <div ref={graveRef} className="drop-target mtg-zone" data-zone="graveyard"
-                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid #1e3a5f20`,borderRadius:7,padding:"3px 3px 3px",cursor:readOnly?"context-menu":"pointer",minWidth:0}}
+                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid ${T.border}20`,borderRadius:7,padding:"3px 3px 3px",cursor:readOnly?"context-menu":"pointer",minWidth:0}}
                 onClick={readOnly?undefined:()=>setShowGraveViewer(true)}
                 onContextMenu={readOnly&&onZoneRequest?(e=>{e.preventDefault();onZoneRequest("graveyard",e);}):undefined}
                 onWheel={e=>{e.preventDefault();e.stopPropagation();
@@ -5763,9 +6795,10 @@ function BoardSide({
                 )}
                 </div>
               </div>
+              )}
 
               <div ref={exileRef} className="drop-target mtg-zone" data-zone="exile"
-                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid #1e3a5f20`,borderRadius:7,padding:"3px 3px 3px",cursor:readOnly?"context-menu":"pointer",minWidth:0}}
+                style={{flex:1,background:`linear-gradient(160deg,${T.panel},${T.bg})`,border:`1px solid ${T.border}20`,borderRadius:7,padding:"3px 3px 3px",cursor:readOnly?"context-menu":"pointer",minWidth:0}}
                 onClick={readOnly?undefined:()=>setShowExileViewer(true)}
                 onContextMenu={readOnly&&onZoneRequest?(e=>{e.preventDefault();onZoneRequest("exile",e);}):undefined}
                 onWheel={e=>{e.preventDefault();e.stopPropagation();
@@ -5921,6 +6954,8 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   const [stormCount,setStormCount]=useState(0);
   const [showStorm,setShowStorm]=useState(false);
   const [showHotkeys,setShowHotkeys]=useState(false);
+  // v7.6.4: Dandân format-info modal
+  const [showDandanInfo,setShowDandanInfo]=useState(false);
   const [showMillPrompt,setShowMillPrompt]=useState(false);
   const [showGamematPicker,setShowGamematPicker]=useState(false);
   const [gamematUrl,setGamematUrl]=useState(player.profile?.gamematCustom||"");
@@ -5941,6 +6976,11 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   const [incomingZoneRequest,setIncomingZoneRequest]=useState(null);
   const [revealedOppZones,setRevealedOppZones]=useState({});
   const [zoneRequestStatus,setZoneRequestStatus]=useState(null);
+  // v7.6.4: card-action request flow. Requester sends a request to apply
+  // an action (steal/discard/exile) to specific cards in opp's zone. Owner
+  // sees a prompt; on grant the cards actually move zones.
+  const [outgoingCardAction, setOutgoingCardAction] = useState(null);     // requester side: pending request
+  const [incomingCardAction, setIncomingCardAction] = useState(null);     // owner side: pending grant prompt
   const [showGraveViewer,setShowGraveViewer]=useState(false);
   const [showExileViewer,setShowExileViewer]=useState(false);
   const [sfxMuted,setSfxMuted]=useState(()=>{
@@ -6117,6 +7157,43 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
     });
   };
 
+  // v7.6.4: Request the opponent grant a card-action on specific cards.
+  // Sends a card_action_request event with the card iids + names + action.
+  // Owner gets a prompt; on grant they (the owner) apply the move locally,
+  // which propagates via the normal broadcast path.
+  const requestCardAction = useCallback(({zone, action, actionLabel, cards: targetCards}) => {
+    if(!opponent || !targetCards?.length) return;
+    const oppUid   = opponent?.profile?.userId;
+    const oppAlias = opponent?.profile?.alias || "Opponent";
+    const net      = window.__MTG_V7__?.netSync;
+    if(!oppUid || !net){
+      addLog("⚠ Offline or no opponent — can't send action request");
+      return;
+    }
+    const reqId = `car_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+    const summary = targetCards.map(c=>c.name).join(", ");
+    try {
+      net.appendEvent("card_action_request", {
+        reqId,
+        zone,
+        action,
+        actionLabel,
+        targetUserId: oppUid,
+        requesterUserId: authUser?.id,
+        requesterAlias: player?.profile?.alias || "Opponent",
+        cardIids: targetCards.map(c=>c.iid),
+        cardNames: targetCards.map(c=>c.name),
+        ts: Date.now(),
+      });
+    } catch (e) {
+      addLog("⚠ Failed to send action request");
+      console.warn("[requestCardAction]", e);
+      return;
+    }
+    addLog(`⚔ Requested: ${actionLabel} → ${summary}`);
+    setOutgoingCardAction({reqId, zone, action, actionLabel, oppAlias, cardNames: targetCards.map(c=>c.name), ts: Date.now()});
+  },[opponent, authUser, player, addLog]);
+
   // v7.4: hand-request flow event listeners
   useEffect(()=>{
     const onReq=(e)=>{
@@ -6158,6 +7235,44 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       window.removeEventListener("mtg:zone-deny",onDeny);
     };
   },[]);
+
+  // v7.6.4: card-action request flow.
+  useEffect(()=>{
+    const onCAReq = (e) => {
+      const d = e.detail || {};
+      setIncomingCardAction({
+        reqId: d.reqId,
+        zone: d.zone,
+        action: d.action,
+        actionLabel: d.actionLabel,
+        requesterUserId: d.requesterUserId,
+        requesterAlias: d.requesterAlias || "Opponent",
+        cardIids: d.cardIids || [],
+        cardNames: d.cardNames || [],
+        ts: Date.now(),
+      });
+    };
+    const onCAGrant = (e) => {
+      const d = e.detail || {};
+      setOutgoingCardAction(null);
+      addLog(`✓ ${d.ownerAlias || "Opponent"} granted: ${d.actionLabel || d.action} → ${(d.cardNames||[]).join(", ")}`);
+      // The actual card movement happens on the OWNER's side. Their broadcast
+      // delivers updated state to us via the normal hydration path.
+    };
+    const onCADeny = (e) => {
+      const d = e.detail || {};
+      setOutgoingCardAction(null);
+      addLog(`✕ ${d.ownerAlias || "Opponent"} denied the action request`);
+    };
+    window.addEventListener("mtg:card-action-request", onCAReq);
+    window.addEventListener("mtg:card-action-grant",   onCAGrant);
+    window.addEventListener("mtg:card-action-deny",    onCADeny);
+    return () => {
+      window.removeEventListener("mtg:card-action-request", onCAReq);
+      window.removeEventListener("mtg:card-action-grant",   onCAGrant);
+      window.removeEventListener("mtg:card-action-deny",    onCADeny);
+    };
+  },[addLog]);
 
   // v7.6 Phase 4: 30s timeout on outgoing zone request → "no response".
   useEffect(()=>{
@@ -6228,15 +7343,23 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
     const handler=(e)=>{
       const {iid}=e.detail;
       SFX.playAction("flip");
-      upd(p=>({
-        ...p,
-        battlefield:p.battlefield.map(c=>c.iid===iid?flipCardFace(c):c),
-        hand:p.hand.map(c=>c.iid===iid?flipCardFace(c):c),
-      }));
+      // Find card name for log entry
+      let cardName = null;
+      upd(p=>{
+        const findIn = arr => arr.find(c=>c.iid===iid);
+        const found = findIn(p.battlefield) || findIn(p.hand);
+        if (found) cardName = found.name;
+        return {
+          ...p,
+          battlefield:p.battlefield.map(c=>c.iid===iid?flipCardFace(c):c),
+          hand:p.hand.map(c=>c.iid===iid?flipCardFace(c):c),
+          log: cardName ? [`T${turn}:↔ Flipped ${cardName}`,...p.log].slice(0,80) : p.log,
+        };
+      });
     };
     window.addEventListener("mtg-flip-card",handler);
     return()=>window.removeEventListener("mtg-flip-card",handler);
-  },[flipCardFace,upd]);
+  },[flipCardFace,upd,turn]);
 
   const addSpark=(x,y,color)=>{
     const id=uid();
@@ -6472,7 +7595,8 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         graveyard:to==="graveyard"?add(rm(p.graveyard),nc):(from==="graveyard"?rm(p.graveyard):p.graveyard),
         exile:to==="exile"?add(rm(p.exile),nc):(from==="exile"?rm(p.exile):p.exile),
         command:to==="command"?add(rm(p.command),nc):(shouldRemoveFromCommand?rm(p.command):p.command),
-        log:[`T${turn}:${card.name} → ${to}`,...p.log].slice(0,80)};
+        // v7.6.4: log includes BOTH zones so audits can tell e.g. graveyard→hand from library→hand.
+        log:[`T${turn}:${card.name} · ${from}→${to}${pos==="top"?" (top)":pos==="bottom"&&to==="library"?" (bottom)":""}`,...p.log].slice(0,80)};
     });
     setSelected(new Set());
   },[upd,turn]);
@@ -6581,17 +7705,20 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
   const [millTarget,setMillTarget]=useState("graveyard"); // "graveyard"|"exile"
   const handToLib=()=>upd(p=>({...p,library:shuffleArr([...p.library,...p.hand.map(c=>({...c,zone:"library"}))]),hand:[],log:[`T${turn}:Hand → library`,...p.log].slice(0,80)}));
   const changeLife=useCallback((newLife)=>{
+    const delta = newLife - player.life;
     if(newLife>player.life) SFX.playAction("lifeGain");
     else if(newLife<player.life) SFX.playAction("lifeLoss");
     setPrevLife(player.life);
-    upd(p=>({...p,life:newLife}));
-  },[upd,player.life]);
+    upd(p=>({...p,life:newLife,
+      log:[`T${turn}:${delta>0?"♥+":"♥"}${delta} life · ${p.life} → ${newLife}`,...p.log].slice(0,80)}));
+  },[upd,player.life,turn]);
 
   const scry=useCallback((n)=>{
     const top=player.library.slice(0,n);
     if(!top.length)return;
     setScryData({cards:top});
-  },[player.library]);
+    addLog(`🔮 Scry ${n}`);
+  },[player.library,addLog]);
 
   const surveil=useCallback((n)=>{
     const top=player.library.slice(0,n);
@@ -6613,8 +7740,16 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       const newLib=[...tops,...rest,...bots];
       const newGrave=[...p.graveyard,...(grave||[]).map(c=>({...c,zone:"graveyard"}))];
       const newExile=[...p.exile,...(exl||[]).map(c=>({...c,zone:"exile"}))];
+      // v7.6.4 anti-cheat: log full disposition breakdown so opp can see
+      // exactly how many cards went where (top/bottom/grave/exile).
+      const parts = [];
+      if (tops?.length)  parts.push(`${tops.length}→top`);
+      if (bots?.length)  parts.push(`${bots.length}→bottom`);
+      if (grave?.length) parts.push(`${grave.length}→grave`);
+      if (exl?.length)   parts.push(`${exl.length}→exile`);
+      const summary = parts.length ? ` (${parts.join(", ")})` : "";
       return{...p,library:newLib,graveyard:newGrave,exile:newExile,
-        log:[`T${turn}:🔮 Scryed ${scryData.cards.length}`,...p.log].slice(0,80)};
+        log:[`T${turn}:🔮 Scryed ${scryData.cards.length}${summary}`,...p.log].slice(0,80)};
     });
     setScryData(null);
   },[upd,turn,scryData]);
@@ -6737,7 +7872,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           battlefield:p.battlefield.filter(c=>!iids.has(c.iid)),
           hand:[...p.hand,...toMove.map(c=>({...c,zone:"hand"}))],
           log:[`T${turn}: ${toMove.map(c=>c.name).join(", ")} → hand`,...p.log].slice(0,80)}));
-        addSpark(cx,cy,"#c8a870");
+        addSpark(cx,cy,`${T.accent}`);
       }
 
     }
@@ -6886,7 +8021,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
                 log:[`T${turn}:${floatDrag.card.name} → battlefield`,...p.log].slice(0,80)};
             });
           }
-          addSpark(cx,cy,"#c8a870");
+          addSpark(cx,cy,`${T.accent}`);
         }
       }
       else if(checkZ(graveRef)&&floatDrag){
@@ -6964,7 +8099,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         }else{
           moveCard(floatDrag.card,floatDrag.fromZone,"hand");
         }
-        addSpark(cx,cy,"#c8a870");
+        addSpark(cx,cy,`${T.accent}`);
       }
       setFloatDrag(null);
     };
@@ -6989,7 +8124,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       items.push({header:`${counterKey} counters`});
       items.push({icon:"+",label:`Add ${counterKey}`,action:()=>addCounter(card,counterKey,1),color:ct.color});
       items.push({icon:"−",label:`Remove ${counterKey}`,action:()=>addCounter(card,counterKey,-1),color:ct.color});
-      items.push({icon:"✕",label:`Remove ALL ${counterKey}`,action:()=>upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,counters:{...c.counters,[counterKey]:0}}:c)})),color:"#f87171"});
+      items.push({icon:"✕",label:`Remove ALL ${counterKey}`,action:()=>{upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,counters:{...c.counters,[counterKey]:0}}:c)})); addLog(`✕ Removed all ${counterKey} counters on ${card.name}`);},color:"#f87171"});
       return items;
     }
     const items=[{header:card.name}];
@@ -7011,10 +8146,12 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         items.push({icon:"⟳",label:"Tap All Selected",action:()=>{
           const ids=new Set(selected);
           upd(p=>({...p,battlefield:p.battlefield.map(c=>ids.has(c.iid)?{...c,tapped:true}:c)}));
+          addLog(`⟳ Tapped ${ids.size} cards`);
         },color:"#fbbf24"});
         items.push({icon:"⟳",label:"Untap All Selected",action:()=>{
           const ids=new Set(selected);
           upd(p=>({...p,battlefield:p.battlefield.map(c=>ids.has(c.iid)?{...c,tapped:false}:c)}));
+          addLog(`⟳ Untapped ${ids.size} cards`);
         },color:"#4ade80"});
         items.push({icon:"☠",label:"Send All → Graveyard",action:()=>{
           const ids=new Set(selected);
@@ -7028,9 +8165,12 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           cards.forEach(c=>copyCard(c,true));
         },color:"#818cf8"});
       }
-      items.push({icon:"↔",label:card.faceDown?"Show Front":"Transform (Face Down)",action:()=>upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,faceDown:!c.faceDown}:c)}))});
+      items.push({icon:"↔",label:card.faceDown?"Show Front":"Transform (Face Down)",action:()=>{
+        upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,faceDown:!c.faceDown}:c)}));
+        addLog(`↔ ${card.faceDown?"Revealed front of":"Turned face-down:"} ${card.name}`);
+      }});
       if(isDFCCard(card))items.push({icon:"↕",label:card.altFace?"◀ Transform (Back→Front)":"▶ Transform (Front→Back)",action:()=>window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}))});
-      if(card.isToken)items.push({icon:"✗",label:"Remove Token",action:()=>upd(p=>({...p,battlefield:p.battlefield.filter(c=>c.iid!==card.iid)})),color:"#f87171"});
+      if(card.isToken)items.push({icon:"✗",label:"Remove Token",action:()=>{upd(p=>({...p,battlefield:p.battlefield.filter(c=>c.iid!==card.iid)})); addLog(`✗ Removed token: ${card.name}`);},color:"#f87171"});
       items.push("---");
       items.push({icon:"◈",label:"Add Counter…",action:()=>{
         const type=(window.prompt("Counter type:\n(e.g. +1/+1  -1/-1  charge  loyalty  age  verse  poison  infect  time  fate  quest  study  task  wage  credit  brick  oil  eon  ice  wind  luck  dream  feather  fade  storage  rust  mire …)")||"").trim();
@@ -7128,8 +8268,14 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       items.push("---");
       items.push({icon:"🔀",label:"Shuffle",action:()=>shuffle()});
       items.push("---");
-      items.push({icon:"👁",label:player.revealTop?"◉ Play with Topdeck Revealed":"Play with Topdeck Revealed",action:()=>upd(p=>({...p,revealTop:!p.revealTop}))});
-      items.push({icon:"👁",label:"Reveal Top Card (once)",action:()=>upd(p=>({...p,revealTopOnce:p.library[0]?.iid||null}))});
+      items.push({icon:"👁",label:player.revealTop?"◉ Play with Topdeck Revealed":"Play with Topdeck Revealed",action:()=>{
+        upd(p=>({...p,revealTop:!p.revealTop}));
+        addLog(`👁 ${player.revealTop?"Stopped revealing":"Started revealing"} top of library`);
+      }});
+      items.push({icon:"👁",label:"Reveal Top Card (once)",action:()=>{
+        upd(p=>({...p,revealTopOnce:p.library[0]?.iid||null}));
+        addLog(`👁 Revealed top card: ${player.library[0]?.name||"(empty deck)"}`);
+      }});
       items.push({icon:"🔮",label:"Scry 1",action:()=>scry(1)});
       items.push({icon:"🔮",label:"Scry X…",action:()=>setShowScry(true)});
       items.push({icon:"👁",label:"Look at top 3",action:()=>lookAtTop(3)});
@@ -7182,7 +8328,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           addLog(`⚔ ${card.name} → library bottom`);
         }});
       }else{
-        items.push({icon:"⚔",label:"Commander is away — return to command zone first",action:()=>{},color:"#4a6a8a"});
+        items.push({icon:"⚔",label:"Commander is away — return to command zone first",action:()=>{},color: T.muted});
       }
     }
     return items;
@@ -7320,11 +8466,13 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       }
       // F — toggle search library
       if(k==="f"){
+        if(!showSearchLib) addLog(`🔍 Searching library`);
         setShowSearchLib(v=>!v);
         return;
       }
       // G — look at top cards (scry)
       if(k==="g"){
+        addLog(`🔍 Looking at top of library (scry/look)`);
         setShowScry(true);
         return;
       }
@@ -7387,6 +8535,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             group.find(g=>g.iid===c.iid)?{...c,tapped:anyUntapped}:c
           )};
         });
+        addLog(`⟳ Group ${anyUntapped?"tapped":"untapped"} ${group.length} cards`);
         return;
       }
       // J — face down / face up
@@ -7401,6 +8550,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           // Non-DFC: toggle faceDown (shows sleeve/card back)
           return{...c,faceDown:!c.faceDown};
         })}));
+        addLog(`↔ Flipped ${card.name}${isDFCCard(card)?" (DFC face)":(card.faceDown?" (face up)":" (face down)")}`);
         return;
       }
       // D — send to graveyard
@@ -7423,6 +8573,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       if(k==="p"){
         moveCard(card,zone,"exile");
         upd(p=>({...p,exile:p.exile.map(c=>c.iid===card.iid?{...c,faceDown:true}:c)}));
+        addLog(`✦ ${card.name} → exile (face down)`);
         return;
       }
       // R — send to hand
@@ -7476,6 +8627,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
       // I — invert card (rotate 180°, used for some card effects)
       if(k==="i"&&onBF){
         upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,inverted:!c.inverted}:c)}));
+        addLog(`🔄 Inverted ${card.name}`);
         return;
       }
       // U — add +1/+1 counter
@@ -7561,14 +8713,14 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           <div style={{position:"absolute",inset:0,animation:"cmdSummonRumble .6s ease",background:"transparent"}}/>
           <div style={{position:"absolute",inset:0,background:"radial-gradient(ellipse at 50% 60%,rgba(200,168,112,.18) 0%,transparent 60%)",animation:"fadeIn .3s ease both, fadeIn .3s ease .5s reverse both"}}/>
           <div style={{position:"absolute",bottom:"30%",left:"50%",transform:"translateX(-50%)",
-            fontSize:48,filter:"drop-shadow(0 0 30px #c8a870) drop-shadow(0 0 60px #c8a87080)",
+            fontSize:48,filter:`drop-shadow(0 0 30px ${T.accent}) drop-shadow(0 0 60px ${T.accent}80)`,
             animation:"floatSoft .6s ease-in-out 2"}}>⚔</div>
           {Array.from({length:12},(_,i)=>(
             <div key={i} style={{position:"absolute",
               left:`${20+Math.random()*60}%`,top:`${20+Math.random()*60}%`,
               fontSize:16+Math.random()*14,
               animation:`sparkle ${0.4+Math.random()*.5}s ease ${Math.random()*.4}s both`,
-              filter:"drop-shadow(0 0 8px #c8a870)"}}>✦</div>
+              filter:`drop-shadow(0 0 8px ${T.accent})`}}>✦</div>
           ))}
         </div>
       )}
@@ -7588,29 +8740,35 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         ):(
           <span style={{fontSize:13}}>{player.profile?.avatar||"🧙"}</span>
         )}
-        <button onClick={onExit} style={{...btn(`${T.panel}99`,"#6a7a8a",{border:`1px solid ${T.border}20`,fontSize:10})}} onMouseOver={hov} onMouseOut={uhov}>⬅</button>
+        <button onClick={onExit} style={{...btn(`${T.panel}99`,T.muted,{border:`1px solid ${T.border}20`,fontSize:10})}} onMouseOver={hov} onMouseOut={uhov}>⬅</button>
         <button onClick={onReset} style={{...btn("rgba(251,191,36,.08)","#fbbf24",{border:"1px solid rgba(251,191,36,.2)",fontSize:10})}} onMouseOver={hov} onMouseOut={uhov}>↺</button>
-        {!isDandan&&<button onClick={()=>setShowHotkeys(v=>!v)} title="Hotkey Help (?)" style={{...btn("rgba(200,168,112,.08)",T.accent,{fontSize:10,border:"1px solid rgba(200,168,112,.2)",fontFamily:"Cinzel,serif",letterSpacing:".05em"})}} onMouseOver={hov} onMouseOut={uhov}>⌨</button>}
-        {isDandan&&<span style={{fontSize:11,color:"#a855f7",fontFamily:"Cinzel,serif",letterSpacing:".08em"}}>🐟 DANDAN</span>}
+        {!isDandan&&<button onClick={()=>setShowHotkeys(v=>!v)} title="Hotkey Help (?)" style={{...btn(`rgba(${T.accentRgb},.08)`,T.accent,{fontSize:10,border:"1px solid rgba(200,168,112,.2)",fontFamily:"Cinzel,serif",letterSpacing:".05em"})}} onMouseOver={hov} onMouseOut={uhov}>⌨</button>}
+        {isDandan&&(<>
+          <span style={{fontSize:11,color:"#a855f7",fontFamily:"Cinzel,serif",letterSpacing:".08em"}}>🐟 DANDÂN</span>
+          {/* v7.6.4: info button — opens rules + chosen-variant strategy modal. */}
+          <button onClick={()=>setShowDandanInfo(true)} title="Dandân format rules + variant strategy"
+            style={{...btn("rgba(168,85,247,.1)","#c084fc",{fontSize:10,border:"1px solid rgba(168,85,247,.3)",fontFamily:"Cinzel,serif",letterSpacing:".05em"})}}
+            onMouseOver={hov} onMouseOut={uhov}>📜</button>
+        </>)}
 
         <div style={{width:1,height:18,background:`${currentPhaseColor}30`}}/>
         <LifeCounter life={player.life} prevLife={prevLife} onChange={changeLife}/>
 
         {/* Poison */}
         <div style={{display:"flex",alignItems:"center",gap:1}}>
-          <button onClick={()=>upd(p=>({...p,poison:Math.max(0,p.poison-1)}))} style={{...btn("transparent","#a78bfa",{padding:"0 4px",fontSize:10,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>−</button>
+          <button onClick={()=>{upd(p=>({...p,poison:Math.max(0,p.poison-1)})); addLog(`☠ Poison −1`);}} style={{...btn("transparent","#a78bfa",{padding:"0 4px",fontSize:10,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>−</button>
           <span style={{fontSize:10,fontFamily:"Cinzel,serif",color:player.poison>=10?"#f87171":"#a78bfa",minWidth:22,textAlign:"center"}}>☠{player.poison}</span>
-          <button onClick={()=>upd(p=>({...p,poison:p.poison+1}))} style={{...btn("transparent","#a78bfa",{padding:"0 4px",fontSize:10,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>+</button>
+          <button onClick={()=>{upd(p=>({...p,poison:p.poison+1})); addLog(`☠ Poison +1`);}} style={{...btn("transparent","#a78bfa",{padding:"0 4px",fontSize:10,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>+</button>
         </div>
 
         <div style={{width:1,height:18,background:`${currentPhaseColor}30`}}/>
 
         {/* Phases */}
-        <span style={{fontSize:8,color:"#3a5a7a",fontFamily:"Cinzel,serif"}}>T{turn}</span>
+        <span style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif"}}>T{turn}</span>
         {PHASES.map((p,i)=>(
           <button key={p} onClick={e=>{e.stopPropagation();onUpdateGame({phase:i});}}
-            style={{...btn(i===phase?`${PHASE_CLR[i]}22`:"transparent",i===phase?PHASE_CLR[i]:"#3a5a7a",
-              {border:`1px solid ${i===phase?PHASE_CLR[i]:"#1e3a5f15"}`,padding:"1px 5px",fontSize:8,
+            style={{...btn(i===phase?`${PHASE_CLR[i]}22`:"transparent",i===phase?PHASE_CLR[i]:T.muted,
+              {border:`1px solid ${i===phase?PHASE_CLR[i]:"${T.border}15"}`,padding:"1px 5px",fontSize:8,
                fontFamily:"Cinzel,serif",boxShadow:i===phase?`0 0 8px ${PHASE_CLR[i]}50`:"none",
                animation:i===phase?"phaseActive 1.5s ease-in-out infinite":undefined})}}>
             {PHASE_ICONS[i]} {p}
@@ -7639,7 +8797,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         <button
           onClick={e=>{if(e.shiftKey)toggleMute();else setShowSoundSettings(v=>!v);}}
           title={sfxMuted?"Shift+click to unmute · click for settings":"Click for sound settings · Shift+click to mute"}
-          style={{...btn(showSoundSettings?`${T.accent}1a`:`${T.bg}99`,sfxMuted?"#4a6a8a":T.accent,{border:`1px solid ${T.border}20`,fontSize:11,padding:"2px 6px",opacity:sfxMuted?.5:1})}}
+          style={{...btn(showSoundSettings?`${T.accent}1a`:`${T.bg}99`,sfxMuted?T.muted:T.accent,{border:`1px solid ${T.border}20`,fontSize:11,padding:"2px 6px",opacity:sfxMuted?.5:1})}}
           onMouseOver={hov} onMouseOut={uhov}>{sfxMuted?"🔇":"🔊"}</button>
         {/* Mana pool */}
         <button onClick={()=>setShowMana(v=>!v)}
@@ -7670,7 +8828,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           style={{...btn("rgba(168,85,247,.08)","#a78bfa",{border:"1px solid rgba(168,85,247,.2)",padding:"2px 7px",fontSize:9,fontFamily:"Cinzel,serif"})}}
           onMouseOver={hov} onMouseOut={uhov}>Scry</button>
         <button onClick={()=>setShowLog(v=>!v)} title="Game Log"
-          style={{...btn(`${T.bg}99`,"#6a7a8a",{border:`1px solid ${T.border}20`,fontSize:10})}} onMouseOver={hov} onMouseOut={uhov}>📜</button>
+          style={{...btn(`${T.bg}99`,T.muted,{border:`1px solid ${T.border}20`,fontSize:10})}} onMouseOver={hov} onMouseOut={uhov}>📜</button>
         {isTwoPlayer&&<button onClick={onSwitchPlayer}
           style={{...btn(`${T.accent}14`,T.accent,{fontSize:10,border:`1px solid ${T.accent}40`})}}
           onMouseOver={hov} onMouseOut={uhov}>⇄ Switch</button>}
@@ -7699,6 +8857,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
               player={opponent} T={T} currentPhaseColor={currentPhaseColor}
               gamemat={opponent.profile?.gamemat || GAMEMATS[0].bg}
               gamematFilter={opponent.profile?.gamematFilter || ""}
+              gamemode={gamemode}
               showDeckViewer={false} showChangeDeck={false} showGamematPicker={false}
               copyMode={null} cmdSummonAnim={false}
               customMats={[]} decks={[]}
@@ -7732,6 +8891,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         <BoardSide
           player={player} T={T} currentPhaseColor={currentPhaseColor}
           gamemat={gamemat} gamematFilter={gamematFilter}
+          gamemode={gamemode}
           showDeckViewer={showDeckViewer} showChangeDeck={showChangeDeck} showGamematPicker={showGamematPicker}
           copyMode={copyMode} cmdSummonAnim={cmdSummonAnim}
           customMats={customMats} decks={decks}
@@ -7770,6 +8930,38 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           sleeveUri={opponent.deck?.sleeveUri || null}
           alias={opponent.profile?.alias || ''}
           onZoneRequest={requestOppZone}
+        />
+      )}
+
+      {/* v7.6.4: hand-overlaid life counters. Local at bottom, opps at top.
+          Local accepts ↑/↓ keys to ±1 and click-to-type. Opps are read-only. */}
+      <HandLifeCounter
+        life={player.life ?? 20}
+        onChange={changeLife}
+        position="bottom"
+        size={70}
+      />
+      {opponent && (
+        <HandLifeCounter
+          life={opponent.life ?? 20}
+          alias={opponent.profile?.alias || "Opponent"}
+          position="top" side={0} size={64}
+          readOnly
+        />
+      )}
+
+      {/* v7.6.4: Dandân — shared library + graveyard rendered at the center
+          of the screen, between the two halves. Both players see the same
+          piles because their player.library / player.graveyard arrays are
+          shared (mirrored across all seats by updatePlayer). */}
+      {isDandan && (
+        <SharedZones
+          player={player}
+          draw={draw}
+          mill={mill}
+          onOpenGrave={()=>setShowGraveViewer(true)}
+          addLog={addLog}
+          T={T}
         />
       )}
 
@@ -7820,19 +9012,19 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             boxShadow:"0 24px 80px rgba(0,0,0,.95)"}}>
             <div style={{color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:14,marginBottom:14}}>🔮 Scry — How many?</div>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,justifyContent:"center"}}>
-              <button onClick={()=>setScryCount(c=>Math.max(1,c-1))} style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,padding:"4px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>−</button>
+              <button onClick={()=>setScryCount(c=>Math.max(1,c-1))} style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`,padding:"4px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>−</button>
               <span style={{fontSize:28,fontFamily:"Cinzel Decorative, serif",color:T.accent,minWidth:48,textAlign:"center"}}>{scryCount}</span>
               <button onClick={()=>setScryCount(c=>Math.min(c+1,player.library.length||1))} style={{...btn(`${T.panel}99`,T.accent,{border:`1px solid ${T.accent}40`,padding:"4px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>+</button>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setShowScry(false)} style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+              <button onClick={()=>setShowScry(false)} style={{...btn(`${T.panel}99`,T.text,{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
               <button onClick={()=>{
                 // Launch full ScryModal with the top N cards
                 const top=player.library.slice(0,scryCount);
                 if(top.length){setScryData({cards:top,mode:"scry"});}
                 setShowScry(false);
               }}
-                style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700})}}
+                style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:2,fontFamily:"Cinzel, serif",fontWeight:700})}}
                 onMouseOver={hov} onMouseOut={uhov}>✦ Look</button>
             </div>
           </div>
@@ -7942,6 +9134,111 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         </div>
       )}
 
+      {/* v7.6.4: card-action request — OWNER prompt.
+          Shown when an opponent has requested an action (steal/discard/exile)
+          on specific cards in our hand. We see the card names and the action
+          and can grant or deny. Granting actually moves the cards. */}
+      {incomingCardAction && (() => {
+        const a = incomingCardAction;
+        const actColor = a.action==="steal"?"#fbbf24":a.action==="exile"?"#60a5fa":"#a78bfa";
+        const actIcon  = a.action==="steal"?"⚔":a.action==="exile"?"✦":"☠";
+        const grant = () => {
+          // Apply the move locally on this owner's state. Cards are removed
+          // from our hand; for steal they go onto requester's battlefield
+          // (we can't directly mutate their state, so we drop the cards into
+          // a "stolen" zone on our side and the broadcast carries them — but
+          // that's unsupported by the existing schema). Simpler approach:
+          //   - discard → move to OUR graveyard
+          //   - exile   → move to OUR exile
+          //   - steal   → remove from our hand AND attach a per-card flag
+          //               that the requester's broadcast will pick up to add
+          //               them to THEIR battlefield. For minimal disruption
+          //               we exile them on our side and let the requester
+          //               manually create matching cards if they want; the
+          //               grant event payload lists the names so they have
+          //               full info to do that.
+          const targetIids = new Set(a.cardIids || []);
+          upd(p => {
+            const movedCards = p.hand.filter(c => targetIids.has(c.iid));
+            const remainingHand = p.hand.filter(c => !targetIids.has(c.iid));
+            let newGraveyard = p.graveyard;
+            let newExile = p.exile;
+            if (a.action === "discard") {
+              newGraveyard = [...p.graveyard, ...movedCards.map(c => ({...c, zone:"graveyard"}))];
+            } else if (a.action === "exile" || a.action === "steal") {
+              // Steal also removes from our side; the requester sees the
+              // grant event and can create matching tokens / re-add manually
+              // if needed.
+              newExile = [...p.exile, ...movedCards.map(c => ({...c, zone:"exile"}))];
+            }
+            return {...p, hand: remainingHand, graveyard: newGraveyard, exile: newExile};
+          });
+          addLog(`✓ Granted ${a.requesterAlias}: ${a.actionLabel} → ${(a.cardNames||[]).join(", ")}`);
+          // Send grant event so requester gets notified.
+          const net = window.__MTG_V7__?.netSync;
+          if (net) {
+            try {
+              net.appendEvent("card_action_grant", {
+                reqId: a.reqId,
+                requesterUserId: a.requesterUserId,
+                ownerAlias: player?.profile?.alias || "Player",
+                action: a.action,
+                actionLabel: a.actionLabel,
+                cardNames: a.cardNames,
+                ts: Date.now(),
+              });
+            } catch (e) { console.warn("[card_action_grant]", e); }
+          }
+          setIncomingCardAction(null);
+        };
+        const deny = () => {
+          const net = window.__MTG_V7__?.netSync;
+          if (net) {
+            try {
+              net.appendEvent("card_action_deny", {
+                reqId: a.reqId,
+                requesterUserId: a.requesterUserId,
+                ownerAlias: player?.profile?.alias || "Player",
+                ts: Date.now(),
+              });
+            } catch {}
+          }
+          addLog(`✕ Denied ${a.requesterAlias}'s action request`);
+          setIncomingCardAction(null);
+        };
+        return (
+          <div className="slide-in" style={{position:"fixed",top:120,left:"50%",transform:"translateX(-50%)",
+            zIndex:25002,background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+            border:`1px solid ${actColor}80`,borderRadius:10,padding:"14px 20px",
+            boxShadow:"0 12px 40px rgba(0,0,0,.9)",textAlign:"center",minWidth:340,maxWidth:520}}>
+            <div style={{fontSize:11,color:actColor,fontFamily:"Cinzel,serif",marginBottom:8}}>
+              {actIcon} {a.requesterAlias} requests: <b>{(a.cardNames||[]).join(", ")}</b> {a.actionLabel}?
+            </div>
+            <div style={{fontSize:9,color: T.muted,marginBottom:10,fontStyle:"italic"}}>
+              Granting will actually move {a.cardNames?.length === 1 ? "this card" : `these ${a.cardNames?.length} cards`} from your hand.
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+              <button onClick={grant}
+                style={{...btn(`${actColor}26`,actColor,{border:`1px solid ${actColor}50`,padding:"6px 16px",fontFamily:"Cinzel,serif"})}}
+                onMouseOver={hov} onMouseOut={uhov}>✓ Grant</button>
+              <button onClick={deny}
+                style={{...btn("rgba(248,113,113,.1)","#f87171",{border:"1px solid rgba(248,113,113,.2)",padding:"6px 14px"})}}
+                onMouseOver={hov} onMouseOut={uhov}>✕ Deny</button>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* v7.6.4: card-action request — REQUESTER status (pending). */}
+      {outgoingCardAction && (
+        <div style={{position:"fixed",top:170,right:20,zIndex:24000,
+          background:`linear-gradient(160deg,${T.panel}e0,${T.bg}e0)`,
+          border:"1px solid #fbbf2440",borderRadius:8,padding:"10px 14px",
+          fontSize:10,color:"#fbbf24",fontFamily:"Cinzel,serif",maxWidth:280}}>
+          ⚔ Waiting for {outgoingCardAction.oppAlias}: {outgoingCardAction.actionLabel} → {(outgoingCardAction.cardNames||[]).join(", ")}…
+        </div>
+      )}
+
       {/* Mill X prompt */}
       {showMillPrompt&&(()=>{
         const isExile=millTarget==="exile";
@@ -7961,24 +9258,24 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             {/* Toggle target zone */}
             <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:14}}>
               <button onClick={()=>setMillTarget("graveyard")}
-                style={{...btn(millTarget==="graveyard"?"rgba(167,139,250,.2)":"transparent",millTarget==="graveyard"?"#a78bfa":"#4a6a8a",
-                  {fontSize:9,border:`1px solid ${millTarget==="graveyard"?"rgba(167,139,250,.4)":"#1e3a5f20"}`,padding:"3px 10px",borderRadius:4})}}
+                style={{...btn(millTarget==="graveyard"?"rgba(167,139,250,.2)":"transparent",millTarget==="graveyard"?"#a78bfa":T.muted,
+                  {fontSize:9,border:`1px solid ${millTarget==="graveyard"?"rgba(167,139,250,.4)":"${T.border}20"}`,padding:"3px 10px",borderRadius:4})}}
                 onMouseOver={hov} onMouseOut={uhov}>💀 Graveyard</button>
               <button onClick={()=>setMillTarget("exile")}
-                style={{...btn(millTarget==="exile"?"rgba(96,165,250,.2)":"transparent",millTarget==="exile"?"#60a5fa":"#4a6a8a",
-                  {fontSize:9,border:`1px solid ${millTarget==="exile"?"rgba(96,165,250,.4)":"#1e3a5f20"}`,padding:"3px 10px",borderRadius:4})}}
+                style={{...btn(millTarget==="exile"?"rgba(96,165,250,.2)":"transparent",millTarget==="exile"?"#60a5fa":T.muted,
+                  {fontSize:9,border:`1px solid ${millTarget==="exile"?"rgba(96,165,250,.4)":"${T.border}20"}`,padding:"3px 10px",borderRadius:4})}}
                 onMouseOver={hov} onMouseOut={uhov}>✦ Exile</button>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10,justifyContent:"center",marginBottom:14}}>
-              <button onClick={()=>setMillCount(c=>Math.max(1,c-1))} style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`,padding:"4px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>−</button>
+              <button onClick={()=>setMillCount(c=>Math.max(1,c-1))} style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`,padding:"4px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>−</button>
               <span style={{fontSize:28,fontFamily:"Cinzel Decorative,serif",color,minWidth:44,textAlign:"center"}}>{millCount}</span>
               <button onClick={()=>setMillCount(c=>Math.min(c+1,player.library.length||1))} style={{...btn(`${T.panel}99`,color,{border:`1px solid ${borderColor}`,padding:"4px 12px"})}} onMouseOver={hov} onMouseOut={uhov}>+</button>
             </div>
-            <div style={{fontSize:8,color:"#3a5a7a",fontFamily:"Cinzel,serif",marginBottom:10}}>
+            <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:10}}>
               {player.library.length} cards in library
             </div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={()=>setShowMillPrompt(false)} style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+              <button onClick={()=>setShowMillPrompt(false)} style={{...btn(`${T.panel}99`,T.text,{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
               <button onClick={()=>{
                 if(millTarget==="exile") millExile(millCount);
                 else mill(millCount);
@@ -7999,7 +9296,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
           border:`1px solid ${T.accent}60`,borderRadius:8,padding:12,
           boxShadow:"0 12px 40px rgba(0,0,0,.95)"}}>
           <div style={{fontSize:11,color:T.accent,fontFamily:"Cinzel,serif",marginBottom:4}}>{libDropPrompt.card.name}</div>
-          <div style={{fontSize:9,color:"#4a6a8a",fontFamily:"Cinzel,serif",marginBottom:8}}>Place on library?</div>
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",marginBottom:8}}>Place on library?</div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={()=>{
               const {card,fromZone}=libDropPrompt;
@@ -8035,7 +9332,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             }}
               style={{...btn("rgba(96,165,250,.1)","#60a5fa",{fontFamily:"Cinzel,serif",border:"1px solid rgba(96,165,250,.25)"})}}
               onMouseOver={hov} onMouseOut={uhov}>↓ Bottom</button>
-            <button onClick={()=>setLibDropPrompt(null)} style={{...btn(`${T.panel}99`,"#6a7a8a",{border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+            <button onClick={()=>setLibDropPrompt(null)} style={{...btn(`${T.panel}99`,T.muted,{border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
           </div>
         </div>
       )}
@@ -8125,6 +9422,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
             cards={data.cards} zone={`opp_${zone}`}
             onHover={setHovered}
             onClose={closeOne}
+            onRequestCardAction={zone==="hand" ? requestCardAction : undefined}
           />
         );
       })}
@@ -8159,6 +9457,7 @@ function GameBoard({playerIdx,player,opponent,phase,turn,stack,gamemode,onUpdate
         playerName={player.profile?.alias||"Player"}
         onClose={()=>setShowRevealHand(false)}/>}
       {showHotkeys&&<HotkeyHelp onClose={()=>setShowHotkeys(false)}/>}
+      {showDandanInfo&&<DandanInfoModal variantId={player?.deck?.variantId} onClose={()=>setShowDandanInfo(false)}/>}
       {showSoundSettings&&<SoundSettings onClose={()=>setShowSoundSettings(false)}/>}
       <InGameChat
         playerName={player.profile?.alias||"Player"}
@@ -8517,12 +9816,12 @@ function BatchImporter({onImport, onClose}){
         width:560,maxHeight:"88vh",display:"flex",flexDirection:"column",gap:14,
         boxShadow:"0 24px 80px rgba(0,0,0,.95)",position:"relative",overflow:"hidden"}}>
         <div style={{position:"absolute",top:0,left:0,right:0,height:2,
-          background:"linear-gradient(90deg,transparent,#c8a870,transparent)"}}/>
+          background:`linear-gradient(90deg,transparent,${T.accent},transparent)`}}/>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <h3 style={{color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:14,margin:0}}>📋 Batch Import</h3>
-          <button onClick={onClose} style={{...btn("transparent","#6a7a8a",{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+          <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
         </div>
-        <div style={{fontSize:10,color:"#4a6a8a",lineHeight:1.6,fontFamily:"Crimson Text, serif"}}>
+        <div style={{fontSize:10,color: T.muted,lineHeight:1.6,fontFamily:"Crimson Text, serif"}}>
           Paste any decklist format — Moxfield, Archidekt, MTGO, plain list. Supports numbered, sections like "Sideboard:", "//Creatures", etc.
         </div>
         <textarea
@@ -8536,14 +9835,14 @@ function BatchImporter({onImport, onClose}){
         {/* Preview */}
         {parsed && !importing && (
           <div style={{background:`${T.bg}99`,borderRadius:6,padding:"8px 12px",border:`1px solid ${T.border}30`}}>
-            <div style={{display:"flex",gap:16,fontSize:10,fontFamily:"Cinzel, serif",color:"#8a99b0"}}>
+            <div style={{display:"flex",gap:16,fontSize:10,fontFamily:"Cinzel, serif",color: T.muted}}>
               <span>🃏 Main: <b style={{color:T.accent}}>{parsed.main.reduce((s,c)=>s+c.quantity,0)}</b> ({parsed.main.length} unique)</span>
               {parsed.side.length>0&&<span>⚔ Side: <b style={{color:"#60a5fa"}}>{parsed.side.reduce((s,c)=>s+c.quantity,0)}</b></span>}
               {parsed.tokens.length>0&&<span>✦ Tokens: <b style={{color:"#a78bfa"}}>{parsed.tokens.reduce((s,c)=>s+c.quantity,0)}</b></span>}
             </div>
             <div style={{marginTop:6,maxHeight:80,overflowY:"auto",display:"flex",flexWrap:"wrap",gap:3}}>
               {[...parsed.main,...parsed.side,...parsed.tokens].slice(0,30).map((c,i)=>(
-                <span key={i} style={{fontSize:9,background:"rgba(200,168,112,.07)",color:T.text,
+                <span key={i} style={{fontSize:9,background:`rgba(${T.accentRgb},.07)`,color:T.text,
                   padding:"1px 6px",borderRadius:3,border:"1px solid rgba(200,168,112,.15)"}}>
                   {c.quantity>1?`${c.quantity}×`:""}{c.name}
                 </span>
@@ -8559,7 +9858,7 @@ function BatchImporter({onImport, onClose}){
               <div style={{color:T.accent}}>
                 🔮 Fetching from Scryfall… {status.done}/{status.total}
                 <div style={{marginTop:4,height:3,background:T.panel,borderRadius:2,overflow:"hidden"}}>
-                  <div style={{height:"100%",background:"linear-gradient(90deg,#c8a870,#f0d080)",
+                  <div style={{height:"100%",background:`linear-gradient(90deg,${T.accent},#f0d080)`,
                     width:`${(status.done/status.total)*100}%`,transition:"width .2s",borderRadius:2}}/>
                 </div>
               </div>
@@ -8583,7 +9882,7 @@ function BatchImporter({onImport, onClose}){
 
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={onClose}
-            style={{...btn(`${T.panel}99`,"#8a99b0",{flex:1,minWidth:80,border:`1px solid ${T.border}`})}}
+            style={{...btn(`${T.panel}99`,T.text,{flex:1,minWidth:80,border:`1px solid ${T.border}`})}}
             onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
           {!importing && !status && (
             <button onClick={handlePreview}
@@ -8593,13 +9892,13 @@ function BatchImporter({onImport, onClose}){
           {!importing && !status && (
             <button onClick={handleInstantImport} disabled={!text.trim()}
               title="Add cards immediately; artwork loads in the background"
-              style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:2,minWidth:140,fontFamily:"Cinzel, serif",fontWeight:700,border:`1px solid ${T.accent}60`})}}
+              style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:2,minWidth:140,fontFamily:"Cinzel, serif",fontWeight:700,border:`1px solid ${T.accent}60`})}}
               onMouseOver={hov} onMouseOut={uhov}>✦ Import List</button>
           )}
           {!importing && !status && (
             <button onClick={handleImport} disabled={!text.trim()}
               title="Wait for Scryfall lookup before adding (slower, but reports failures up front)"
-              style={{...btn("transparent","#6a7a8a",{flex:0,minWidth:120,fontSize:9,border:`1px solid ${T.border}40`})}}
+              style={{...btn("transparent",T.muted,{flex:0,minWidth:120,fontSize:9,border:`1px solid ${T.border}40`})}}
               onMouseOver={hov} onMouseOut={uhov}>Wait & Verify</button>
           )}
           {/* v7.5.1: When partial import, offer retry + commit-what-we-got */}
@@ -8609,7 +9908,7 @@ function BatchImporter({onImport, onClose}){
                 style={{...btn("rgba(251,191,36,.15)","#fbbf24",{flex:1,minWidth:100,border:"1px solid rgba(251,191,36,.3)"})}}
                 onMouseOver={hov} onMouseOut={uhov}>↻ Retry failed</button>
               <button onClick={commitPartial}
-                style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{flex:1,minWidth:140,fontFamily:"Cinzel, serif",fontWeight:700})}}
+                style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:1,minWidth:140,fontFamily:"Cinzel, serif",fontWeight:700})}}
                 onMouseOver={hov} onMouseOut={uhov}>✓ Add found ({status.importedTotal||0})</button>
             </>
           )}
@@ -8853,8 +10152,8 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
   const zoneTabStyle=(z)=>({
     ...btn(
       activeZone===z?`${T.accent}1f`:"transparent",
-      activeZone===z?T.accent:"#4a6a8a",
-      {fontSize:10,border:`1px solid ${activeZone===z?"rgba(200,168,112,.3)":"#1e3a5f20"}`,
+      activeZone===z?T.accent:T.muted,
+      {fontSize:10,border:`1px solid ${activeZone===z?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,
        padding:"5px 12px",borderRadius:5,transition:"all .15s"}
     )
   });
@@ -8865,7 +10164,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
       <div style={{width:"40%",display:"flex",flexDirection:"column",borderRight:"1px solid #0d1f3c30"}}>
         <div style={{padding:"14px 14px 10px",background:`linear-gradient(180deg,${T.panel},${T.bg})`,borderBottom:"1px solid #0d1f3c20",flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-            <button onClick={onBack} style={{...btn(`${T.panel}99`,"#8a99b0",{border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>← Back</button>
+            <button onClick={onBack} style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>← Back</button>
             <span style={{color:T.accent,fontFamily:"Cinzel, serif",fontSize:13,letterSpacing:".05em"}}>🔮 Card Search</span>
             <div style={{flex:1}}/>
             <button onClick={()=>setShowBatch(true)}
@@ -8879,13 +10178,13 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
             onFocus={e=>{e.target.style.borderColor=T.accent;e.target.style.boxShadow="0 0 12px rgba(200,168,112,.15)";}}
             onBlur={e=>{e.target.style.borderColor=T.border;e.target.style.boxShadow="none";}}/>
           <div style={{display:"flex",gap:4,marginTop:8,alignItems:"center"}}>
-            <span style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel, serif",letterSpacing:".1em",marginRight:2}}>ADD TO:</span>
+            <span style={{fontSize:8,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".1em",marginRight:2}}>ADD TO:</span>
             <button onClick={()=>setActiveZone("main")} style={zoneTabStyle("main")} onMouseOver={hov} onMouseOut={uhov}>Main</button>
             <button onClick={()=>setActiveZone("side")} style={zoneTabStyle("side")} onMouseOver={hov} onMouseOut={uhov}>Sideboard</button>
             <button onClick={()=>setActiveZone("token")} style={zoneTabStyle("token")} onMouseOver={hov} onMouseOut={uhov}>Tokens</button>
             <button onClick={()=>setActiveZone("cmdr")} style={zoneTabStyle("cmdr")} onMouseOver={hov} onMouseOut={uhov}>⚔ Cmdr</button>
           </div>
-          {loading&&<div style={{fontSize:9,color:"#4a6a8a",marginTop:5,fontFamily:"Cinzel, serif",letterSpacing:".08em"}}>🔮 Searching Scryfall…</div>}
+          {loading&&<div style={{fontSize:9,color: T.muted,marginTop:5,fontFamily:"Cinzel, serif",letterSpacing:".08em"}}>🔮 Searching Scryfall…</div>}
           {error&&<div style={{fontSize:9,color:"#f87171",marginTop:5}}>{error}</div>}
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"4px 6px"}}>
@@ -8909,22 +10208,29 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
               onFocus={e=>{e.target.style.borderColor=T.accent;}}
               onBlur={e=>{e.target.style.borderColor=T.border;}}/>
             <button onClick={()=>onSave({id:deck?.id||uid(),name,cards,sideboard,tokens,commanders,commander:commanders[0]||null,format,sleeveUri:sleeveUri.trim()||undefined,playmatUri:playmatUri.trim()||undefined})}
-              style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{fontFamily:"Cinzel, serif",fontWeight:700,padding:"6px 14px"})}}
+              style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{fontFamily:"Cinzel, serif",fontWeight:700,padding:"6px 14px"})}}
               onMouseOver={hov} onMouseOut={uhov}>✦ Save</button>
+            {/* v7.6.4: Clone — saves a copy of this deck under a new ID and "(Copy)" name. */}
+            <button onClick={()=>{
+              const cloneName = (name||"Untitled") + " (Copy)";
+              onSave({id:uid(),name:cloneName,cards,sideboard,tokens,commanders,commander:commanders[0]||null,format,sleeveUri:sleeveUri.trim()||undefined,playmatUri:playmatUri.trim()||undefined});
+            }} title="Clone this deck"
+              style={{...btn("rgba(167,139,250,.12)","#a78bfa",{fontFamily:"Cinzel, serif",padding:"6px 12px",border:"1px solid rgba(167,139,250,.3)"})}}
+              onMouseOver={hov} onMouseOut={uhov}>⎘ Clone</button>
             <button onClick={exportDeck}
-              style={{...btn(`${T.panel}cc`,"#8a99b0",{fontFamily:"Cinzel, serif",padding:"6px 14px",border:`1px solid ${T.border}30`})}}
+              style={{...btn(`${T.panel}cc`,T.text,{fontFamily:"Cinzel, serif",padding:"6px 14px",border:`1px solid ${T.border}30`})}}
               onMouseOver={hov} onMouseOut={uhov}>⬇ Export .txt</button>
             <button onClick={undo} disabled={!historyRef.current.length}
-              style={{...btn("transparent",historyRef.current.length?"#8a99b0":"#2a3a5a",{padding:"6px 10px",border:`1px solid ${T.border}30`,opacity:historyRef.current.length?1:0.4})}}
+              style={{...btn("transparent",historyRef.current.length?T.text:"#2a3a5a",{padding:"6px 10px",border:`1px solid ${T.border}30`,opacity:historyRef.current.length?1:0.4})}}
               onMouseOver={hov} onMouseOut={uhov} title="Undo">↩</button>
             <button onClick={redo} disabled={!futureRef.current.length}
-              style={{...btn("transparent",futureRef.current.length?"#8a99b0":"#2a3a5a",{padding:"6px 10px",border:`1px solid ${T.border}30`,opacity:futureRef.current.length?1:0.4})}}
+              style={{...btn("transparent",futureRef.current.length?T.text:"#2a3a5a",{padding:"6px 10px",border:`1px solid ${T.border}30`,opacity:futureRef.current.length?1:0.4})}}
               onMouseOver={hov} onMouseOut={uhov} title="Redo">↪</button>
           </div>
           <div style={{display:"flex",gap:3,marginBottom:8}}>
             {["standard","commander","modern","legacy","pioneer","pauper"].map(f=>(
               <button key={f} onClick={()=>setFormat(f)}
-                style={{...btn(f===format?`${T.accent}1a`:"transparent",f===format?T.accent:"#4a6a8a",{fontSize:9,border:`1px solid ${f===format?"rgba(200,168,112,.3)":"#1e3a5f20"}`,padding:"3px 7px"})}}
+                style={{...btn(f===format?`${T.accent}1a`:"transparent",f===format?T.accent:T.muted,{fontSize:9,border:`1px solid ${f===format?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"3px 7px"})}}
                 onMouseOver={hov} onMouseOut={uhov}>{f}</button>
             ))}
           </div>
@@ -8954,8 +10260,8 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                 onDragLeave={e=>{e.currentTarget.style.background="";}}
                 onDrop={e=>{e.currentTarget.style.background="";if(deckDragCard&&deckDragCard.fromZone!==z){moveCardBetweenZones(deckDragCard.card,deckDragCard.fromZone,z);setDeckDragCard(null);}}}
                 style={{
-                ...btn(activeZone===z?`${T.accent}1a`:"transparent",activeZone===z?T.accent:"#4a6a8a",
-                  {fontSize:10,border:`1px solid ${activeZone===z?"rgba(200,168,112,.3)":"#1e3a5f20"}`,padding:"4px 10px",flex:1}),
+                ...btn(activeZone===z?`${T.accent}1a`:"transparent",activeZone===z?T.accent:T.muted,
+                  {fontSize:10,border:`1px solid ${activeZone===z?"rgba(${T.accentRgb},.3)":"${T.border}20"}`,padding:"4px 10px",flex:1}),
               }} onMouseOver={hov} onMouseOut={uhov}>
                 {label} <span style={{marginLeft:4,background:activeZone===z?`${T.accent}26`:"rgba(255,255,255,.05)",
                   padding:"0 5px",borderRadius:8,fontSize:9}}>{count}</span>
@@ -8986,7 +10292,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                           <div style={{fontSize:7,color:T.accent,fontFamily:"Cinzel,serif",letterSpacing:".14em",marginBottom:2}}>⚔ COMMANDER {commanders.length>1?`#${ci+1}`:""}</div>
                           <div style={{fontSize:12,color:T.text,fontFamily:"Cinzel,serif",marginBottom:3}}>{cmdr.name}</div>
                           {cmdr.manaCost&&<div style={{fontSize:9,color:"#a3a3a3",marginBottom:2}}>{cmdr.manaCost}</div>}
-                          {cmdr.typeLine&&<div style={{fontSize:8,color:"#6a7a8a",fontStyle:"italic",marginBottom:3}}>{cmdr.typeLine}</div>}
+                          {cmdr.typeLine&&<div style={{fontSize:8,color: T.muted,fontStyle:"italic",marginBottom:3}}>{cmdr.typeLine}</div>}
                           <div style={{fontSize:8,color:isSel?"#60a5fa":"#34d399",fontFamily:"Cinzel,serif"}}>{isSel?"🎨 Select a printing →":"✓ Starts in command zone"}</div>
                         </div>
                         <button onClick={e=>{e.stopPropagation();setCommanders(prev=>prev.filter((_,i)=>i!==ci));}} style={{...btn("transparent","#f87171",{fontSize:13,border:"none",padding:"2px 5px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
@@ -9054,13 +10360,13 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                   </div>
                 )}
                 <div style={{fontSize:10,color:T.accent,fontFamily:"Cinzel,serif",marginTop:6,fontWeight:600}}>{selectedCard.name}</div>
-                <div style={{fontSize:8,color:"#6a7a8a",fontFamily:"Cinzel,serif",marginTop:2}}>{selectedCard.typeLine}</div>
+                <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginTop:2}}>{selectedCard.typeLine}</div>
                 {selectedCard.manaCost&&<div style={{marginTop:4,display:"flex",justifyContent:"center"}}><ManaCost cost={selectedCard.manaCost}/></div>}
               </div>
               {/* Printings */}
               <div style={{flexShrink:0,padding:"4px 8px",borderTop:`1px solid ${T.border}20`}}>
                 <div style={{fontSize:8,color:T.accent,fontFamily:"Cinzel,serif",letterSpacing:".1em",marginBottom:5}}>🎨 ALL PRINTINGS</div>
-                {loadingPrints&&<div style={{fontSize:8,color:"#4a6a8a",fontFamily:"Cinzel,serif",textAlign:"center",padding:4}}>Loading…</div>}
+                {loadingPrints&&<div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",textAlign:"center",padding:4}}>Loading…</div>}
               </div>
               <div style={{flex:1,overflowY:"auto",padding:"0 8px 8px",display:"flex",flexWrap:"wrap",gap:4}}>
                 {printings.map((p,i)=>{
@@ -9077,7 +10383,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                       onMouseOver={e=>{e.currentTarget.style.transform="scale(1.06)";}}
                       onMouseOut={e=>{e.currentTarget.style.transform="none";}}>
                       <img src={img} alt={p.set} style={{width:56,height:78,objectFit:"cover",display:"block"}}/>
-                      <div style={{fontSize:6,color:isCurrent?T.accent:"#4a6a8a",textAlign:"center",
+                      <div style={{fontSize:6,color:isCurrent?T.accent:T.muted,textAlign:"center",
                         padding:"1px 2px",background:"rgba(5,10,18,.8)",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>
                         {p.set?.toUpperCase()}
                       </div>
@@ -9088,7 +10394,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
               </div>
               {/* Custom art URL input */}
               <div style={{padding:"6px 8px",borderTop:`1px solid ${T.border}20`,flexShrink:0}}>
-                <div style={{fontSize:7,color:"#6a7a8a",fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:4}}>🔗 CUSTOM ART URL</div>
+                <div style={{fontSize:7,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:4}}>🔗 CUSTOM ART URL</div>
                 <div style={{display:"flex",gap:4}}>
                   <input id="customArtInput"
                     placeholder="Paste image URL… (Enter to apply)"
@@ -9162,7 +10468,7 @@ function InkSwirlCanvas({color}){
       const tmp=document.createElement("canvas");
       tmp.width=tmp.height=1;
       const tc=tmp.getContext("2d");
-      tc.fillStyle="#c8a870"; // safe default
+      tc.fillStyle=`${T.accent}`; // safe default
       tc.fillStyle=color;     // overwrite if valid
       tc.fillRect(0,0,1,1);
       const px=tc.getImageData(0,0,1,1).data;
@@ -9228,19 +10534,279 @@ function InkSwirlCanvas({color}){
   );
 }
 
-function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,onTheme,onSignOut}){
-  const [buildingChaos,setBuildingChaos]=useState(false);
+/* ─── v7.6.4 PresenceCounter ─────────────────────────────────────────────
+   Shows total players online + how many are currently in active rooms.
+   Pulled from Supabase: counts distinct user_profiles seen in the last
+   ~10 minutes (proxy for "online") and total seats across active rooms
+   (proxy for "in game"). Refreshes every 30s.
+*/
+function PresenceCounter({T}){
+  const [stats,setStats]=useState({online:0, inGame:0});
+  useEffect(()=>{
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const { supabase } = await import('./lib/supabase');
+        // "Online" — distinct profiles updated in the last 10 minutes.
+        const tenMinAgo = new Date(Date.now() - 10*60*1000).toISOString();
+        const onlineQ = await supabase
+          .from('user_profiles')
+          .select('id', { count: 'exact', head: true })
+          .gte('updated_at', tenMinAgo);
+        // "In game" — total seats across rooms whose status is active or
+        // whose meta has been touched recently.
+        const inGameQ = await supabase
+          .from('room_players')
+          .select('user_id', { count: 'exact', head: true })
+          .gte('updated_at', tenMinAgo);
+        if (cancelled) return;
+        setStats({
+          online: onlineQ?.count || 0,
+          inGame: inGameQ?.count || 0,
+        });
+      } catch {}
+    };
+    tick();
+    const t = setInterval(tick, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  },[]);
+  return (
+    <div title={`${stats.online} players online · ${stats.inGame} currently in game`}
+      style={{
+        display:"flex", alignItems:"center", gap:10,
+        padding:"4px 12px",
+        background:`${T.bg}80`,
+        border:"1px solid rgba(200,168,112,.12)",
+        borderRadius:8,
+        fontFamily:"Cinzel, serif",
+        color: T.muted,
+      }}>
+      <span style={{fontSize:18,filter:"drop-shadow(0 0 4px rgba(200,168,112,.25))"}}>👥</span>
+      <div style={{textAlign:"left",lineHeight:1.15}}>
+        <div style={{fontSize:11,color:T.accent}}><b>{stats.online}</b> Players Online</div>
+        <div style={{fontSize:9,color: T.muted,letterSpacing:".05em"}}>{stats.inGame} In Game</div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── v7.6.4 ProfileSettings modal ───────────────────────────────────────
+   Compact in-place modal for the user to edit their profile, change
+   email/password (via supabase.auth.updateUser), pick a personal playmat
+   and sleeve, and sign out. Profile playmat/sleeve are overridden by any
+   per-deck values when in-game.
+*/
+function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
+  const [alias,setAlias]=useState(profile?.alias||"");
+  const [avatar,setAvatar]=useState(profile?.avatar||"🧙");
+  const [avatarImg,setAvatarImg]=useState(profile?.avatarImg||"");
+  const [gmIdx,setGmIdx]=useState(profile?.gamematIdx ?? 3);
+  const [sleeveUri,setSleeveUri]=useState(profile?.sleeveUri||"");
+  const [email,setEmail]=useState(authUser?.email||"");
+  const [newPassword,setNewPassword]=useState("");
+  const [confirmPassword,setConfirmPassword]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [msg,setMsg]=useState(null);
+
+  const handleSave = async () => {
+    setSaving(true); setMsg(null);
+    const updated = {
+      ...profile,
+      alias: alias.trim() || profile?.alias || "Player",
+      avatar,
+      avatarImg,
+      gamematIdx: gmIdx,
+      gamemat: GAMEMATS[gmIdx]?.bg || GAMEMATS[3].bg,
+      sleeveUri: sleeveUri.trim() || null,
+    };
+    try { onSave(updated); } catch (e) { console.warn('[ProfileSettings save]', e); }
+
+    // Auth changes — only if anything changed
+    try {
+      const { supabase } = await import('./lib/supabase');
+      const updates = {};
+      if (email && email !== authUser?.email) updates.email = email;
+      if (newPassword) {
+        if (newPassword !== confirmPassword) {
+          setMsg({type:'err', text:'Passwords do not match'});
+          setSaving(false);
+          return;
+        }
+        if (newPassword.length < 6) {
+          setMsg({type:'err', text:'Password must be 6+ characters'});
+          setSaving(false);
+          return;
+        }
+        updates.password = newPassword;
+      }
+      if (Object.keys(updates).length > 0) {
+        const { error } = await supabase.auth.updateUser(updates);
+        if (error) {
+          setMsg({type:'err', text:error.message});
+          setSaving(false);
+          return;
+        }
+        setMsg({type:'ok', text:updates.email ? 'Saved · check email to confirm' : 'Saved'});
+      } else {
+        setMsg({type:'ok', text:'Saved'});
+      }
+    } catch (e) {
+      setMsg({type:'err', text:e?.message || 'Save failed'});
+    }
+    setSaving(false);
+    setTimeout(()=>setMsg(null), 3000);
+  };
+
+  return (
+    <div className="fade-in" onClick={onClose}
+      style={{position:"fixed",inset:0,background:"rgba(2,4,10,.92)",zIndex:99990,
+        display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(6px)"}}>
+      <div onClick={e=>e.stopPropagation()} className="slide-in"
+        style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+          border:`1px solid ${T.accent}40`,borderRadius:12,padding:24,
+          width:560,maxHeight:"86vh",overflowY:"auto",
+          boxShadow:"0 24px 80px rgba(0,0,0,.95)",
+          fontFamily:"Crimson Text,serif"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+          <h3 style={{color:T.accent,fontFamily:"Cinzel Decorative,serif",fontSize:15,margin:0,letterSpacing:".05em"}}>⚙ Profile Settings</h3>
+          <button onClick={onClose} style={{...btn("transparent",T.text,{fontSize:18,border:"none"})}}>✕</button>
+        </div>
+
+        {/* Avatar + alias row */}
+        <div style={{display:"flex",gap:14,marginBottom:14}}>
+          <div style={{flex:"0 0 auto"}}>
+            {avatarImg ? (
+              <img src={avatarImg} alt="" style={{width:64,height:64,borderRadius:"50%",objectFit:"cover",border:`2px solid ${T.accent}`,boxShadow:`0 0 16px ${T.accent}50`}}/>
+            ) : (
+              <div style={{width:64,height:64,borderRadius:"50%",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,border:`2px solid ${T.accent}`,boxShadow:`0 0 16px ${T.accent}40`}}>{avatar}</div>
+            )}
+          </div>
+          <div style={{flex:1,display:"flex",flexDirection:"column",gap:6}}>
+            <label style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".12em"}}>ALIAS</label>
+            <input value={alias} onChange={e=>setAlias(e.target.value)} maxLength={24}
+              style={{...iS,marginTop:0}}/>
+            <label style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".12em",marginTop:4}}>AVATAR IMAGE URL (optional)</label>
+            <input value={avatarImg} onChange={e=>setAvatarImg(e.target.value)}
+              placeholder="https://… or leave blank for emoji"
+              style={{...iS,marginTop:0}}/>
+          </div>
+        </div>
+
+        {/* Avatar emoji picker */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".12em",marginBottom:5}}>EMOJI AVATAR</div>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {AVATARS.map(a=>(
+              <button key={a} onClick={()=>{setAvatar(a); setAvatarImg("");}}
+                style={{width:30,height:30,fontSize:18,
+                  border:`1px solid ${avatar===a&&!avatarImg?T.accent:T.border+'30'}`,
+                  background:avatar===a&&!avatarImg?`${T.accent}20`:T.bg,
+                  borderRadius:4,cursor:"pointer"}}>{a}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Playmat picker — colors not photos */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".12em",marginBottom:5}}>DEFAULT PLAYMAT (overridden by deck-specific playmats)</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))",gap:6}}>
+            {GAMEMATS.filter(g=>g.bg).map((g,i)=>(
+              <button key={g.name} onClick={()=>setGmIdx(i)}
+                style={{
+                  background:g.bg, height:54, borderRadius:5,
+                  border:`2px solid ${gmIdx===i?T.accent:"rgba(255,255,255,.08)"}`,
+                  boxShadow:gmIdx===i?`0 0 14px ${T.accent}50`:"none",
+                  cursor:"pointer",position:"relative",overflow:"hidden",
+                  fontFamily:"Cinzel,serif",fontSize:10,color:"#fff",
+                  textShadow:"0 1px 4px rgba(0,0,0,.95)",
+                  letterSpacing:".05em",
+                }}>
+                {g.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Sleeve URL */}
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".12em",display:"block",marginBottom:5}}>DEFAULT CARD SLEEVE URL (overridden by deck-specific sleeves)</label>
+          <input value={sleeveUri} onChange={e=>setSleeveUri(e.target.value)}
+            placeholder="🎴 https://…  (leave blank for default cardback)"
+            style={{...iS,marginTop:0}}/>
+        </div>
+
+        {/* Auth: email + password */}
+        {authUser && (
+          <div style={{marginBottom:14,padding:12,background:`${T.bg}99`,border:`1px solid ${T.border}30`,borderRadius:6}}>
+            <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".12em",marginBottom:8}}>ACCOUNT</div>
+            <label style={{fontSize:9,color: T.muted,display:"block",marginBottom:3}}>Email</label>
+            <input value={email} onChange={e=>setEmail(e.target.value)} type="email"
+              style={{...iS,marginTop:0,marginBottom:8}}/>
+            <label style={{fontSize:9,color: T.muted,display:"block",marginBottom:3}}>New password (leave blank to keep current)</label>
+            <input value={newPassword} onChange={e=>setNewPassword(e.target.value)} type="password"
+              placeholder="••••••" autoComplete="new-password"
+              style={{...iS,marginTop:0,marginBottom:6}}/>
+            {newPassword && (
+              <input value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} type="password"
+                placeholder="Confirm new password" autoComplete="new-password"
+                style={{...iS,marginTop:0}}/>
+            )}
+          </div>
+        )}
+
+        {/* Status */}
+        {msg && (
+          <div style={{marginBottom:10,padding:"6px 10px",borderRadius:5,fontSize:11,
+            background:msg.type==='err'?'rgba(239,68,68,.15)':'rgba(74,222,128,.12)',
+            color:msg.type==='err'?'#fca5a5':'#86efac',
+            border:`1px solid ${msg.type==='err'?'rgba(239,68,68,.4)':'rgba(74,222,128,.3)'}`}}>
+            {msg.text}
+          </div>
+        )}
+
+        {/* Action row */}
+        <div style={{display:"flex",gap:8,marginTop:6}}>
+          <button onClick={onSignOut}
+            style={{...btn("rgba(239,68,68,.1)","#fca5a5",{padding:"8px 14px",fontFamily:"Cinzel,serif",border:"1px solid rgba(239,68,68,.3)",fontSize:11})}}
+            onMouseOver={hov} onMouseOut={uhov}>⎋ Sign Out</button>
+          <div style={{flex:1}}/>
+          <button onClick={onClose}
+            style={{...btn("transparent",T.text,{padding:"8px 14px",fontSize:11})}}
+            onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{padding:"8px 18px",fontFamily:"Cinzel,serif",fontWeight:700,fontSize:11,border:`1px solid ${T.accent}60`,opacity:saving?.6:1})}}
+            onMouseOver={hov} onMouseOut={uhov}>{saving?"Saving…":"Save"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,onSignOut,onProfile}){
   const [deleteConfirm,setDeleteConfirm]=useState(null);
   const canvasRef=useRef(null);
   const [deckOrder,setDeckOrder]=useState(()=>decks.map((_,i)=>i));
   const [draggingIdx,setDraggingIdx]=useState(null);
   const [dragOverIdx,setDragOverIdx]=useState(null);
   const dragStartPos=useRef(null);
+  // v7.6.4: deck search + format filter
+  const [deckSearch,setDeckSearch]=useState("");
+  const [deckFormat,setDeckFormat]=useState("all");
 
   // Keep deckOrder in sync if decks change externally
   useEffect(()=>setDeckOrder(decks.map((_,i)=>i)),[decks.length]);
 
   const sortedDecks=deckOrder.map(i=>decks[i]).filter(Boolean);
+
+  // v7.6.4: filter the sorted decks by search query + format
+  const _q = deckSearch.trim().toLowerCase();
+  const filteredDecks = sortedDecks.filter(d => {
+    if (deckFormat && deckFormat !== "all" && (d.format || "standard") !== deckFormat) return false;
+    if (!_q) return true;
+    if ((d.name||"").toLowerCase().includes(_q)) return true;
+    if ((d.commander?.name||"").toLowerCase().includes(_q)) return true;
+    return (d.cards||[]).some(c => (c.name||"").toLowerCase().includes(_q));
+  });
 
   const onDragStart=(e,sortedI)=>{
     setDraggingIdx(sortedI);
@@ -9265,8 +10831,6 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
     setDraggingIdx(null);setDragOverIdx(null);
   };
   const onDragEnd=()=>{setDraggingIdx(null);setDragOverIdx(null);};
-
-  const handleChaos=async()=>{setBuildingChaos(true);const cards=await buildChaosDeck();setBuildingChaos(false);onChaos(cards);};
 
   const thumbImg=deck=>{
     if(deck.commander?.imageUri)return deck.commander.imageUri;
@@ -9325,24 +10889,32 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
           <div style={{fontSize:26,filter:"drop-shadow(0 0 16px rgba(200,168,112,.5))",animation:"floatSoft 3s ease-in-out infinite"}}>⚔</div>
           <div>
             <div className="shimmer-text" style={{fontFamily:"Cinzel Decorative, serif",fontSize:20,letterSpacing:".08em"}}>TCG Playsim</div>
-            <div style={{fontSize:8,color:"#3a5a7a",letterSpacing:".2em",fontFamily:"Cinzel, serif"}}>THE ETERNAL ARENA · v4</div>
+            <div style={{fontSize:8,color: T.muted,letterSpacing:".2em",fontFamily:"Cinzel, serif"}}>THE ETERNAL ARENA</div>
           </div>
         </div>
         <div style={{flex:1}}/>
+        {/* v7.6.4: presence counter — players online + in-game. Pulled from
+            Supabase: total user_profiles seen recently + active rooms. */}
+        <PresenceCounter T={T}/>
         {profile&&(
-          <div style={{display:"flex",alignItems:"center",gap:8,
-            background:`${T.bg}99`,borderRadius:8,padding:"5px 12px",
-            border:"1px solid rgba(200,168,112,.1)"}}>
+          <button onClick={onProfile}
+            style={{display:"flex",alignItems:"center",gap:8,
+              background:`${T.bg}99`,borderRadius:8,padding:"5px 12px",
+              border:"1px solid rgba(200,168,112,.15)",cursor:"pointer",
+              transition:"border-color .15s ease, transform .15s ease"}}
+            onMouseOver={e=>{e.currentTarget.style.borderColor=`rgba(${T.accentRgb},.4)`;e.currentTarget.style.transform="translateY(-1px)";}}
+            onMouseOut={e=>{e.currentTarget.style.borderColor=`rgba(${T.accentRgb},.15)`;e.currentTarget.style.transform="none";}}
+            title="Profile settings">
             {profile.avatarImg?(
               <img src={profile.avatarImg} alt="" style={{width:32,height:32,borderRadius:"50%",objectFit:"cover",border:`1px solid ${T.accent}60`,boxShadow:`0 0 8px ${T.accent}40`}}/>
             ):(
               <span style={{fontSize:20,filter:"drop-shadow(0 0 6px rgba(200,168,112,.3))"}}>{profile.avatar}</span>
             )}
-            <div>
+            <div style={{textAlign:"left"}}>
               <div style={{fontSize:11,color:T.accent,fontFamily:"Cinzel, serif"}}>{profile.alias}</div>
-              <div style={{fontSize:8,color:"#3a5a7a",letterSpacing:".1em"}}>PLANESWALKER</div>
+              <div style={{fontSize:8,color: T.muted,letterSpacing:".1em"}}>⚙ PROFILE</div>
             </div>
-          </div>
+          </button>
         )}
         <button onClick={onRooms}
           style={{...btn("rgba(167,139,250,.08)","#a78bfa",{fontFamily:"Cinzel, serif",padding:"8px 16px",border:"1px solid rgba(167,139,250,.2)"}),fontSize:11}}
@@ -9350,14 +10922,8 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
         <button onClick={onTheme}
           style={{...btn("rgba(168,85,247,.08)","#a78bfa",{fontFamily:"Cinzel, serif",padding:"8px 14px",border:"1px solid rgba(168,85,247,.2)"}),fontSize:11}}
           onMouseOver={hov} onMouseOut={uhov}>🎨 Theme</button>
-        {onSignOut && <button onClick={onSignOut} title="Sign Out"
-          style={{...btn("rgba(80,90,110,.15)","#8a99b0",{fontFamily:"Cinzel, serif",padding:"8px 12px",border:"1px solid rgba(80,90,110,.25)"}),fontSize:11}}
-          onMouseOver={hov} onMouseOut={uhov}>⎋ Sign Out</button>}
-        <button onClick={handleChaos} disabled={buildingChaos}
-          style={{...btn("rgba(192,132,252,.08)","#c084fc",{padding:"8px 16px",fontFamily:"Cinzel, serif",border:"1px solid rgba(192,132,252,.2)",opacity:buildingChaos?.7:1}),fontSize:11}}
-          onMouseOver={hov} onMouseOut={uhov}>{buildingChaos?"🔮 Brewing…":"🎲 Chaos Deck"}</button>
         <button onClick={onNew}
-          style={{...btn("linear-gradient(135deg,#c8a870,#8a6040)",T.bg,{padding:"8px 20px",fontSize:12,fontFamily:"Cinzel, serif",fontWeight:700,boxShadow:"0 6px 20px rgba(200,168,112,.3)",border:`1px solid ${T.accent}60`})}
+          style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{padding:"8px 20px",fontSize:12,fontFamily:"Cinzel, serif",fontWeight:700,boxShadow:"0 6px 20px rgba(200,168,112,.3)",border:`1px solid ${T.accent}60`})}
           } onMouseOver={e=>{e.currentTarget.style.boxShadow="0 10px 30px rgba(200,168,112,.45)";e.currentTarget.style.filter="brightness(1.1)";}}
           onMouseOut={e=>{e.currentTarget.style.boxShadow="0 6px 20px rgba(200,168,112,.3)";e.currentTarget.style.filter="none";}}>
           ✦ New Deck
@@ -9366,6 +10932,37 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
 
       {/* Gallery */}
       <div style={{flex:1,overflowY:"auto",padding:"24px",position:"relative",zIndex:1}}>
+        {/* v7.6.4: search + format filters */}
+        {decks.length > 0 && (
+          <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap"}}>
+            <div style={{position:"relative",flex:"1 1 240px",maxWidth:380}}>
+              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:14,color: T.muted,pointerEvents:"none"}}>🔍</span>
+              <input
+                value={deckSearch} onChange={e=>setDeckSearch(e.target.value)}
+                placeholder="Search decks…"
+                style={{...iS,marginTop:0,paddingLeft:32,width:"100%",boxSizing:"border-box"}}/>
+              {deckSearch && (
+                <button onClick={()=>setDeckSearch("")}
+                  style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color: T.muted,cursor:"pointer",fontSize:14,padding:"2px 6px"}}
+                  title="Clear">✕</button>
+              )}
+            </div>
+            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+              {[{id:"all",label:"All",icon:"◯"}, ...GAMEMODES].map(gm=>{
+                const sel = (deckFormat||"all") === gm.id;
+                const c = gm.id==="commander"?T.accent : gm.id==="oathbreaker"?"#fbbf24" : gm.id==="dandan"?"#a855f7" : gm.id==="modern"?"#60a5fa" : gm.id==="legacy"?"#a78bfa" : gm.id==="pioneer"?"#fbbf24" : "#4ade80";
+                return (
+                  <button key={gm.id} onClick={()=>setDeckFormat(gm.id)}
+                    style={{...btn(sel?`${c}26`:`${T.panel}99`,sel?c:T.muted,
+                      {fontSize:10,padding:"5px 10px",border:`1px solid ${sel?c+"60":"${T.border}30"}`,fontFamily:"Cinzel,serif",letterSpacing:".05em"})}}
+                    onMouseOver={hov} onMouseOut={uhov}>
+                    {gm.icon} {gm.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {decks.length===0&&(
           <div className="fade-in" style={{display:"flex",flexDirection:"column",alignItems:"center",
             justifyContent:"center",height:"60vh",gap:16,color:T.border}}>
@@ -9374,11 +10971,17 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
             <div style={{fontSize:12,color:"#1a2a3a",fontStyle:"italic"}}>Forge your first deck above to begin</div>
           </div>
         )}
+        {/* v7.6.4: empty-result message when filter/search excludes all decks */}
+        {decks.length>0 && filteredDecks.length===0 && (
+          <div style={{textAlign:"center",padding:40,color:"#4a5a6a",fontStyle:"italic",fontSize:12}}>
+            No decks match your search/filter.
+          </div>
+        )}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:18}}>
-          {sortedDecks.map((deck,i)=>{
+          {filteredDecks.map((deck,i)=>{
             const thumb=thumbImg(deck);
             const total=deck.cards?.reduce((s,c)=>s+c.quantity,0)||0;
-            const accent=deck.format==="commander"?T.accent:deck.format==="modern"?"#60a5fa":deck.format==="legacy"?"#a78bfa":"#4ade80";
+            const accent=deck.format==="commander"?T.accent:deck.format==="oathbreaker"?"#fbbf24":deck.format==="modern"?"#60a5fa":deck.format==="legacy"?"#a78bfa":"#4ade80";
             return(
               <div key={deck.id} className="slide-in"
                 draggable
@@ -9386,12 +10989,17 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
                 onDragOver={e=>onDragOver(e,i)}
                 onDrop={e=>onDrop(e,i)}
                 onDragEnd={onDragEnd}
+                onClick={(e)=>{
+                  // Don't trigger edit when clicking the delete X
+                  if(e.target.closest('[data-deck-action]')) return;
+                  onEdit(deck);
+                }}
                 style={{
                   position:"relative",height:240,
-                  border:`1px solid ${dragOverIdx===i?accent+"80":"rgba(200,168,112,.08)"}`,
+                  border:`1px solid ${dragOverIdx===i?accent+"80":"rgba(${T.accentRgb},.08)"}`,
                   borderRadius:10,overflow:"hidden",
                   animationDelay:`${i*.05}s`,
-                  transition:"border-color .18s,transform .18s,box-shadow .18s",cursor:"grab",
+                  transition:"border-color .18s,transform .18s,box-shadow .18s",cursor:"pointer",
                   boxShadow:dragOverIdx===i?`0 0 0 2px ${accent}50,0 12px 32px rgba(0,0,0,.7)`:"0 4px 16px rgba(0,0,0,.6)",
                   opacity:draggingIdx===i?.45:1,
                   transform:draggingIdx===i?"scale(.97)":dragOverIdx===i?"scale(1.02)":"none"}}
@@ -9441,20 +11049,17 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,onChaos,profile,on
                     textShadow:"0 1px 4px rgba(0,0,0,.9)"}}>
                     {total} cards{deck.commander?` · Cmdr: ${deck.commander.name}`:""}
                   </div>
-                  <div style={{display:"flex",gap:5}}>
-                    <button onClick={()=>onEdit(deck)}
-                      style={{...btn("rgba(10,20,40,.75)","#8a99b0",{flex:1,fontSize:10,padding:"5px 7px",border:"1px solid rgba(100,130,180,.3)",backdropFilter:"blur(6px)"})}}
-                      onMouseOver={hov} onMouseOut={uhov}>Edit</button>
-                    <button onClick={()=>onPlay(deck)}
-                      style={{...btn(`linear-gradient(135deg,${accent}35,${accent}18)`,accent,{flex:2,fontSize:10,padding:"5px 8px",fontFamily:"Cinzel, serif",border:`1px solid ${accent}50`,backdropFilter:"blur(6px)"})}}
-                      onMouseOver={hov} onMouseOut={uhov}>▶ Play</button>
+                  <div style={{display:"flex",justifyContent:"flex-end"}} data-deck-action>
                     {deleteConfirm===deck.id?(
-                      <button onClick={()=>{onDelete(deck.id);setDeleteConfirm(null);}}
+                      <button onClick={(e)=>{e.stopPropagation();onDelete(deck.id);setDeleteConfirm(null);}}
+                        data-deck-action
                         style={{...btn("rgba(248,113,113,.2)","#f87171",{padding:"5px 7px",fontSize:10,border:"1px solid rgba(248,113,113,.35)",backdropFilter:"blur(6px)"})}}
                         onMouseOver={hov} onMouseOut={uhov}>Sure?</button>
                     ):(
-                      <button onClick={()=>setDeleteConfirm(deck.id)}
-                        style={{...btn("rgba(10,20,40,.6)","#3a4a5a",{padding:"5px 7px",fontSize:12,border:"1px solid transparent",backdropFilter:"blur(6px)"})}}
+                      <button onClick={(e)=>{e.stopPropagation();setDeleteConfirm(deck.id);}}
+                        data-deck-action
+                        title="Delete deck"
+                        style={{...btn("rgba(10,20,40,.6)","#3a4a5a",{padding:"5px 8px",fontSize:12,border:"1px solid transparent",backdropFilter:"blur(6px)"})}}
                         onMouseOver={e=>{e.currentTarget.style.color="#f87171";e.currentTarget.style.borderColor="rgba(248,113,113,.3)";}}
                         onMouseOut={e=>{e.currentTarget.style.color="#3a4a5a";e.currentTarget.style.borderColor="transparent";}}>✕</button>
                     )}
@@ -9483,16 +11088,16 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       s.textContent = `
     *{box-sizing:border-box;margin:0;padding:0}
     :root{
-      --gold:#c8a870;--gold-bright:#f0d080;--gold-dim:#8a6a40;
-      --deep:#050a12;--panel:#080f1c;--border:#1e3a5f;
+      --gold:${T.accent};--gold-bright:#f0d080;--gold-dim:#8a6a40;
+      --deep:#050a12;--panel:#080f1c;--border:${T.border};
       --red:#dc2626;--blue:#3b82f6;--green:#16a34a;--white:#f5f0e8;--black:#1a0a2e;
       --fire:#ff6b00;--arcane:#a855f7;--shadow:#0d0014;
     }
     ::-webkit-scrollbar{width:4px;height:4px}
     ::-webkit-scrollbar-track{background:#050a12}
-    ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#c8a870,#3b4a6a);border-radius:2px}
+    ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,${T.accent},#3b4a6a);border-radius:2px}
     body{margin:0;background:#050a12;user-select:none;overflow:hidden}
-    @keyframes glow{0%,100%{box-shadow:0 0 8px #c8a87050,0 0 20px #c8a87020}50%{box-shadow:0 0 20px #c8a870a0,0 0 50px #c8a87040,0 0 80px #c8a87015}}
+    @keyframes glow{0%,100%{box-shadow:0 0 8px ${T.accent}50,0 0 20px ${T.accent}20}50%{box-shadow:0 0 20px ${T.accent}a0,0 0 50px ${T.accent}40,0 0 80px ${T.accent}15}}
     @keyframes glowRed{0%,100%{box-shadow:0 0 8px #dc262650,0 0 20px #dc262620}50%{box-shadow:0 0 20px #dc2626a0,0 0 50px #dc262640}}
     @keyframes glowArcane{0%,100%{box-shadow:0 0 8px #a855f750,0 0 20px #a855f720}50%{box-shadow:0 0 20px #a855f7a0,0 0 50px #a855f740}}
     @keyframes slideIn{from{opacity:0;transform:translateY(-8px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -9511,30 +11116,31 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     @keyframes runeFloat{0%,100%{transform:translateY(0) rotate(0deg);opacity:.3}50%{transform:translateY(-15px) rotate(10deg);opacity:.8}}
     @keyframes cardReveal{from{transform:rotateY(90deg) scale(.8);opacity:0}to{transform:rotateY(0deg) scale(1);opacity:1}}
     @keyframes lifeFlash{0%{transform:scale(1)}30%{transform:scale(1.4)}60%{transform:scale(.9)}100%{transform:scale(1)}}
+    @keyframes lifePulseGlow{0%,100%{opacity:.55;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
     @keyframes manaRing{from{stroke-dashoffset:283}to{stroke-dashoffset:0}}
     @keyframes particleBurst{0%{transform:translate(0,0) scale(1);opacity:1}100%{transform:translate(var(--tx),var(--ty)) scale(0);opacity:0}}
     @keyframes shimmer{0%{background-position:-200% center}100%{background-position:200% center}}
-    @keyframes borderGlow{0%,100%{border-color:#c8a87050}50%{border-color:#c8a870}}
+    @keyframes borderGlow{0%,100%{border-color:${T.accent}50}50%{border-color:${T.accent}}}
     @keyframes ritualCircle{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
     @keyframes orbPulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.15);filter:brightness(1.4)}}
-    @keyframes textGlow{0%,100%{text-shadow:0 0 10px #c8a87050}50%{text-shadow:0 0 30px #c8a870,0 0 60px #c8a87080}}
+    @keyframes textGlow{0%,100%{text-shadow:0 0 10px ${T.accent}50}50%{text-shadow:0 0 30px ${T.accent},0 0 60px ${T.accent}80}}
     @keyframes phaseActive{0%{box-shadow:0 0 6px currentColor}50%{box-shadow:0 0 20px currentColor,0 0 40px currentColor}100%{box-shadow:0 0 6px currentColor}}
     @keyframes handCard{from{opacity:0;transform:translateY(20px) scale(.9)}to{opacity:1;transform:translateY(0) scale(1)}}
     @keyframes stackEntry{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
     @keyframes menuTitle{0%{letter-spacing:.05em;opacity:.6}50%{letter-spacing:.12em;opacity:1}100%{letter-spacing:.05em;opacity:.6}}
     @keyframes counterBadge{0%{transform:scale(1)}20%{transform:scale(1.6)}100%{transform:scale(1)}}
     @keyframes fireParticle{0%{transform:translateY(0) scale(1);opacity:1}100%{transform:translateY(-60px) scale(0);opacity:0}}
-    @keyframes deckCardHover{to{transform:translateY(-3px);box-shadow:0 8px 24px rgba(200,168,112,.2)}}
+    @keyframes deckCardHover{to{transform:translateY(-3px);box-shadow:0 8px 24px rgba(${T.accentRgb},.2)}}
     @keyframes tapCard{from{transform:rotate(0deg)}to{transform:rotate(90deg)}}
     @keyframes untapCard{from{transform:rotate(90deg)}to{transform:rotate(0deg)}}
-    @keyframes zoneHighlight{0%,100%{background:rgba(200,168,112,.04)}50%{background:rgba(200,168,112,.12)}}
+    @keyframes zoneHighlight{0%,100%{background:rgba(${T.accentRgb},.04)}50%{background:rgba(${T.accentRgb},.12)}}
     @keyframes cardShake{0%{transform:rotate(0deg)}15%{transform:rotate(-6deg)}30%{transform:rotate(6deg)}45%{transform:rotate(-4deg)}60%{transform:rotate(4deg)}75%{transform:rotate(-2deg)}100%{transform:rotate(0deg)}}
     @keyframes drawFlip{0%{transform:translateY(0) rotateY(0deg) scale(1);opacity:1}30%{transform:translateY(-18px) rotateY(90deg) scale(1.05)}60%{transform:translateY(-12px) rotateY(180deg) scale(1.08)}100%{transform:translateY(40px) translateX(60px) rotateY(0deg) scale(.88);opacity:0}}
     @keyframes cardToGrave{0%{transform:translate(0,0) rotate(0deg) scale(1);opacity:1}50%{transform:translate(var(--gx),var(--gy)) rotate(var(--gr)) scale(.95);opacity:.9}100%{transform:translate(var(--gx2),var(--gy2)) rotate(var(--gr2)) scale(.5);opacity:0}}
     @keyframes cardDiscard{0%{transform:translate(0,0) rotate(0deg) scale(1);opacity:1}100%{transform:translate(var(--dx),var(--dy)) rotate(var(--dr)) scale(.3);opacity:0}}
-    @keyframes cmdSummonGlow{0%{box-shadow:0 0 0px transparent}30%{box-shadow:0 0 40px #c8a870,0 0 80px #c8a87080,0 0 120px #c8a87040}60%{box-shadow:0 0 20px #c8a870a0,0 0 50px #c8a87060}100%{box-shadow:0 0 0px transparent}}
+    @keyframes cmdSummonGlow{0%{box-shadow:0 0 0px transparent}30%{box-shadow:0 0 40px ${T.accent},0 0 80px ${T.accent}80,0 0 120px ${T.accent}40}60%{box-shadow:0 0 20px ${T.accent}a0,0 0 50px ${T.accent}60}100%{box-shadow:0 0 0px transparent}}
     @keyframes cmdSummonRumble{0%,100%{transform:translate(0,0)}10%{transform:translate(-3px,2px)}20%{transform:translate(3px,-2px)}30%{transform:translate(-2px,3px)}40%{transform:translate(2px,-1px)}50%{transform:translate(-1px,2px)}60%{transform:translate(3px,1px)}70%{transform:translate(-2px,-2px)}80%{transform:translate(1px,3px)}90%{transform:translate(-1px,-1px)}}
-    @keyframes cmdPortraitPulse{0%,100%{box-shadow:0 0 10px rgba(200,168,112,.4),0 0 20px rgba(200,168,112,.2)}50%{box-shadow:0 0 30px rgba(200,168,112,.9),0 0 60px rgba(200,168,112,.5),0 0 100px rgba(200,168,112,.2)}}
+    @keyframes cmdPortraitPulse{0%,100%{box-shadow:0 0 10px rgba(${T.accentRgb},.4),0 0 20px rgba(${T.accentRgb},.2)}50%{box-shadow:0 0 30px rgba(${T.accentRgb},.9),0 0 60px rgba(${T.accentRgb},.5),0 0 100px rgba(${T.accentRgb},.2)}}
     @keyframes millFly{0%{transform:translate(0,0) rotate(0deg) scale(1);opacity:1;z-index:999}100%{transform:translate(var(--mx),var(--my)) rotate(var(--mr)) scale(.4);opacity:0}}
     @keyframes flyCard{0%{transform:translate(0,0) rotate(0deg) scale(1);opacity:1}60%{opacity:1}100%{transform:translate(var(--fx),var(--fy)) rotate(var(--fr)) scale(.6);opacity:0}}
     .glow-gold{animation:glow 2.5s ease-in-out infinite}
@@ -9547,12 +11153,12 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     .text-glow{animation:textGlow 3s ease-in-out infinite}
     .phase-active{animation:phaseActive 1.5s ease-in-out infinite}
     .drop-target{transition:border-color .12s,background .12s,box-shadow .12s}
-    .drop-target.over{border-color:#c8a870!important;background:rgba(200,168,112,.06)!important;box-shadow:inset 0 0 20px rgba(200,168,112,.12),0 0 10px rgba(200,168,112,.1)!important;animation:zoneHighlight 1s ease-in-out infinite}
+    .drop-target.over{border-color:${T.accent}!important;background:rgba(${T.accentRgb},.06)!important;box-shadow:inset 0 0 20px rgba(${T.accentRgb},.12),0 0 10px rgba(${T.accentRgb},.1)!important;animation:zoneHighlight 1s ease-in-out infinite}
     .card-3d{transform-style:preserve-3d;perspective:600px;transition:transform .3s cubic-bezier(0.34,1.4,0.64,1),box-shadow .3s;}
-    .card-3d:hover{transform:translateY(-4px) rotateX(4deg) rotateY(-2deg);box-shadow:0 16px 32px rgba(0,0,0,.8),0 0 20px rgba(200,168,112,.15)}
-    .mana-symbol{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-size:8px;font-weight:700;font-family:"Crimson Text",serif;}
-    .shimmer-text{background:linear-gradient(90deg,#c8a870,#f0d080,#c8a870,#8a6a40,#c8a870);background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:shimmer 3s linear infinite;}
-    input,textarea,select{outline:none;font-family:"Crimson Text",serif}
+    .card-3d:hover{transform:translateY(-4px) rotateX(4deg) rotateY(-2deg);box-shadow:0 16px 32px rgba(0,0,0,.8),0 0 20px rgba(${T.accentRgb},.15)}
+    .mana-symbol{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-size:8px;font-weight:700;font-family:'Crimson Text',serif;}
+    .shimmer-text{background:linear-gradient(90deg,${T.accent},#f0d080,${T.accent},#8a6a40,${T.accent});background-size:200% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;animation:shimmer 3s linear infinite;}
+    input,textarea,select{outline:none;font-family:'Crimson Text',serif}
     button{cursor:pointer;font-family:"Cinzel",serif}
     .ritual-bg::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,rgba(168,85,247,.04) 0%,transparent 60%);pointer-events:none;}
     .ember{position:absolute;width:3px;height:3px;border-radius:50%;background:radial-gradient(circle,#ff9900,#ff4400);animation:fireParticle var(--dur) ease-out forwards;pointer-events:none;}
@@ -9575,9 +11181,20 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   const [customCards,setCustomCards]=useState([]);
   const [editingDeck,setEditingDeck]=useState(null);
   const [gameState,setGameState]=useState(null);
-  const [theme,setTheme]=useState(THEMES[0]);
+  const [theme,setTheme]=useState(()=>{
+    // v7.6.4: restore persisted theme
+    try {
+      const id = localStorage.getItem('mtg-theme-id');
+      const found = id && THEMES.find(t=>t.id===id);
+      if (found) return found;
+    } catch {}
+    return THEMES[0];
+  });
+  const [themeKey, setThemeKey] = useState(0);
   const [weather,setWeather]=useState('none');
   const [showThemePicker,setShowThemePicker]=useState(false);
+  // v7.6.4: profile settings modal
+  const [showProfileSettings,setShowProfileSettings]=useState(false);
   // v7: net sync handle (created when entering an online game)
   const netRef = useRef(null);
   // v7 Phase 2: which opponent seat index is currently "primary" (rendered by GameBoard).
@@ -9740,7 +11357,25 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   },[maskPrivateZones]);
 
   const updatePlayer=useCallback((idx,fn)=>setGameState(gs=>{
-    const next = {...gs,players:gs.players.map((p,i)=>i===idx?fn(p):p)};
+    let next = {...gs,players:gs.players.map((p,i)=>i===idx?fn(p):p)};
+    // v7.6.4: Dandân — library and graveyard are SHARED across all seats.
+    // After any per-player update, mirror those zones onto every other seat
+    // so every player's view of the shared deck/graveyard is identical.
+    // Hand, battlefield, exile, command, life remain per-player.
+    if (gs.gamemode === 'dandan' && next.players[idx]) {
+      const sharedLib   = next.players[idx].library;
+      const sharedGrave = next.players[idx].graveyard;
+      next = {
+        ...next,
+        players: next.players.map((p, i) => {
+          if (!p || i === idx) return p;
+          // Only re-create the player object if the shared arrays actually changed
+          // (avoid unnecessary re-renders).
+          if (p.library === sharedLib && p.graveyard === sharedGrave) return p;
+          return { ...p, library: sharedLib, graveyard: sharedGrave };
+        }),
+      };
+    }
     broadcastIfOnline(next);
     return next;
   }),[broadcastIfOnline]);
@@ -9753,9 +11388,23 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   const startGame=(deck,isTwoPlayer=false,isOnline=false,roomId=null,playerIdx=0,otherDeck=null,gamemode=null,extraDecks=null,extraProfiles=null,extras=null)=>{
     const fmt=gamemode||deck.format||"standard";
     const life=getStartingLife(fmt);
-    // Dandan: both players get dandan deck
-    const dMine=fmt==="dandan"?DANDAN_DECK:deck;
-    const dOpp=fmt==="dandan"?DANDAN_DECK:(otherDeck||deck);
+    // v7.6.4: for Dandân, swap in the resolved variant deck if available.
+    // The variantId is on the deck object passed in (set during room create
+    // / join). If resolution hasn't completed (offline mode, slow network),
+    // we fall back to the stub deck — cards still play with names only,
+    // metadata fades in as it arrives via the prefetch+patch pipeline.
+    const _resolveDandan = (d) => {
+      if (fmt !== "dandan" || !d) return d;
+      const vid = d.variantId || d.id?.replace(/^dandan_/,"");
+      if (!vid) return d;
+      const resolved = getDandanVariant(vid);
+      // Kick off async resolution if not yet cached.
+      if (!_dandanResolvedCache.has(vid)) resolveDandanVariant(vid);
+      return resolved;
+    };
+    // Dandan: both players get the same dandan variant deck
+    const dMine= fmt==="dandan" ? _resolveDandan(deck)        : deck;
+    const dOpp = fmt==="dandan" ? dMine                       : (otherDeck||deck);
     // v7.4: always stamp my own userId on my profile so opponents can target hand-reveal requests.
     const myProfile = {...profile, userId: authUser?.id};
 
@@ -9779,7 +11428,7 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     // Fill 3rd/4th seats at their absolute indices.
     if (Array.isArray(extraDecks)) {
       extraSeats.forEach((seatIdx, k) => {
-        const d  = fmt==="dandan" ? DANDAN_DECK : (extraDecks[k] || dMine);
+        const d  = fmt==="dandan" ? dMine : (extraDecks[k] || dMine);
         const pr = extraProfiles?.[k] || {alias:`Player ${seatIdx+1}`,avatar:"🧙",gamemat:GAMEMATS[0].bg};
         seats[seatIdx] = initPlayer(d, pr, life);
       });
@@ -9788,6 +11437,26 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     for (let i=0; i<maxP; i++) {
       if (!seats[i]) seats[i] = initPlayer(dMine, myProfile, life);
     }
+
+    // v7.6.4: Dandân — share a SINGLE library and graveyard array across all
+    // seats. initPlayer() built each seat with its own shuffled copy, so we
+    // overwrite seat 1+ to point at seat 0's arrays. Shared graveyard starts
+    // empty (already []). Hands stay separate (each seat's hand[] is its own
+    // array — players draw to their own hand from the shared library).
+    if (fmt === "dandan") {
+      const sharedLib   = seats[playerIdx].library;
+      const sharedGrave = seats[playerIdx].graveyard;
+      for (let i = 0; i < maxP; i++) {
+        if (i !== playerIdx && seats[i]) {
+          seats[i] = {
+            ...seats[i],
+            library:   sharedLib,
+            graveyard: sharedGrave,
+          };
+        }
+      }
+    }
+
     const players = seats;
 
     // v7: stop any stale net sync from a previous game
@@ -9985,6 +11654,20 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
             const payload = ev.kind === 'zone_deny' ? p : {...p, zone:'hand'};
             window.dispatchEvent(new CustomEvent('mtg:zone-deny', { detail: payload }));
           }
+        } else if (ev.kind === 'card_action_request') {
+          // Owner: someone is asking to perform an action on our cards.
+          if (p.targetUserId === authUser.id) {
+            window.dispatchEvent(new CustomEvent('mtg:card-action-request', { detail: p }));
+          }
+        } else if (ev.kind === 'card_action_grant') {
+          // Requester: opp granted our action request.
+          if (p.requesterUserId === authUser.id) {
+            window.dispatchEvent(new CustomEvent('mtg:card-action-grant', { detail: p }));
+          }
+        } else if (ev.kind === 'card_action_deny') {
+          if (p.requesterUserId === authUser.id) {
+            window.dispatchEvent(new CustomEvent('mtg:card-action-deny', { detail: p }));
+          }
         }
       });
     }
@@ -10025,6 +11708,19 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     T.border   = theme.border;
     T.accent   = theme.accent;
     T.text     = theme.text;
+    // v7.6.4: muted color = the theme's border with a softening tweak.
+    // For most themes this gives a low-contrast grey-ish color suitable
+    // for placeholder text, "saved", "PLANESWALKER" labels, etc.
+    T.muted    = theme.muted || theme.border;
+    // v7.6.4: also expose accent in r,g,b form so legacy rgba(200,168,112,.X)
+    // calls can be rewritten as `rgba(${T.accentRgb},.X)` to follow the theme.
+    T.accentRgb = (() => {
+      const h = (theme.accent || `${T.accent}`).replace("#","");
+      const v = parseInt(h.length === 3
+        ? h.split("").map(c=>c+c).join("")
+        : h.padEnd(6,"0").slice(0,6), 16);
+      return `${(v>>16)&255},${(v>>8)&255},${v&255}`;
+    })();
     T.headerBg = theme.headerBg || ('linear-gradient(180deg,'+theme.panel+','+theme.bg+')');
     T.panelTex = theme.panelTex || theme.panel;
     document.body.style.background = theme.bg;
@@ -10073,6 +11769,12 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       /* Title text shimmer */
       .shimmer-text { background: linear-gradient(90deg, ${T.accent}, ${T.text}, ${T.accent}) !important; background-size: 200% auto !important; -webkit-background-clip: text !important; -webkit-text-fill-color: transparent !important; }
     `;
+    // v7.6.4: persist theme choice across sessions.
+    try { localStorage.setItem('mtg-theme-id', theme.id); } catch {}
+    // Force a tree re-render so JSX that reads T.accent inline picks up
+    // the new values. Without this bump, only state changes would trigger
+    // re-render — making theme clicks feel laggy or "rotational".
+    setThemeKey(k => k + 1);
   },[theme]);
 
   if(view==="loading")return(
@@ -10161,12 +11863,12 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     </>;
   }
 
-  return<><WeatherCanvas weather={weather}/>{showThemePicker&&<ThemePicker current={theme} weather={weather} onTheme={setTheme} onWeather={setWeather} onClose={()=>setShowThemePicker(false)}/>}<MainMenu decks={decks} profile={profile} onTheme={()=>setShowThemePicker(true)}
+  return<><WeatherCanvas weather={weather}/>{showThemePicker&&<ThemePicker current={theme} weather={weather} onTheme={setTheme} onWeather={setWeather} onClose={()=>setShowThemePicker(false)}/>}{showProfileSettings&&<ProfileSettings profile={profile} authUser={authUser} onSave={p=>{saveProfile(p);}} onSignOut={onSignOut} onClose={()=>setShowProfileSettings(false)}/>}<MainMenu decks={decks} profile={profile} onTheme={()=>setShowThemePicker(true)}
     onNew={()=>{setEditingDeck(null);setView("deckbuilder");}}
     onEdit={d=>{setEditingDeck(d);setView("deckbuilder");}}
     onPlay={d=>startGame(d,false)}
     onRooms={()=>setView("rooms")}
     onDelete={id=>persist(decks.filter(d=>d.id!==id))}
     onSignOut={onSignOut}
-    onChaos={cards=>{persist([...decks,{id:uid(),name:"🎲 Chaos Deck",cards,format:"standard"}]);}}/></>
+    onProfile={()=>setShowProfileSettings(true)}/></>
 }
