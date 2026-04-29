@@ -194,3 +194,48 @@ Full icon set installed in `/public`:
 - **Custom-playmat URL** is stored on the profile as `gamematCustom`. The `gamemat` field stays in sync via the `url(URL) center/cover no-repeat` form. If the URL is invalid, you get a broken image background — there's no validation step.
 - **3p/4p extra-opponent CommandBar.** The per-opp commander-damage tracker is local-only. The opp BoardSides for extra players (3p, 4p) show the existing OpponentTile with `♥ life` — no per-opp commander damage tracker on their board side. Local player tracks via the bar on their own side.
 - **OAuth callback route.** The OAuthButtons set `redirectTo` to `${origin}/auth/callback`. The app currently doesn't have a dedicated `/auth/callback` route — supabase processes the hash on whatever URL it lands on, which works because `App.jsx` is the entry point and the auth listener fires on every URL. The dedicated route would only matter if there were route-level auth guards, which there aren't.
+
+---
+
+## Pass-1 hotfixes (Dandân + Commander regression hunt)
+
+After v7.6.5 shipped, two regressions surfaced. Both fixed surgically without touching other modes.
+
+### Dandân — host/joiner deck-pick prompts and blank cardback art
+
+**Symptoms reported:**
+1. After clicking "Create Room" in Dandân, the host was prompted to pick a deck from their library.
+2. After clicking "Join", the joiner was shown the per-player deck picker too.
+3. Cards drawn in Dandân rendered as the cardback / "topdeck" image. Pressing F to search the library showed every card as a blank tile.
+
+**Root cause #1 — host popup.** `createRoom` writes the player_row with `deckId: dandanDeck.id` for Dandân, but never calls `setSelDeckId(...)`. The popup at the bottom of `RoomLobby` is gated on `myRoomId && !selDeckId`. After create, `myRoomId` was truthy and `selDeckId` was still the empty initial state → popup opened. **Fix:** stamp `setSelDeckId(dandanDeck.id)` after the create succeeds.
+
+**Root cause #2 — joiner picker block visible.** The block is wrapped in `{gamemode!=="dandan" && (...)}`, but `gamemode` is local React state. The joiner's local `gamemode` defaults to `"standard"` and never updates when they Join a Dandân room — only the meta is Dandân, and the block doesn't read meta. **Fix:** in the Dandân branch of `joinRoom`, also `setGamemode("dandan")` and `setDandanVariantId(dvId)` so local state mirrors the room. As a defense-in-depth belt, the popup condition now also checks `(waitingMeta?.gamemode || gamemode) !== "dandan"`.
+
+**Root cause #3 — blank cards.** `_dandanResolvedCache` is populated by `resolveDandanVariant(variantId)` (Scryfall batch fetch). For the host this fires from the `useEffect` triggered when they pick the variant. For the joiner it never fires — their `useEffect` is gated on local `gamemode === "dandan"`, which never flips. So when `startGame` runs, the joiner's `_resolveDandan(deck)` returns the unresolved stub deck (cards have `_pending:true, imageUri:null`). Every `mkCard()` call then produces a card whose renderer falls back to `CARD_BACK`. F-search shows the same stubs because they're literally what's in `player.library`. **Fix:**
+- `joinRoom` Dandân branch now calls `resolveDandanVariant(dvId)` directly (fire-and-forget) the moment the joiner clicks Join.
+- The room-fill polling effect that calls `onJoinGame` now `await resolveDandanVariant(dvId)` for Dandân rooms before fanning out, guaranteeing the cache is populated before any peer's `startGame` runs.
+- The `gamemode` value passed to `onJoinGame` is now sourced from `meta.gamemode` first (with local `gamemode` as fallback), so race-y local state can't mislabel the game.
+
+### Commander — single commander squeezed left of the command zone
+
+`gridTemplateColumns: player.command.length<=2 ? "1fr 1fr" : "1fr 1fr"` — both branches were 2-column, so a single commander always sat in the first cell of a 2-cell row. Now `length<=1 ? "1fr" : "1fr 1fr"` — single commander gets its own full-width column and centers properly.
+
+### Commander — topdeck reveal hover preview
+
+The topdeck portrait (rotated 90° image inside the side library widget) was a bare `<img>` with no hover wiring. The shared `setHovered` (which drives the GameBoard-level `<CardPreview>` overlay) was never called from this element. **Fix:** wrap the portrait container with `onMouseEnter`/`onMouseLeave` that call `setHovered(player.library[0])` only when the top is currently revealed (`revealTop` on, or per-iid `revealTopOnce` match). When face-down, hover is a no-op so the preview doesn't leak the card identity.
+
+### Commander — Scry / Surveil / Look at top X hover preview
+
+`ScryModal` rendered each tile with `<CardImg ... noHover/>` and never received an `onHover` prop, so the GameBoard-level preview overlay had no way to know which card was being hovered. **Fix:** `ScryModal` now accepts `onHover` and threads it both to the wrapping `<div>` (so empty-tile hover still registers) and to the `<CardImg>` itself (`noHover` removed). The mount site passes `setHovered`. Works for `mode="scry"`, `mode="surveil"`, and `mode="look"` — i.e. all three context-menu actions (Scry N, Surveil N, Look at Top N) get the larger preview on hover.
+
+### Topdeck context menu — redundant "Draw This Card" removed
+
+The right-click menu on the topdeck portrait listed both "Draw This Card" (without hotkey label) and "Draw a card (C)" (with hotkey label). On the topdeck both items pulled the same card to the hand — only the labelling differed, so the unlabelled one was clutter. Removed the unlabelled entry; "Draw a card (C)" remains.
+
+### Files touched
+
+- `src/Playground.jsx` — RoomLobby (createRoom, joinRoom, polling, popup gate), BoardSide command-zone grid, BoardSide topdeck portrait hover, ScryModal signature/render, GameBoard ScryModal mount, `buildCtx` library branch (redundant draw item dropped).
+
+No DB schema changes. No relay changes. No config changes. Other gamemodes untouched.
+

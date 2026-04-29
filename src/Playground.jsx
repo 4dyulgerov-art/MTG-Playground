@@ -4513,6 +4513,10 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
       await storage.set(`room_${id}_meta`,JSON.stringify(meta),true);
       await storage.set(`room_${id}_player_0`,JSON.stringify({profile,deckId:gamemode==="dandan"?dandanDeck.id:selDeckId,deck:playerDeck||null,ready:false,decks}),true);
       setMyRoomId(id);setMySeat(0);setWaitingMeta(meta);
+      // v7.6.5-fix: in Dandân the deck IS the host-chosen variant — stamp
+      // selDeckId so the "Choose Your Deck" popup (gated on !selDeckId) does
+      // not open after the room is created. Variants are not picked per-player.
+      if(gamemode==="dandan" && dandanDeck) setSelDeckId(dandanDeck.id);
     }catch{alert("Could not create room");}
     setLoading(false);};
 
@@ -4568,6 +4572,20 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           const variant = DANDAN_VARIANTS.find(v=>v.variantId===dvId) || DANDAN_VARIANTS[0];
           await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:variant.id,deck:variant,ready:false}),true);
           setSelDeckId(variant.id);
+          // v7.6.5-fix: sync local gamemode to the room's gamemode so the
+          // top-of-lobby per-player deck picker hides for the joiner too
+          // (it was gated only on local `gamemode!=="dandan"`, which never
+          // flipped because the joiner never picked Dandân in their own UI).
+          setGamemode("dandan");
+          setDandanVariantId(dvId);
+          // v7.6.5-fix: kick off Scryfall resolution NOW so the joiner's
+          // _dandanResolvedCache is populated before the room fills and
+          // startGame runs. Without this, the joiner's dMine.cards stay as
+          // _pending stubs (no imageUri), which is why every drawn card and
+          // the F-search results render as the cardback / topdeck image.
+          // Fire-and-forget — the polling effect below also awaits before
+          // calling onJoinGame as a belt-and-braces guarantee.
+          resolveDandanVariant(dvId);
         } else {
           // v7.5.1: write player row WITHOUT a deck — user must explicitly pick in waiting lobby
           await storage.set(`room_${roomId}_player_${pIdx}`,JSON.stringify({profile,deckId:null,deck:null,ready:false}),true);
@@ -4629,6 +4647,20 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           // extraProfiles excludes both me and primary opp — it's the 3rd/4th seats.
           // In 2p this meant opp got a generic fallback profile (no real playmat).
           const oppProfile = oppRow?.profile || {alias:"Opponent",avatar:"🧙"};
+          // v7.6.5-fix: trust meta.gamemode over local state. The host writes
+          // it; every peer reads from it. Local `gamemode` may lag for late
+          // joiners until setGamemode propagates through React.
+          const effectiveGamemode = meta.gamemode || gamemode;
+          // v7.6.5-fix: for Dandân, AWAIT Scryfall resolution of the chosen
+          // variant before fanning out to startGame. Otherwise dMine.cards
+          // are still _pending stubs (no imageUri) and every drawn card +
+          // every F-search tile renders as the cardback. The host pre-warms
+          // via useEffect when picking the variant; the joiner pre-warms in
+          // joinRoom; this `await` is the final guarantee for any race.
+          if(effectiveGamemode==="dandan"){
+            const dvId = meta.dandanVariantId || DANDAN_VARIANTS[0].variantId;
+            try{ await resolveDandanVariant(dvId); }catch(e){ console.warn("[dandan resolve before launch]",e); }
+          }
           onJoinGame({
             roomId:myRoomId,
             playerIdx:mySeatIdx,
@@ -4641,7 +4673,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             maxPlayers: meta.maxPlayers,
             meta,
             isOnline:true,
-            gamemode,
+            gamemode: effectiveGamemode,
           });
         }
       }catch{}
@@ -4881,8 +4913,12 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           is in a room without a deck picked. Forces a selection before the
           game can auto-launch (gated by `everyoneHasDeck` in the poller above).
           No ✕ close — only "Leave Room" exits. Joined guests see a tab toggle
-          between their own library and the host's published deck library. */}
-      {myRoomId && !selDeckId && (
+          between their own library and the host's published deck library.
+          v7.6.5-fix: Dandân variants are shared/host-chosen — never prompt.
+          Both the local `gamemode` state and the room meta's gamemode are
+          checked so a late-joining peer whose local state hasn't synced yet
+          still doesn't see the popup. */}
+      {myRoomId && !selDeckId && (waitingMeta?.gamemode || gamemode) !== "dandan" && (
         <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",
           backdropFilter:"blur(6px)",zIndex:10000,display:"flex",
           alignItems:"center",justifyContent:"center",padding:20}}>
@@ -5902,7 +5938,7 @@ function DandanInfoModal({variantId, onClose}){
   );
 }
 
-function ScryModal({cards,mode,onConfirm,onClose}){
+function ScryModal({cards,mode,onConfirm,onClose,onHover}){
   const [order,setOrder]=useState(cards.map((_,i)=>i));
   const [decisions,setDecisions]=useState({}); // idx -> "top"|"bottom"|"graveyard"|"exile"
   const [dragging,setDragging]=useState(null);
@@ -5954,10 +5990,12 @@ function ScryModal({cards,mode,onConfirm,onClose}){
             const borderCol=d==="top"?"#4ade80":d==="bottom"?"#60a5fa":d==="graveyard"?"#a78bfa":d==="exile"?"#f97316":T.border;
             return(
               <div key={i} draggable onDragStart={()=>dragStart(i)} onDragOver={e=>dragOver(e,i)}
+                onMouseEnter={()=>onHover&&onHover(card)}
+                onMouseLeave={()=>onHover&&onHover(null)}
                 style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,cursor:"grab",
                   opacity:d&&d!=="top"?.7:1,transition:"opacity .15s",userSelect:"none"}}>
                 <div style={{position:"relative",border:`3px solid ${borderCol}`,borderRadius:10,transition:"border-color .2s"}}>
-                  <CardImg card={card} size="lg" noHover/>
+                  <CardImg card={card} size="lg" onHover={onHover} onHoverEnd={()=>onHover&&onHover(null)}/>
                   {d&&d!=="top"&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
                     background:"rgba(0,0,0,.55)",borderRadius:7,fontSize:48,pointerEvents:"none"}}>
                     {d==="bottom"?"⬇":d==="graveyard"?"☠":"✦"}
@@ -6812,7 +6850,7 @@ function BoardSide({
                 T={T}
               />
               {player.command.length > 0 && (
-                <div style={{display:"grid",gridTemplateColumns:player.command.length<=2?"1fr 1fr":"1fr 1fr",gap:3,justifyItems:"center"}}>
+                <div style={{display:"grid",gridTemplateColumns:player.command.length<=1?"1fr":"1fr 1fr",gap:3,justifyItems:"center"}}>
                   {player.command.map(card=>{
                     const isAway=card.status==="away"||card.status==="dead"||card.status==="exiled";
                     return(
@@ -6908,7 +6946,20 @@ function BoardSide({
                   onMouseOver={hov} onMouseOut={uhov}>🔍</button>}
               </div>
               {/* Card landscape: portrait img rotated 90deg, centered via absolute positioning */}
+              {/* v7.6.5-fix: when the top card is revealed (revealTop on, or
+                  per-iid revealTopOnce match), wire onMouseEnter/Leave to the
+                  shared `setHovered` so the large CardPreview overlay shows
+                  on hover — same pattern used by graveyard/exile/command.
+                  When NOT revealed we don't set hovered (cardback shouldn't
+                  expose card identity via the preview). */}
               <div style={{position:"relative",width:"100%",height:player.command.length>2?54:72,overflow:"hidden"}}
+                onMouseEnter={()=>{
+                  const top=player.library[0];
+                  if(!top) return;
+                  const isRevealed = player.revealTop || player.revealTopOnce===top.iid;
+                  if(isRevealed && setHovered) setHovered(top);
+                }}
+                onMouseLeave={()=>{ if(setHovered) setHovered(null); }}
                 onContextMenu={e=>{e.preventDefault();if(player.library[0]){const c=(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?player.library[0]:{...player.library[0],name:"Top of Deck",imageUri:null,card_faces:null,image_uris:null};handleCtx(e,c,"library");}}}
                 onMouseDown={e=>{
                   if(e.button!==0||!player.library[0])return;
@@ -8554,7 +8605,9 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       // v7.6.5: rewritten — drop the fixed N variants (Mill 1 / Mill 3 /
       // Scry 1 / Surveil 1 / Look at top 3 / Look at top 5). Replace with
       // single "X…" prompts. Also adds Draw/Draw 7 with hotkey labels.
-      items.push({icon:"🎴",label:"Draw This Card",action:()=>moveCard(card,"library","hand")});
+      // v7.6.5-fix: dropped redundant "Draw This Card" — when right-clicking
+      // the topdeck portrait it did the same thing as "Draw a card (C)" but
+      // without the hotkey label, cluttering the menu.
       items.push({icon:"🎴",label:"Draw a card (C)",action:()=>draw(1)});
       items.push({icon:"🎴",label:"Draw 7 cards (Shift+C)",action:()=>draw(7)});
       items.push({icon:"🎴",label:"Draw X…",action:()=>{
@@ -9044,7 +9097,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
           ))}
         </div>
       )}
-      {scryData&&<ScryModal cards={scryData.cards} mode={scryData.mode} onConfirm={handleScryConfirm} onClose={()=>setScryData(null)}/>}
+      {scryData&&<ScryModal cards={scryData.cards} mode={scryData.mode} onConfirm={handleScryConfirm} onClose={()=>setScryData(null)} onHover={setHovered}/>}
 
       {/* ═══ HEADER ═══ */}
       <div style={{display:"flex",alignItems:"center",gap:5,padding:"3px 8px",
