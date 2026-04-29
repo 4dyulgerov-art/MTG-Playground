@@ -1870,6 +1870,33 @@ const buildDeckEntry=(card, extra={})=>{
 };
 const isLand=c=>!!(c?.typeLine||c?.type_line||"").toLowerCase().includes("land");
 const shuffleArr=a=>{const r=[...a];for(let i=r.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[r[i],r[j]]=[r[j],r[i]];}return r;};
+// v7.6.5: deterministic seeded shuffle. For Dandân we need every peer to
+// produce the SAME library order so the shared zones don't desync. We seed
+// from a string (typically the roomId), implement a tiny mulberry32 PRNG,
+// and fisher-yates with it.
+const seededShuffleArr = (a, seed) => {
+  if (!seed) return shuffleArr(a);
+  // string → uint32 hash (cyrb32-ish)
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  let s = h >>> 0;
+  const next = () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const r = [...a];
+  for (let i = r.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    [r[i], r[j]] = [r[j], r[i]];
+  }
+  return r;
+};
 const mkCard=(base,zone="library")=>({iid:uid(),...base,tapped:false,faceDown:false,counters:{},zone,x:0,y:0});
 
 /* ─── v7.6.4 Image prefetch ────────────────────────────────────────────
@@ -2502,26 +2529,35 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
   };
   const cancelEdit = () => { setEditing(null); setDraftValue(""); };
 
+  // v7.6.5: commander damage cells now mirror the LIFE counter style — same
+  // font, same baseline color, same size — so the eye reads them as a row of
+  // stat counters rather than two unrelated UI elements. Hover reveals alias
+  // (already there). Lethal threshold (21+) flips to red.
+  const cellFontSize = 13;       // was 9 (cmdr) vs 16 (life) → unify around 13
+  const cellFontFamily = "Cinzel Decorative, serif";
+  const cellPadding = "2px 6px";
+
   return (
     <div style={{
       display:"flex", alignItems:"center", gap:6,
-      padding:"3px 6px", marginBottom:3,
+      padding:"2px 6px", marginBottom:2,
       background:`linear-gradient(180deg, rgba(0,0,0,.3), transparent)`,
       borderRadius:5,
       width:"100%",
     }}>
-      {/* Life — click to type */}
+      {/* Life — click to type. v7.6.5: slightly smaller (was 16 → 13) so the
+          row is more compact and the graveyard pile below isn't clipped. */}
       <div
         title={readOnly?`${player?.profile?.alias||"Player"} — ${life} life`:"Click to set life"}
         onClick={()=>startEdit("life", life)}
         style={{
-          flex:"0 0 auto", minWidth:38,
-          fontFamily:"Cinzel Decorative, serif",
-          fontSize:16, lineHeight:1, fontWeight:700,
+          flex:"0 0 auto", minWidth:34,
+          fontFamily:cellFontFamily,
+          fontSize:cellFontSize, lineHeight:1, fontWeight:700,
           color:lifeColor,
           textShadow:`0 0 8px ${lifeColor}55, 0 1px 3px rgba(0,0,0,.95)`,
           cursor:readOnly?"default":"pointer",
-          padding:"3px 6px",
+          padding:cellPadding,
           borderRadius:4,
           textAlign:"center",
           letterSpacing:".02em",
@@ -2539,8 +2575,8 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
               if(e.key==="Escape") cancelEdit();
             }}
             style={{
-              width:38, fontSize:14, textAlign:"center",
-              fontFamily:"Cinzel Decorative,serif", color:lifeColor,
+              width:34, fontSize:cellFontSize, textAlign:"center",
+              fontFamily:cellFontFamily, color:lifeColor,
               background:"transparent", border:`1px solid ${lifeColor}80`,
               borderRadius:3, padding:0, outline:"none",
             }}/>
@@ -2549,13 +2585,20 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
         )}
       </div>
 
-      {/* Commander damage cells — one per opponent. Spacer fills if only 1. */}
+      {/* Commander damage cells — one per opponent. v7.6.5: matched to life
+          counter style. Color stays neutral (T.accent → T.text gradient based
+          on damage tier), so the row reads as a single stat group. Tooltip
+          carries the opp's alias; lethal flips the cell red. */}
       <div style={{flex:1,display:"flex",justifyContent:"flex-end",gap:4}}>
         {(opponents||[]).map(opp => {
           const seat = opp.seat;
           const dmg  = cmdrDmg[seat] || 0;
           const lethal = dmg >= 21;
-          const dmgColor = lethal ? "#f87171" : dmg >= 14 ? "#fbbf24" : dmg > 0 ? T.text : T.muted;
+          // Same color stops as life: green→yellow→red as damage approaches lethal.
+          const cellColor = lethal ? "#f87171"
+                                   : dmg >= 16 ? "#fbbf24"
+                                   : dmg >= 10 ? "#e8e2d0"
+                                   : T.accent;
           const editKey = `cmd_${seat}`;
           return (
             <div key={seat}
@@ -2563,21 +2606,20 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
               onClick={()=>startEdit(editKey, dmg)}
               style={{
                 display:"flex", alignItems:"center", gap:3,
-                fontFamily:"Cinzel, serif", fontSize:9,
-                color:dmgColor,
+                fontFamily:cellFontFamily,
+                fontSize:cellFontSize, lineHeight:1, fontWeight:700,
+                color:cellColor,
+                textShadow:`0 0 8px ${cellColor}55, 0 1px 3px rgba(0,0,0,.95)`,
                 cursor:readOnly?"default":"pointer",
-                padding:"2px 5px",
-                borderRadius:3,
+                padding:cellPadding,
+                borderRadius:4,
                 border:`1px solid ${lethal?"#f8717180":`${T.border}50`}`,
                 background:lethal?"rgba(248,113,113,.1)":"transparent",
                 transition:"background .12s",
-                minWidth:34,
-                justifyContent:"center",
+                letterSpacing:".02em",
               }}
-              onMouseOver={e=>{ if(!readOnly && !lethal) e.currentTarget.style.background=`${T.accent}10`; }}
+              onMouseOver={e=>{ if(!readOnly && !lethal) e.currentTarget.style.background=`${T.accent}15`; }}
               onMouseOut={e=>{ e.currentTarget.style.background=lethal?"rgba(248,113,113,.1)":"transparent"; }}>
-              {/* Tiny avatar dot */}
-              <span style={{fontSize:9,opacity:.85}}>{opp.avatar||"⚔"}</span>
               {editing === editKey ? (
                 <input autoFocus value={draftValue}
                   onChange={e=>setDraftValue(e.target.value)}
@@ -2588,13 +2630,13 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
                     if(e.key==="Escape") cancelEdit();
                   }}
                   style={{
-                    width:22, fontSize:9, textAlign:"center",
-                    fontFamily:"Cinzel,serif", color:dmgColor,
-                    background:"transparent", border:`1px solid ${dmgColor}80`,
-                    borderRadius:2, padding:0, outline:"none",
+                    width:34, fontSize:cellFontSize, textAlign:"center",
+                    fontFamily:cellFontFamily, color:cellColor,
+                    background:"transparent", border:`1px solid ${cellColor}80`,
+                    borderRadius:3, padding:0, outline:"none",
                   }}/>
               ) : (
-                <span style={{minWidth:14,textAlign:"right"}}>{dmg}/21</span>
+                <span>⚔{dmg}</span>
               )}
             </div>
           );
@@ -3646,25 +3688,27 @@ function CardPreview({card}){
   const power=card._displayPower!==undefined?card._displayPower:card.power;
   const toughness=card._displayToughness!==undefined?card._displayToughness:card.toughness;
   const isDFC=isDFCCard(card);
+  // v7.6.5: bigger preview (was 190 → 260) to make hover-to-read viable.
+  const PREV_W = 260;
   return(
     <div className="fade-in" style={{position:"fixed",left:14,bottom:HAND_H+14,zIndex:10000,pointerEvents:"none"}}>
       {img?(
         <div style={{position:"relative"}}>
           <img src={img} alt={name} style={{
-            width:190,borderRadius:12,
-            boxShadow:"0 12px 48px rgba(0,0,0,.95),0 0 30px rgba(200,168,112,.15),0 0 0 1px rgba(200,168,112,.2)"
+            width:PREV_W,borderRadius:14,
+            boxShadow:"0 14px 56px rgba(0,0,0,.95),0 0 36px rgba(200,168,112,.18),0 0 0 1px rgba(200,168,112,.25)"
           }}/>
 
-          <div style={{position:"absolute",bottom:0,left:0,right:0,height:60,
-            background:"linear-gradient(transparent,rgba(5,10,18,.9))",borderRadius:"0 0 12px 12px"}}/>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,height:80,
+            background:"linear-gradient(transparent,rgba(5,10,18,.9))",borderRadius:"0 0 14px 14px"}}/>
           {/* Counter badges on preview */}
           {card.counters&&Object.entries(card.counters).filter(([,v])=>v!==0).length>0&&(
-            <div style={{position:"absolute",bottom:6,left:6,right:6,display:"flex",flexWrap:"wrap",gap:3,justifyContent:"center"}}>
+            <div style={{position:"absolute",bottom:8,left:8,right:8,display:"flex",flexWrap:"wrap",gap:4,justifyContent:"center"}}>
               {Object.entries(card.counters).filter(([,v])=>v!==0).map(([k,v])=>{
                 const ct=COUNTER_TYPES.find(c=>c.key===k)||{color:"#fbbf24"};
                 return(
                   <span key={k} style={{
-                    background:"rgba(5,10,18,.92)",fontSize:10,padding:"2px 6px",borderRadius:4,
+                    background:"rgba(5,10,18,.92)",fontSize:12,padding:"3px 7px",borderRadius:5,
                     color:ct.color,border:`1px solid ${ct.color}60`,
                     fontFamily:"Cinzel,serif",fontWeight:700,
                     boxShadow:`0 0 6px ${ct.color}50`,
@@ -3675,14 +3719,14 @@ function CardPreview({card}){
           )}
         </div>
       ):(
-        <div style={{width:190,background:"linear-gradient(180deg,#0d1f3c,#080f1c)",
-          border:`1px solid ${T.accent}`,borderRadius:12,padding:14,
-          boxShadow:"0 12px 48px rgba(0,0,0,.95),0 0 30px rgba(200,168,112,.15)"}}>
-          <div style={{fontSize:13,color:T.accent,fontFamily:"Cinzel, serif",marginBottom:5}}>{name}</div>
-          <div style={{fontSize:10,color: T.muted,marginBottom:6}}>{typeLine}</div>
+        <div style={{width:PREV_W,background:"linear-gradient(180deg,#0d1f3c,#080f1c)",
+          border:`1px solid ${T.accent}`,borderRadius:14,padding:18,
+          boxShadow:"0 14px 56px rgba(0,0,0,.95),0 0 36px rgba(200,168,112,.18)"}}>
+          <div style={{fontSize:15,color:T.accent,fontFamily:"Cinzel, serif",marginBottom:6}}>{name}</div>
+          <div style={{fontSize:12,color: T.muted,marginBottom:8}}>{typeLine}</div>
           {oracleText&&
-            <div style={{fontSize:11,color:T.text,fontStyle:"italic",lineHeight:1.6}}>{oracleText}</div>}
-          {power&&<div style={{fontSize:12,color:T.accent,marginTop:8,textAlign:"right",fontFamily:"Cinzel, serif"}}>{power}/{toughness}</div>}
+            <div style={{fontSize:13,color:T.text,fontStyle:"italic",lineHeight:1.6}}>{oracleText}</div>}
+          {power&&<div style={{fontSize:14,color:T.accent,marginTop:10,textAlign:"right",fontFamily:"Cinzel, serif"}}>{power}/{toughness}</div>}
         </div>
       )}
     </div>
@@ -3763,6 +3807,7 @@ function ZonePanel({title,color,icon,cards,zone,onCtx,onDragStart,onHover,isOpen
               <div key={card.iid} title={card.name}
                 onContextMenu={e=>onCtx&&onCtx(e,card,zone)}
                 onMouseEnter={()=>onHover&&onHover(card)}
+                onMouseLeave={()=>onHover&&onHover(null)}
                 onMouseDown={e=>onDragStart&&onDragStart(e,card,zone)}
                 style={{cursor:"grab",transition:"transform .12s"}}
                 onMouseOver={e=>e.currentTarget.style.transform="translateY(-2px)"}
@@ -3805,6 +3850,7 @@ function SearchCardRow({card,count,onAdd,onHover,onSetCommander}){
   const img=getImg(card);
   return(
     <div onMouseEnter={()=>onHover(card)}
+      onMouseLeave={()=>onHover(null)}
       style={{display:"flex",alignItems:"center",gap:7,padding:"5px 8px",borderRadius:5,marginBottom:1,
         transition:"background .1s"}}
       onMouseOver={e=>e.currentTarget.style.background="#0d1f3c80"}
@@ -3847,7 +3893,7 @@ function DeckCardRow({card,onAdd,onRemove,onSelect,isSelected,onHover,fromZone,o
         outline:isSelected?`1px solid ${T.accent}40`:"none",
         transition:"background .1s,transform .1s",cursor:"grab"}}
       onMouseOver={e=>{if(!isSelected)e.currentTarget.style.background=`${T.panel}cc`;onHover&&onHover(card);}}
-      onMouseOut={e=>{if(!isSelected)e.currentTarget.style.background=`${T.bg}99`;}}>
+      onMouseOut={e=>{if(!isSelected)e.currentTarget.style.background=`${T.bg}99`;onHover&&onHover(null);}}>
       {card.imageUri&&<img src={card.imageUri} alt="" style={{width:22,height:31,borderRadius:2,objectFit:"cover",flexShrink:0,border:`1px solid ${T.border}30`}} loading="lazy"/>}
       <span style={{fontSize:10,color:isSelected?T.accent:clr,minWidth:20,fontFamily:"Cinzel, serif"}}>{card.quantity}×</span>
       <span style={{flex:1,fontSize:10,color:isSelected?T.accent:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:isSelected?"600":"normal"}}>{card.name}</span>
@@ -4424,10 +4470,14 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
     // v7.6.2: on lobby mount, sweep stale rows from any rooms I still occupy
     // (e.g. browser-closed previous sessions). Without this, stale "2/2 full"
     // rooms haunt the list and block re-creation.
+    // v7.6.5: also do a TTL-based global cleanup so any seat row whose
+    // updated_at is older than 30 minutes gets dropped — fixes "stuck on
+    // 2 players in game" after a crash where neither player returned.
     (async()=>{
       try{
-        const { cleanupMyStaleRooms } = await import("./lib/storage");
-        await cleanupMyStaleRooms();
+        const mod = await import("./lib/storage");
+        await mod.cleanupMyStaleRooms?.();
+        await mod.cleanupGloballyStaleSeats?.(30);
       }catch(e){ console.warn("[lobby-mount cleanup]",e); }
       loadRooms();
     })();
@@ -4612,6 +4662,13 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           <span style={{fontSize:13,color: T.muted}}>{profile.alias}</span>
         </div>
 
+        {/* v7.6.5: in Dandân mode, hide the per-player deck picker entirely.
+            The deck IS the host-chosen variant; neither host nor joiner picks
+            anything personal. Showing this section made both players think
+            they had to pick a deck (and joiners got confused into picking
+            their own deck, which was then mounted at game start, breaking
+            the single-deck shared library). */}
+        {gamemode!=="dandan" && (
         <div style={{marginBottom:16,background:`${T.bg}cc`,border:`1px solid ${T.border}30`,borderRadius:8,padding:14}}>
           <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>Your Deck</div>
           {/* v7.4: when joining someone else's room, let the guest pick from host's deck library too */}
@@ -4657,6 +4714,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             )}
           </div>
         </div>
+        )}
 
         {/* Gamemode selector */}
         <div style={{marginBottom:16,background:`${T.bg}cc`,border:`1px solid ${T.border}30`,borderRadius:8,padding:12}}>
@@ -5362,6 +5420,7 @@ function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,
           return(
             <div key={card.iid}
               onMouseEnter={()=>onHover&&onHover(card)}
+              onMouseLeave={()=>onHover&&onHover(null)}
               onClick={e=>handleCardClick(e,card)}
               onContextMenu={e=>{
                 e.preventDefault();
@@ -5526,6 +5585,7 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
         {filtered.map((card,i)=>(
           <div key={card.iid||i} title={card.name}
             onMouseEnter={()=>onHover&&onHover(card)}
+            onMouseLeave={()=>onHover&&onHover(null)}
             onContextMenu={e=>{
               e.preventDefault();
               // Show context menu without closing window
@@ -5609,6 +5669,7 @@ function DeckViewer({library,revealTop,onClose,onCtx,onHover,onDragStart,onDraw,
           <div key={card.iid} title={card.name}
             onContextMenu={e=>onCtx&&onCtx(e,card,"library")}
             onMouseEnter={()=>onHover&&onHover(card)}
+            onMouseLeave={()=>onHover&&onHover(null)}
             onMouseDown={e=>onDragStart&&onDragStart(e,card,"library")}
             style={{flexShrink:0,cursor:"grab",transition:"transform .1s"}}
             onMouseOver={e=>e.currentTarget.style.transform="translateY(-4px)"}
@@ -5868,51 +5929,54 @@ function ScryModal({cards,mode,onConfirm,onClose}){
   const dBtn=(idx,d,label,col)=>(
     <button onClick={()=>decide(idx,d)}
       style={{...btn(decisions[idx]===d?`${col}30`:`${T.bg}99`,decisions[idx]===d?col:T.muted,
-        {fontSize:8,padding:"2px 5px",border:`1px solid ${decisions[idx]===d?col+"50":`${T.border}30`}`,borderRadius:3})}}
+        {fontSize:12,padding:"6px 11px",border:`1px solid ${decisions[idx]===d?col+"50":`${T.border}30`}`,borderRadius:5,fontFamily:"Cinzel,serif",letterSpacing:".05em"})}}
       onMouseOver={hov} onMouseOut={uhov}>{label}</button>
   );
   return(
     <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.9)",
       display:"flex",alignItems:"center",justifyContent:"center",zIndex:20000,backdropFilter:"blur(6px)"}}>
       <div className="slide-in" style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
-        border:`1px solid ${T.accent}50`,borderRadius:12,padding:22,
-        maxWidth:600,width:"90vw",boxShadow:"0 24px 80px rgba(0,0,0,.95)"}}>
-        <h3 style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:14,marginBottom:6}}>{mode==="surveil"?"🔍 Surveil":"🔮 Scry"} {cards.length}</h3>
-        <div style={{fontSize:9,color: T.muted,marginBottom:12,fontFamily:"Crimson Text,serif"}}>
+        border:`1px solid ${T.accent}50`,borderRadius:14,padding:32,
+        maxWidth:1280,width:"92vw",maxHeight:"92vh",overflowY:"auto",
+        boxShadow:"0 24px 80px rgba(0,0,0,.95)"}}>
+        <h3 style={{color:T.accent,fontFamily:"Cinzel Decorative,serif",fontSize:22,marginBottom:8,letterSpacing:".05em"}}>
+          {mode==="surveil"?"🔍 Surveil":"🔮 Scry"} {cards.length}
+        </h3>
+        <div style={{fontSize:13,color: T.muted,marginBottom:22,fontFamily:"Crimson Text,serif",lineHeight:1.5}}>
           {mode==="look"?"Drag to reorder, then confirm to put back on top in this order."
            :mode==="surveil"?"Drag to reorder. Cards default to top. Send to graveyard if desired."
            :"Default = keep on top. Drag to reorder. Use buttons to send to bottom, graveyard, or exile."}
         </div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16,justifyContent:"center"}}>
+        <div style={{display:"flex",gap:18,flexWrap:"wrap",marginBottom:24,justifyContent:"center"}}>
           {order.map(i=>{
             const card=cards[i];
             const d=decisions[i];
             const borderCol=d==="top"?"#4ade80":d==="bottom"?"#60a5fa":d==="graveyard"?"#a78bfa":d==="exile"?"#f97316":T.border;
             return(
               <div key={i} draggable onDragStart={()=>dragStart(i)} onDragOver={e=>dragOver(e,i)}
-                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,cursor:"grab",
+                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,cursor:"grab",
                   opacity:d&&d!=="top"?.7:1,transition:"opacity .15s",userSelect:"none"}}>
-                <div style={{position:"relative",border:`2px solid ${borderCol}`,borderRadius:6,transition:"border-color .2s"}}>
-                  <CardImg card={card} size="sm" noHover/>
+                <div style={{position:"relative",border:`3px solid ${borderCol}`,borderRadius:10,transition:"border-color .2s"}}>
+                  <CardImg card={card} size="lg" noHover/>
                   {d&&d!=="top"&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
-                    background:"rgba(0,0,0,.55)",borderRadius:4,fontSize:16,pointerEvents:"none"}}>
+                    background:"rgba(0,0,0,.55)",borderRadius:7,fontSize:48,pointerEvents:"none"}}>
                     {d==="bottom"?"⬇":d==="graveyard"?"☠":"✦"}
                   </div>}
                 </div>
-                <div style={{fontSize:8,color: T.muted,maxWidth:52,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{card.name}</div>
-                <div style={{display:"flex",gap:2,flexWrap:"wrap",justifyContent:"center"}}>
-                  {mode!=="look"&&dBtn(i,"top","⬆Top","#4ade80")}
-                  {mode!=="look"&&dBtn(i,"bottom","⬇Bot","#60a5fa")}
-                  {(mode==="surveil"||mode==="scry")&&dBtn(i,"graveyard","☠Grave","#a78bfa")}
-                  {mode==="scry"&&dBtn(i,"exile","✦Exile","#f97316")}
+                <div style={{fontSize:12,color: T.text,maxWidth:140,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",fontFamily:"Cinzel,serif"}}>{card.name}</div>
+                <div style={{display:"flex",gap:5,flexWrap:"wrap",justifyContent:"center"}}>
+                  {mode!=="look"&&dBtn(i,"top","⬆ Top","#4ade80")}
+                  {mode!=="look"&&dBtn(i,"bottom","⬇ Bot","#60a5fa")}
+                  {(mode==="surveil"||mode==="scry")&&dBtn(i,"graveyard","☠ Grave","#a78bfa")}
+                  {mode==="scry"&&dBtn(i,"exile","✦ Exile","#f97316")}
                 </div>
               </div>
             );
           })}
         </div>
-        <div style={{display:"flex",gap:8}}>
-          <button onClick={onClose} style={{...btn(`${T.panel}99`,T.text,{flex:1,border:`1px solid ${T.border}`})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
-          <button onClick={confirm} style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:2,fontFamily:"Cinzel,serif",fontWeight:700})}} onMouseOver={hov} onMouseOut={uhov}>✦ Confirm</button>
+        <div style={{display:"flex",gap:12}}>
+          <button onClick={onClose} style={{...btn(`${T.panel}99`,T.text,{flex:1,padding:"12px 16px",fontSize:13,border:`1px solid ${T.border}`,fontFamily:"Cinzel,serif",letterSpacing:".05em"})}} onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+          <button onClick={confirm} style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{flex:2,padding:"12px 16px",fontSize:14,fontFamily:"Cinzel,serif",fontWeight:700,letterSpacing:".06em"})}} onMouseOver={hov} onMouseOut={uhov}>✦ Confirm</button>
         </div>
       </div>
     </div>
@@ -5927,6 +5991,7 @@ function HotkeyHelp({onClose}){
     ["↓","Life −1"],
     ["X","Untap all cards in play"],
     ["C","Draw a card from deck"],
+    ["Shift+C","Draw 7 cards"],
     ["V","Shuffle your deck"],
     ["Shift+V","Mill 1 → Graveyard (animated)"],
     ["Ctrl+Shift+V","Mill 1 → Exile (animated)"],
@@ -6862,7 +6927,9 @@ function BoardSide({
                   src={(player.revealTop||player.revealTopOnce===player.library[0]?.iid)&&player.library[0]?getImg(player.library[0])||CARD_BACK:(player.deck?.sleeveUri||CARD_BACK)}
                   alt="top"
                   style={{
-                    width:72,height:101,borderRadius:4,objectFit:"cover",display:"block",
+                    width:player.command.length>2?56:72,
+                    height:player.command.length>2?78:101,
+                    borderRadius:4,objectFit:"cover",display:"block",
                     position:"absolute",
                     top:"50%",left:"50%",
                     transform:"translate(-50%,-50%) rotate(90deg)",
@@ -6907,12 +6974,22 @@ function BoardSide({
                 <div style={{display:"flex",justifyContent:"center"}}>
                 {player.graveyard.length>0?(
                   <div style={{position:"relative"}} onClick={e=>e.stopPropagation()}
-                    onMouseDown={e=>{e.stopPropagation();if(readOnly)return;if(e.button===0)startFloatDrag(e,player.graveyard[graveIdx],"graveyard");}}
+                    onMouseDown={e=>{e.stopPropagation();if(readOnly)return;
+                      if(e.button===0){
+                        // v7.6.5: clamp graveIdx so we don't pass undefined
+                        // to startFloatDrag when the graveyard shrank since
+                        // the index was last set.
+                        const card = player.graveyard[graveIdx] ?? player.graveyard[player.graveyard.length-1];
+                        if(card) startFloatDrag(e,card,"graveyard");
+                      }}}
                     onContextMenu={e=>{
                       e.preventDefault();
                       e.stopPropagation();
                       if(readOnly&&onZoneRequest){ onZoneRequest("graveyard",e); }
-                      else { handleCtx(e,player.graveyard[graveIdx],"graveyard"); }
+                      else {
+                        const card = player.graveyard[graveIdx] ?? player.graveyard[player.graveyard.length-1];
+                        if(card) handleCtx(e,card,"graveyard");
+                      }
                     }}>
                     <CardImg card={player.graveyard[graveIdx]??player.graveyard[player.graveyard.length-1]} size={player.command.length>2?"sm":"md"} onHover={setHovered} onHoverEnd={()=>setHovered(null)}/>
                   </div>
@@ -6943,12 +7020,19 @@ function BoardSide({
                 <div style={{display:"flex",justifyContent:"center"}}>
                 {player.exile.length>0?(
                   <div style={{position:"relative"}} onClick={e=>e.stopPropagation()}
-                    onMouseDown={e=>{e.stopPropagation();if(readOnly)return;if(e.button===0)startFloatDrag(e,player.exile[exileIdx],"exile");}}
+                    onMouseDown={e=>{e.stopPropagation();if(readOnly)return;
+                      if(e.button===0){
+                        const card = player.exile[exileIdx] ?? player.exile[player.exile.length-1];
+                        if(card) startFloatDrag(e,card,"exile");
+                      }}}
                     onContextMenu={e=>{
                       e.preventDefault();
                       e.stopPropagation();
                       if(readOnly&&onZoneRequest){ onZoneRequest("exile",e); }
-                      else { handleCtx(e,player.exile[exileIdx],"exile"); }
+                      else {
+                        const card = player.exile[exileIdx] ?? player.exile[player.exile.length-1];
+                        if(card) handleCtx(e,card,"exile");
+                      }
                     }}>
                     <CardImg card={player.exile[exileIdx]??player.exile[player.exile.length-1]} size={player.command.length>2?"sm":"md"} onHover={setHovered} onHoverEnd={()=>setHovered(null)}/>
                   </div>
@@ -7031,6 +7115,19 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
   const prevHoveredId=useRef(null);
   const [graveIdx,setGraveIdx]=useState(0);
   const [exileIdx,setExileIdx]=useState(0);
+  // v7.6.5: keep the indices in range when the arrays shrink (e.g. after a
+  // card moves out of the graveyard). Otherwise a stale index can land at
+  // undefined → crash when the user clicks the pile.
+  useEffect(()=>{
+    const gl = player.graveyard?.length || 0;
+    if (gl > 0 && graveIdx >= gl) setGraveIdx(gl - 1);
+    if (gl === 0 && graveIdx !== 0) setGraveIdx(0);
+  },[player.graveyard?.length, graveIdx]);
+  useEffect(()=>{
+    const el = player.exile?.length || 0;
+    if (el > 0 && exileIdx >= el) setExileIdx(el - 1);
+    if (el === 0 && exileIdx !== 0) setExileIdx(0);
+  },[player.exile?.length, exileIdx]);
   // Track previous lengths to detect new cards being added
   const prevGraveLen=useRef(0);
   const prevExileLen=useRef(0);
@@ -7953,9 +8050,11 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     if(!drag)return;
     e.preventDefault();
     const rect=bfRef.current?.getBoundingClientRect();if(!rect)return;
-    // Bounds: left=0 (BF left edge), right=BF+sidebar, top=0, bottom=BF bottom
+    // Bounds: left=0 (BF left edge), right=BF+sidebar, top=0, bottom=BF bottom.
+    // v7.6.5: also keep cards from drifting under the lower half of the hand
+    // strip so they stay reachable for future drags.
     const minX=0, maxX=rect.width+190-CW;
-    const minY=0, maxY=rect.height-CH;
+    const minY=0, maxY=rect.height-CH-HAND_H/2;
     const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
     // Raw unclamped position of the dragged card
     const rawX=e.clientX-rect.left-drag.ox;
@@ -7999,9 +8098,16 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     if(!drag)return;
     bfDragRef.current=null;
     const cx=e.clientX,cy=e.clientY;
+    // v7.6.5: distinguish a CLICK from a DRAG. The hand strip overlaps the
+    // bottom of the battlefield visually, so a plain click on a BF card
+    // would trigger the "drop into hand" path even though no drag happened.
+    // We require ≥6 px of movement before treating the mouseup as a drop.
+    const startX = drag.startX ?? 0;
+    const startY = drag.startY ?? 0;
+    const moved = Math.abs(cx - startX) >= 6 || Math.abs(cy - startY) >= 6;
     const checkZone=(ref)=>{if(!ref.current)return false;const r=ref.current.getBoundingClientRect();return cx>=r.left&&cx<=r.right&&cy>=r.top&&cy<=r.bottom;};
     const card=player.battlefield.find(c=>c.iid===drag.iid);
-    if(card){
+    if(card && moved){
       // Commander dragged onto its portrait → return to command zone
       if(card.isCommander&&checkZone(cmdRef)){
         upd(p=>{
@@ -8087,7 +8193,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     // Use float drag — gives access to ALL zones (grave, exile, lib, hand, cmd portrait)
     // But also start the BF position-drag for movement within BF
     const r=e.currentTarget.getBoundingClientRect();
-    bfDragRef.current={iid:card.iid,ox:e.clientX-r.left-r.width/2,oy:e.clientY-r.top-r.height/2};
+    bfDragRef.current={iid:card.iid,ox:e.clientX-r.left-r.width/2,oy:e.clientY-r.top-r.height/2,startX:e.clientX,startY:e.clientY};
     // v7.6.3: gate full-state broadcasts during drag (positions go via the
     // delta channel only). handleBFMouseUp clears this and forces one
     // full state to reconcile.
@@ -8147,7 +8253,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
           if(alreadyOnBF){ setFloatDrag(null); return; }
           const cc=floatDrag.card.castCount||0;
           const dropX=Math.max(0,Math.min((bfRect?.width||400)-CW, cx-(bfRect?.left||0)-CW/2));
-          const dropY=Math.max(0,Math.min((bfRect?.height||300)-CH, cy-(bfRect?.top||0)-CH/2));
+          const dropY=Math.max(0,Math.min((bfRect?.height||300)-CH-HAND_H/2, cy-(bfRect?.top||0)-CH/2));
           upd(p=>{
             const bf={...floatDrag.card,iid:uid(),zone:"battlefield",tapped:false,
               x:dropX,y:dropY,
@@ -8163,7 +8269,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         }else{
           // Place card at exact cursor position — no auto-snapping
           const dropX=Math.max(0,Math.min((bfRect?.width||400)-CW, cx-(bfRect?.left||0)-CW/2));
-          const dropY=Math.max(0,Math.min((bfRect?.height||300)-CH, cy-(bfRect?.top||0)-CH/2));
+          const dropY=Math.max(0,Math.min((bfRect?.height||300)-CH-HAND_H/2, cy-(bfRect?.top||0)-CH/2));
           // Play correct sound based on where card came from
           if(floatDrag.fromZone==="graveyard"||floatDrag.fromZone==="exile") SFX.playAction("reanimate");
           else SFX.playAction("toBattlefield");
@@ -8305,15 +8411,15 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     const items=[{header:card.name}];
     const mv=(to,pos)=>()=>moveCard(card,zone,to,pos);
     if(zone==="battlefield"){
-      items.push({icon:"⟳",label:card.tapped?"Untap":"Tap",action:()=>tap(card)});
+      items.push({icon:"⟳",label:card.tapped?"Untap (Space)":"Tap (Space)",action:()=>tap(card)});
       items.push("---");
-      items.push({icon:"↩",label:"→ Hand",action:mv("hand")});
-      items.push({icon:"☠",label:"→ Graveyard",action:mv("graveyard"),color:"#a78bfa"});
-      items.push({icon:"⚡",label:"→ Exile",action:mv("exile"),color:"#60a5fa"});
-      items.push({icon:"↑",label:"→ Library Top",action:mv("library","top")});
-      items.push({icon:"↓",label:"→ Library Bottom",action:mv("library","bottom")});
+      items.push({icon:"↩",label:"→ Hand (R)",action:mv("hand")});
+      items.push({icon:"☠",label:"→ Graveyard (D)",action:mv("graveyard"),color:"#a78bfa"});
+      items.push({icon:"⚡",label:"→ Exile (S)",action:mv("exile"),color:"#60a5fa"});
+      items.push({icon:"↑",label:"→ Library Top (T)",action:mv("library","top")});
+      items.push({icon:"↓",label:"→ Library Bottom (.)",action:mv("library","bottom")});
       items.push({icon:"⧉",label:"Become a Copy of…",action:()=>setCopyMode({card}),color:"#60a5fa"});
-      items.push({icon:"🪞",label:"Clone (vanishes on death)",action:()=>copyCard(card,true),color:"#818cf8"});
+      items.push({icon:"🪞",label:"Clone (vanishes on death) (K)",action:()=>copyCard(card,true),color:"#818cf8"});
       // Multi-select actions when multiple selected
       if(selected.size>1){
         items.push("---");
@@ -8340,13 +8446,21 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
           cards.forEach(c=>copyCard(c,true));
         },color:"#818cf8"});
       }
-      items.push({icon:"↔",label:card.faceDown?"Show Front":"Transform (Face Down)",action:()=>{
+      items.push({icon:"↔",label:card.faceDown?"Show Front (L)":"Transform (Face Down) (L)",action:()=>{
         upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,faceDown:!c.faceDown}:c)}));
         addLog(`↔ ${card.faceDown?"Revealed front of":"Turned face-down:"} ${card.name}`);
       }});
-      if(isDFCCard(card))items.push({icon:"↕",label:card.altFace?"◀ Transform (Back→Front)":"▶ Transform (Front→Back)",action:()=>window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}))});
+      if(isDFCCard(card))items.push({icon:"↕",label:card.altFace?"◀ Transform (Back→Front) (L)":"▶ Transform (Front→Back) (L)",action:()=>window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}))});
       if(card.isToken)items.push({icon:"✗",label:"Remove Token",action:()=>{upd(p=>({...p,battlefield:p.battlefield.filter(c=>c.iid!==card.iid)})); addLog(`✗ Removed token: ${card.name}`);},color:"#f87171"});
       items.push("---");
+      items.push({icon:"🎯",label:`${card.targeted?"Untarget":"Target"} (O)`,action:()=>{upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,targeted:!c.targeted}:c)})); addLog(`🎯 ${card.targeted?"Untargeted":"Targeted"}: ${card.name}`);}});
+      items.push({icon:"🔄",label:`${card.inverted?"Reset rotation":"Invert (rotate 180°)"} (I)`,action:()=>{upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,inverted:!c.inverted}:c)})); addLog(`🔄 ${card.inverted?"Reset rotation":"Inverted"}: ${card.name}`);}});
+      items.push({icon:"💥",label:"Shake (H)",action:()=>{
+        const el=document.querySelector(`[data-iid="${card.iid}"]`);
+        if(el){ el.style.animation="none"; requestAnimationFrame(()=>{ el.style.animation="cardShake 0.4s ease"; setTimeout(()=>el.style.animation="",450); }); }
+      }});
+      items.push("---");
+      items.push({icon:"◈",label:"Add +1/+1 (U)",action:()=>addCounter(card,"+1/+1",1)});
       items.push({icon:"◈",label:"Add Counter…",action:()=>{
         const type=(window.prompt("Counter type:\n(e.g. +1/+1  -1/-1  charge  loyalty  age  verse  poison  infect  time  fate  quest  study  task  wage  credit  brick  oil  eon  ice  wind  luck  dream  feather  fade  storage  rust  mire …)")||"").trim();
         if(!type)return;
@@ -8379,13 +8493,17 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         });
         setSelected(new Set());
       };
-      items.push({icon:"▶",label:`→ Battlefield${sfx}`,action:mvAll("battlefield")});
+      items.push({icon:"▶",label:`→ Battlefield${sfx} (Space)`,action:mvAll("battlefield")});
       if(handSel.length===1)items.push({icon:"▶",label:"→ BF Face Down",action:()=>{moveCard(card,"hand","battlefield");upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,faceDown:true}:c)}));}});
-      items.push({icon:"☠",label:`Discard${sfx}`,action:mvAll("graveyard"),color:"#a78bfa"});
-      items.push({icon:"⚡",label:`→ Exile${sfx}`,action:mvAll("exile"),color:"#60a5fa"});
-      items.push({icon:"↑",label:`→ Library Top${sfx}`,action:mvAll("library","top")});
-      items.push({icon:"↓",label:`→ Library Bottom${sfx}`,action:mvAll("library","bottom")});
+      items.push({icon:"☠",label:`Discard${sfx} (D)`,action:mvAll("graveyard"),color:"#a78bfa"});
+      items.push({icon:"⚡",label:`→ Exile${sfx} (S)`,action:mvAll("exile"),color:"#60a5fa"});
+      items.push({icon:"↑",label:`→ Library Top${sfx} (T)`,action:mvAll("library","top")});
+      items.push({icon:"↓",label:`→ Library Bottom${sfx} (.)`,action:mvAll("library","bottom")});
       if(handSel.length===1&&card.isCommander)items.push({icon:"⚔",label:"→ Command Zone",action:()=>{moveCard(card,zone,"command",undefined,true);addLog(`⚔ ${card.name} → command zone`);}});
+      items.push("---");
+      // v7.6.5: discard entire hand at the bottom of the hand-card context
+      // menu, with hotkey label to teach the shortcut.
+      items.push({icon:"☠",label:"Discard Hand (Y)",action:()=>discardHand(),color:"#a78bfa"});
     }else if(zone==="graveyard"){
       items.push({icon:"↩",label:"→ Hand",action:mv("hand")});
       items.push({icon:"▶",label:"Reanimate → BF",action:mv("battlefield"),color:"#4ade80"});
@@ -8433,7 +8551,17 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         SFX.playAction("shuffle");
       }});
     }else if(zone==="library"){
+      // v7.6.5: rewritten — drop the fixed N variants (Mill 1 / Mill 3 /
+      // Scry 1 / Surveil 1 / Look at top 3 / Look at top 5). Replace with
+      // single "X…" prompts. Also adds Draw/Draw 7 with hotkey labels.
       items.push({icon:"🎴",label:"Draw This Card",action:()=>moveCard(card,"library","hand")});
+      items.push({icon:"🎴",label:"Draw a card (C)",action:()=>draw(1)});
+      items.push({icon:"🎴",label:"Draw 7 cards (Shift+C)",action:()=>draw(7)});
+      items.push({icon:"🎴",label:"Draw X…",action:()=>{
+        const n=parseInt(window.prompt("Draw how many cards?","1")||"",10);
+        if(!isNaN(n)&&n>0) draw(n);
+      }});
+      items.push("---");
       items.push({icon:"▶",label:"→ Battlefield",action:mv("battlefield")});
       items.push({icon:"☠",label:"→ Graveyard",action:mv("graveyard"),color:"#a78bfa"});
       items.push({icon:"⚡",label:"→ Exile",action:mv("exile"),color:"#60a5fa"});
@@ -8441,7 +8569,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       items.push({icon:"↑",label:"Move to Top",action:mv("library","top")});
       items.push({icon:"↓",label:"Move to Bottom",action:mv("library","bottom")});
       items.push("---");
-      items.push({icon:"🔀",label:"Shuffle",action:()=>shuffle()});
+      items.push({icon:"🔀",label:"Shuffle (V)",action:()=>shuffle()});
       items.push("---");
       items.push({icon:"👁",label:player.revealTop?"◉ Play with Topdeck Revealed":"Play with Topdeck Revealed",action:()=>{
         upd(p=>({...p,revealTop:!p.revealTop}));
@@ -8451,20 +8579,18 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         upd(p=>({...p,revealTopOnce:p.library[0]?.iid||null}));
         addLog(`👁 Revealed top card: ${player.library[0]?.name||"(empty deck)"}`);
       }});
-      items.push({icon:"🔮",label:"Scry 1",action:()=>scry(1)});
-      items.push({icon:"🔮",label:"Scry X…",action:()=>setShowScry(true)});
-      items.push({icon:"👁",label:"Look at top 3",action:()=>lookAtTop(3)});
-      items.push({icon:"👁",label:"Look at top 5",action:()=>lookAtTop(5)});
-      items.push({icon:"🔍",label:"Surveil 1",action:()=>surveil(1)});
-      items.push({icon:"🔍",label:"Surveil 2",action:()=>surveil(2)});
+      items.push({icon:"🔮",label:"Scry X… (G)",action:()=>setShowScry(true)});
+      items.push({icon:"👁",label:"Look at top X…",action:()=>{
+        const n=parseInt(window.prompt("Look at how many cards?","3")||"",10);
+        if(!isNaN(n)&&n>0) lookAtTop(n);
+      }});
+      items.push({icon:"🔍",label:"Surveil X…",action:()=>{
+        const n=parseInt(window.prompt("Surveil how many cards?","2")||"",10);
+        if(!isNaN(n)&&n>0) surveil(n);
+      }});
       items.push("---");
-      items.push({icon:"💀",label:"Mill 1 → Graveyard",action:()=>mill(1),color:"#a78bfa"});
-      items.push({icon:"💀",label:"Mill 3 → Graveyard",action:()=>mill(3),color:"#a78bfa"});
-      items.push({icon:"💀",label:"Mill X… → Graveyard",action:()=>{setMillTarget("graveyard");setShowMillPrompt(true);},color:"#a78bfa"});
-      items.push("---");
-      items.push({icon:"✦",label:"Mill 1 → Exile",action:()=>millExile(1),color:"#60a5fa"});
-      items.push({icon:"✦",label:"Mill 3 → Exile",action:()=>millExile(3),color:"#60a5fa"});
-      items.push({icon:"✦",label:"Mill X… → Exile",action:()=>{setMillTarget("exile");setShowMillPrompt(true);},color:"#60a5fa"});
+      items.push({icon:"💀",label:"Mill X… → Graveyard (Shift+M)",action:()=>{setMillTarget("graveyard");setShowMillPrompt(true);},color:"#a78bfa"});
+      items.push({icon:"✦",label:"Mill X… → Exile (Ctrl+Shift+M)",action:()=>{setMillTarget("exile");setShowMillPrompt(true);},color:"#60a5fa"});
       items.push("---");
       // v7 Phase 2: change deck mid-game (scoops current zones, opens picker).
       items.push({icon:"⇄",label:"Change Deck…",action:()=>setShowChangeDeck(true),color:T.accent});
@@ -8569,6 +8695,12 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       // X — untap all permanents
       if(k==="x"&&!e.ctrlKey){
         untapAll();
+        return;
+      }
+      // Shift+C — draw 7 cards (opening-hand convenience). Must be checked
+      // BEFORE the plain C handler since shift wouldn't be evaluated otherwise.
+      if(k==="c"&&shift&&!e.ctrlKey){
+        draw(7);
         return;
       }
       // C — draw a card
@@ -9069,15 +9201,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
               handleCtx={NOOP} handleCardBFMouseDown={NOOP} startFloatDrag={NOOP}
               tap={NOOP} swapDeck={NOOP} draw={NOOP} shuffle={NOOP}
               containerRef={oppContainerRef}
-              hand={
-                /* v7.6.5: defensive mask — even though OppHandStrip always
-                   renders sleeves and BoardSide.HandOverlay is suppressed in
-                   readOnly mode, force every opp hand card's `faceDown` flag
-                   to true here so that ANY downstream rendering path cannot
-                   accidentally leak card faces. Doubly important in hotseat
-                   2p where the privacy mask doesn't run. */
-                (opponent.hand || []).map(c => ({...c, faceDown: true, _hotseatMasked: true}))
-              }
+              hand={opponent.hand}
               handRef={oppHandRef}
               hovered={hovered} floatDrag={null}
               onZoneRequest={requestOppZone}
@@ -10738,35 +10862,40 @@ function PresenceCounter({T}){
     let cancelled = false;
     const tick = async () => {
       try {
-        const { supabase } = await import('./lib/supabase');
-        const tenMinAgo = new Date(Date.now() - 10*60*1000).toISOString();
-        // v7.6.5: be resilient to schema variations.
-        // - "Online" — try user_profiles.updated_at first; if the column is
-        //   missing, fall back to total user_profiles count (lifetime users
-        //   as a coarse proxy). Either way the counter shows a meaningful
-        //   number rather than perpetually 0.
+        // v7.6.5: "Online" now prefers the GLOBAL site presence channel
+        // (App.jsx subscribes every visitor to `playsim:lobby` regardless of
+        // login state). If the channel hasn't reported yet, fall back to the
+        // user_profiles updated-in-last-10min query, then to total profiles.
         let onlineCount = 0;
-        try {
-          const { count, error } = await supabase
-            .from('user_profiles')
-            .select('id', { count: 'exact', head: true })
-            .gte('updated_at', tenMinAgo);
-          if (error) throw error;
-          onlineCount = count || 0;
-        } catch (e1) {
-          // Column missing or other error — fall back to total profiles.
+        const sitePresence = (typeof window !== 'undefined') ? window.__MTG_V7__?.sitePresenceCount : null;
+        if (typeof sitePresence === 'number' && sitePresence > 0) {
+          onlineCount = sitePresence;
+        } else {
+          const { supabase } = await import('./lib/supabase');
+          const tenMinAgo = new Date(Date.now() - 10*60*1000).toISOString();
           try {
-            const { count } = await supabase
+            const { count, error } = await supabase
               .from('user_profiles')
-              .select('id', { count: 'exact', head: true });
+              .select('id', { count: 'exact', head: true })
+              .gte('updated_at', tenMinAgo);
+            if (error) throw error;
             onlineCount = count || 0;
-          } catch {}
+          } catch (e1) {
+            try {
+              const { count } = await supabase
+                .from('user_profiles')
+                .select('id', { count: 'exact', head: true });
+              onlineCount = count || 0;
+            } catch {}
+          }
         }
-        // - "In game" — count rows in room_players. Use updated_at when
-        //   available, otherwise just count total rows (which equals current
-        //   seat occupancy because leaveRoom deletes rows).
+        // "In game" — anyone currently sitting in a room_players row. We try
+        // updated_at gating but fall back to total row count (since rooms
+        // delete their rows on leave/cleanup, total == active).
         let inGameCount = 0;
         try {
+          const { supabase } = await import('./lib/supabase');
+          const tenMinAgo = new Date(Date.now() - 10*60*1000).toISOString();
           const { count, error } = await supabase
             .from('room_players')
             .select('user_id', { count: 'exact', head: true })
@@ -10775,6 +10904,7 @@ function PresenceCounter({T}){
           inGameCount = count || 0;
         } catch (e1) {
           try {
+            const { supabase } = await import('./lib/supabase');
             const { count } = await supabase
               .from('room_players')
               .select('user_id', { count: 'exact', head: true });
@@ -10786,8 +10916,16 @@ function PresenceCounter({T}){
       } catch {}
     };
     tick();
-    const t = setInterval(tick, 30000);
-    return () => { cancelled = true; clearInterval(t); };
+    const t = setInterval(tick, 15000);
+    // Refresh immediately on presence-channel updates so the number doesn't
+    // lag behind by 15s when someone joins/leaves the site.
+    const onSitePresence = () => tick();
+    window.addEventListener('mtg-site-presence', onSitePresence);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      window.removeEventListener('mtg-site-presence', onSitePresence);
+    };
   },[]);
   return (
     <div title={`${stats.online} players online · ${stats.inGame} currently in game`}
@@ -11623,11 +11761,14 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     // forceBroadcast to send one reconciling full state on drag end.
     if (!force && (typeof window !== 'undefined') && window.__MTG_V7__?.bfDragging) return;
     try{
+      // v7.6.5: realtime carries MASKED state (private zones stubbed); DB
+      // carries FULL state (so a refresh / rejoin can recover our own hand).
+      // Previously both were masked — that wiped local hands on rejoin and
+      // produced "stubbed local hand" symptoms when timing with seed reads.
       const masked = maskPrivateZones(nextGS);
       const slim   = slimForBroadcast(masked);
-      // v7.6.4: stamp our seat index so the receiver does a per-seat patch.
       const senderSeat = (typeof nextGS.myPlayerIdx === 'number') ? nextGS.myPlayerIdx : undefined;
-      netRef.current.broadcast(slim, masked, { senderSeat });
+      netRef.current.broadcast(slim, nextGS, { senderSeat });
       // v7.6.4: telemetry — ring-buffered outgoing broadcast log.
       try {
         const dbg = (typeof window !== 'undefined') && window.__MTG_V7__?.debug;
@@ -11649,7 +11790,8 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
           const masked = maskPrivateZones(gs);
           const slim   = slimForBroadcast(masked);
           const senderSeat = (typeof gs.myPlayerIdx === 'number') ? gs.myPlayerIdx : undefined;
-          netRef.current.broadcast(slim, masked, { senderSeat });
+          // v7.6.5: realtime = masked, DB = full (so rejoin can recover hands).
+          netRef.current.broadcast(slim, gs, { senderSeat });
         }catch(e){ console.warn("[netSync.forceBroadcast]",e); }
       }
       return gs;
@@ -11744,10 +11886,28 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     // empty (already []). Hands stay separate (each seat's hand[] is its own
     // array — players draw to their own hand from the shared library).
     if (fmt === "dandan") {
-      const sharedLib   = seats[playerIdx].library;
+      // v7.6.5: every peer must compute the SAME shared library order, or
+      // host and joiner will desync the moment they both call startGame
+      // (each had shuffled independently). Seed off the roomId so all peers
+      // produce identical libraries; if not online, just use seat 0's.
+      const seed = isOnline ? (roomId || "") : "";
+      let sharedLib = seats[playerIdx].library;
+      if (seed) {
+        // Reshuffle deterministically from the unshuffled deck cards to ensure
+        // every peer gets the exact same order. We pull cards from the
+        // resolved Dandân deck (dMine) and re-create iids deterministically
+        // by index so iid lookups are stable across peers too.
+        const flatCards = (dMine?.cards || []).flatMap(c =>
+          Array.from({length:c.quantity}, () => mkCard(c, "library"))
+        );
+        const shuffled = seededShuffleArr(flatCards, seed);
+        // Stable iids: replace random uid()s with seed-derived strings so all
+        // peers reference cards by the same iid.
+        sharedLib = shuffled.map((c, idx) => ({...c, iid: `dandan_${seed.slice(-8)}_${idx}`}));
+      }
       const sharedGrave = seats[playerIdx].graveyard;
       for (let i = 0; i < maxP; i++) {
-        if (i !== playerIdx && seats[i]) {
+        if (seats[i]) {
           seats[i] = {
             ...seats[i],
             library:   sharedLib,

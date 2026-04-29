@@ -165,6 +165,73 @@ export default function App() {
     };
   }, [user?.id]);
 
+  // v7.6.5: GLOBAL site presence channel. Anyone on playsim.live (signed in
+  // or not) joins a Supabase Realtime presence channel `playsim:lobby`. The
+  // count is exposed as `window.__MTG_V7__.sitePresenceCount` and updated on
+  // any join/leave event. PresenceCounter reads this in addition to the
+  // logged-in-users-in-last-10min query so the "Players Online" number
+  // reflects actual eyeballs on the site, not just authenticated profiles.
+  useEffect(() => {
+    let cancelled = false;
+    let channel = null;
+    let mySessionId = null;
+    try {
+      mySessionId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `s_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+    } catch { mySessionId = `s_${Date.now()}`; }
+    const updateCount = (presenceState) => {
+      try {
+        const keys = Object.keys(presenceState || {});
+        const total = keys.reduce((acc, k) => acc + (Array.isArray(presenceState[k]) ? presenceState[k].length : 1), 0);
+        window.__MTG_V7__ = window.__MTG_V7__ || {};
+        window.__MTG_V7__.sitePresenceCount = total;
+        // Notify listeners (PresenceCounter polls this on its tick anyway).
+        try { window.dispatchEvent(new CustomEvent('mtg-site-presence', { detail: { count: total } })); } catch {}
+      } catch {}
+    };
+    (async () => {
+      try {
+        const { supabase } = await import('./lib/supabase');
+        if (cancelled) return;
+        channel = supabase.channel('playsim:lobby', {
+          config: { presence: { key: mySessionId } },
+        });
+        channel
+          .on('presence', { event: 'sync' }, () => {
+            updateCount(channel.presenceState());
+          })
+          .on('presence', { event: 'join' }, () => {
+            updateCount(channel.presenceState());
+          })
+          .on('presence', { event: 'leave' }, () => {
+            updateCount(channel.presenceState());
+          })
+          .subscribe(async (status) => {
+            if (status === 'SUBSCRIBED' && !cancelled) {
+              try {
+                await channel.track({
+                  alias: profile?.alias || (user?.user_metadata?.alias) || null,
+                  signedIn: !!user,
+                  ts: Date.now(),
+                });
+              } catch {}
+            }
+          });
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+      if (channel) {
+        try { channel.untrack().catch(()=>{}); } catch {}
+        try { channel.unsubscribe(); } catch {}
+      }
+      try {
+        if (window.__MTG_V7__) delete window.__MTG_V7__.sitePresenceCount;
+      } catch {}
+    };
+  }, [user?.id, profile?.alias]);
+
   // 1. Reset-password mode takes precedence over everything except "still loading".
   if (loading) return <SplashLoader label="AUTHENTICATING…" />;
   if (resetMode && user) {

@@ -7,7 +7,33 @@
 
 ---
 
-## Post-launch hotfixes (in this build)
+## Third-round hotfixes (in this build)
+
+Ten more bugs from the latest playtest, all addressed:
+
+1. **BF→hand on plain click.** Click without drag no longer fires the hand-drop path. Requires ≥6 px movement.
+2. **Graveyard / exile click crash.** Stale indices guarded with `?? arr[length-1]`, plus a `useEffect` clamps the index whenever the underlying array shrinks.
+3. **Rejoin clears state.** DB now stores **full** state (real hands, real libraries); realtime broadcast still carries the masked version. Refresh / rejoin reads the full DB seed and recovers your hand.
+4. **Scry / surveil panel** is now full-screen-feeling (1280 max width, large cards, big buttons, full word labels).
+5. **Hover preview lingering.** Every gallery / search row clears hover on `onMouseLeave`.
+6. **Hover preview size** bumped from 190 to 260 px wide.
+7. **Online dandân local hand stub.** Same root cause as #3. Plus the rogue defensive mask from the prior round was REMOVED.
+8. **Dandân deck-reselect / dual-deck.** "Your Deck" picker hidden in dandân mode. Deterministic seeded shuffle (`seededShuffleArr(cards, roomId)`) so all peers compute identical shared libraries.
+9. **Cards stuck behind hand strip.** BF drop-Y and drag-Y clamps now subtract `HAND_H/2` so cards stay reachable.
+10. **Big cosmetic batch:**
+    - Presence counter "Players Online" now reads from a global Supabase Realtime presence channel `playsim:lobby` (any visitor counts).
+    - Lobby mount sweeps any `room_players` row whose `updated_at` is > 30 minutes old (`cleanupGloballyStaleSeats`). Fixes "stuck on 2 in game" after a crash.
+    - CommandBar: life slightly smaller (16 → 13 px); commander damage cells match life style (same font, color, size); `⚔N` format.
+    - Topdeck context menu: dropped fixed-N variants (Mill 1/3, Scry 1, Look 3/5, Surveil 1/2). Added Draw / Draw 7 / Draw X. Hotkey labels on every kept item.
+    - Hand + battlefield context menus got hotkey labels on every action that has a keybind. `Discard Hand (Y)` added to hand menu.
+    - **Shift+C** = draw 7 (new hotkey, in HotkeyHelp).
+    - Topdeck shrinks slightly when 4+ commanders.
+
+If you've already pushed the previous v7.6.5 to production, this build replaces it. Commit message: `v7.6.5 hotfix — graveyard crash, BF click bug, dandân DB state, scry size, hover, hand z-index, cmdr-dmg cosmetic, topdeck menu, hotkey labels, presence channel`.
+
+---
+
+## Earlier post-launch hotfixes (in this build)
 
 This build folds in **ten** hotfixes that landed from playtest after the initial 7.6.5 push. None require schema changes or migrations — they're all client-side resilience patches.
 
@@ -20,9 +46,7 @@ This build folds in **ten** hotfixes that landed from playtest after the initial
 7. **App.jsx heartbeat** stops cleanly on schema-mismatch errors instead of looping.
 8. **↑ / ↓ keys for life ±1** restored. Removing the topbar LifeCounter and HandLifeCounter took their keyboard listeners with them. The arrow keys now run through the main GameBoard hotkey loop and call `changeLife`, so they animate + log the change correctly.
 9. **HotkeyHelp completeness audit.** Help modal now lists every hotkey the handler actually responds to. Previously missing: ↑, ↓, Y (discard hand), `?` / `/` (open help itself).
-10. **Hotseat opp-hand defensive mask.** All hand-rendering paths verified to render sleeve only, but added belt-and-braces masking at the BoardSide prop level so future render additions can't accidentally leak card faces in hotseat (where the privacy mask doesn't run).
-
-If you've already pushed the initial v7.6.5 to production, this build replaces it. The git commit message should reflect the hotfix nature: `v7.6.5 hotfix — Dandân polish, presence resilience, life hotkeys, hand-mask defense`.
+10. **Hotseat opp-hand defensive mask** — superseded in this build (see "Third-round" item 7).
 
 ---
 

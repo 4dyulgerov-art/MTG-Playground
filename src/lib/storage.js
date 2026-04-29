@@ -295,4 +295,28 @@ export async function cleanupMyStaleRooms(keepRoomId = null) {
   } catch (e) { console.warn('[cleanupMyStaleRooms]', e); }
 }
 
+// v7.6.5: TTL cleanup for any abandoned seats (not just mine). The lobby
+// "in game" counter was getting stuck at 2 after a crash because both seats
+// stayed in room_players forever. Anyone visiting the lobby now sweeps any
+// row whose updated_at is > 30 minutes old. Runs best-effort — failures are
+// silent because the schema may not have updated_at, in which case we fall
+// back to checking nothing (the lobby just won't auto-clean).
+export async function cleanupGloballyStaleSeats(maxAgeMin = 30) {
+  try {
+    const cutoff = new Date(Date.now() - maxAgeMin * 60 * 1000).toISOString();
+    // Try to delete rows older than cutoff. If updated_at doesn't exist this
+    // will fail; we just swallow the error. Don't loop, don't retry.
+    const { error } = await supabase
+      .from('room_players')
+      .delete()
+      .lt('updated_at', cutoff);
+    if (error && !/updated_at/i.test(error.message || '')) {
+      // Real error — log but don't crash the lobby load.
+      console.warn('[cleanupGloballyStaleSeats]', error);
+    }
+  } catch (e) {
+    // Schema mismatch or network blip — silent. Cleanup is best-effort.
+  }
+}
+
 export default storage;

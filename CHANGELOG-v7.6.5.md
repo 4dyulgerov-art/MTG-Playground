@@ -5,6 +5,42 @@
 
 ---
 
+## Third-round hotfixes (in this build)
+
+This build addresses ten bugs reported from the latest playtest:
+
+1. **Clicking an already-on-BF card moved it back to the hand.** `handleBFMouseUp` was treating a plain click as a "drop into hand zone" because the hand strip overlaps the bottom of the battlefield. Now requires ≥6 px of cursor movement before treating mouseup as a drop. Click without drag = no-op (selection only, as intended).
+
+2. **Clicking the graveyard or exile pile crashed the game** (`TypeError: can't access property "iid", i is undefined`). Stale `graveIdx` / `exileIdx` indexed past array length when cards left the zone. Now falls back to `arr[length-1]` and clamps the index in a `useEffect` whenever the array shrinks. Same fix applied to exile.
+
+3. **Rejoin after crash didn't recover state — empty hand, empty board.** Root cause: `broadcastIfOnline` was sending the **masked** state to BOTH realtime AND the DB. The DB row had stub hand cards, so any rejoin (or refresh) loaded those stubs and the local hand was permanently lost. Now the realtime channel still carries masked state (private zones stay private) but the DB row stores **full** state. On rejoin, the seed read pulls real hand + library cards back. The room itself sticks around longer too via the global TTL cleanup (see #10 below).
+
+4. **Scry / Surveil / Look modal was tiny and illegible.** Modal max-width 600 → 1280, padding 22 → 32, card size sm → lg, button font 8 → 12 px, headers 14 → 22 px. Buttons get full word labels (`⬆ Top`, `⬇ Bot`, `☠ Grave`, `✦ Exile`) instead of compressed `⬆Top`. Fully usable now.
+
+5. **Hover preview lingered after mousing off a card** in gallery / search-library / zone-viewer / deck-viewer. Every hover-emitting card row now wires `onMouseLeave={()=>onHover(null)}` to clear the hovered state. Affected: SearchLibModal, ZonePanel, ZoneViewerModal, DeckViewer, SearchCardRow, DeckCardRow.
+
+6. **Hover preview was too small** to actually read. CardPreview width 190 → 260 px, internal font sizes bumped (13 → 15 for name, 10 → 12 for type line, 11 → 13 for oracle text, 12 → 14 for P/T), counter badges scaled to match. Bigger but still tucked into the bottom-left so it doesn't block the board.
+
+7. **Online Dandân — local hand was stubbed and invisible.** Same root cause as #3 (DB had masked state). Plus a defensive `(opp.hand || []).map(c => ({...c, faceDown:true, _hotseatMasked:true}))` that I'd added in the previous round was REMOVED — that mask was contaminating BoardSide rendering. Opp hand visibility now relies on the existing `OppHandStrip` (always renders sleeves) and the `readOnly` HandOverlay suppression.
+
+8. **Dandân deck-reselect + dual-deck regression.** Two fixes:
+   - **Hide the "Your Deck" picker entirely when `gamemode === "dandan"`.** The variant IS the deck — neither host nor joiner picks anything personal. Showing this section was tricking joiners into picking their own deck, which then mounted a second library at game start.
+   - **Deterministic seeded shuffle for the shared library.** Previously each peer ran `shuffleArr(...)` independently, then mirrored their own shuffle to other seats — so host and joiner had different shared libraries until the first broadcast. Now we use a `seededShuffleArr(cards, roomId)` that generates an identical order on every peer, and stable iids of the form `dandan_{seed}_{idx}`. Host and joiner converge on the SAME library before any broadcast.
+
+9. **Cards getting stuck behind the hand strip.** The BF zone visually extends down to the viewport bottom, but the hand strip is overlaid on top of the lower `HAND_H` px. Cards dropped or dragged into that lower band became unreachable. Now both the float-drag drop logic and the BF re-position drag clamp `maxY = bfHeight - CH - HAND_H/2`, so cards always stay above the upper half of the hand strip and can always be re-grabbed.
+
+10. **Big batch of cosmetic + UX requests:**
+   - **Presence counter — "anyone on playsim.live counts as online".** App.jsx now subscribes every visitor (logged in or not) to a Supabase Realtime presence channel `playsim:lobby`. PresenceCounter prefers that count for the "Players Online" number. Falls back to user_profiles updated-in-last-10min, then total profiles.
+   - **Stuck "in game" counter.** Lobby mount now also runs `cleanupGloballyStaleSeats(30)` — deletes any `room_players` row whose `updated_at` is > 30 minutes old. Fixes the "stuck on 2 in game" you saw after a crash.
+   - **CommandBar cosmetic rework.** Life slightly smaller (16 → 13 px so the graveyard pile below isn't clipped). Commander damage cells now use the SAME font (`Cinzel Decorative, serif`), SAME size (13 px), SAME color tier (green at low → yellow → red at lethal), SAME styling as the life counter. Format: `⚔N` (was `avatar N/21`). The dim avatar emoji that looked out of place is gone.
+   - **Topdeck context menu rewrite.** Dropped: Mill 1, Mill 3, Scry 1, Look at top 3, Look at top 5, Surveil 1, Surveil 2 (the fixed-N variants). Replaced with single "X…" prompts. Added: "Draw a card (C)", "Draw 7 cards (Shift+C)", "Draw X…". Each kept item has its hotkey label in parens: "Shuffle (V)", "Scry X… (G)", "Mill X… → Graveyard (Shift+M)", "Mill X… → Exile (Ctrl+Shift+M)".
+   - **Hand context menu** items got hotkey labels: `→ Battlefield (Space)`, `Discard (D)`, `→ Exile (S)`, `→ Library Top (T)`, `→ Library Bottom (.)`. Added `Discard Hand (Y)` at the bottom.
+   - **Battlefield context menu** items got hotkey labels: `Tap/Untap (Space)`, `→ Hand (R)`, `→ Graveyard (D)`, `→ Exile (S)`, `→ Library Top (T)`, `→ Library Bottom (.)`, `Clone (K)`, `Show Front (L)` / `Transform (L)`, `Target (O)`, `Invert (I)`, `Shake (H)`, `Add +1/+1 (U)`. Target/Invert/Shake/+1+1-counter were previously hotkey-only — now exposed as menu items too.
+   - **Shift+C draws 7 cards** (new hotkey, listed in HotkeyHelp).
+   - **Topdeck shrinks slightly when 4+ commanders** are in play (height 101 → 78, width 72 → 56). Avoids clipping by the larger command zone.
+
+---
+
 ## Post-launch hotfixes (in this build)
 
 After the initial v7.6.5 ship, six bugs landed from playtest. All addressed here, build verified clean.
