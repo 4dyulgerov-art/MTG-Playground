@@ -6,41 +6,797 @@
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
     <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/"/>
     <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/"/>
   </url>
   <url>
     <loc>https://playsim.live/play-magic-online-free</loc>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/ja/play-magic-online-free</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/fr/play-magic-online-free</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/de/play-magic-online-free</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/es/play-magic-online-free</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pt-br/play-magic-online-free</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/it/play-magic-online-free</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pl/play-magic-online-free</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/play-magic-online-free"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/play-magic-online-free"/>
   </url>
   <url>
     <loc>https://playsim.live/free-mtg-playtester</loc>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/ja/free-mtg-playtester</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/fr/free-mtg-playtester</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/de/free-mtg-playtester</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/es/free-mtg-playtester</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pt-br/free-mtg-playtester</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/it/free-mtg-playtester</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pl/free-mtg-playtester</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/free-mtg-playtester"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/free-mtg-playtester"/>
   </url>
   <url>
     <loc>https://playsim.live/playtest-mtg</loc>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/ja/playtest-mtg</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/fr/playtest-mtg</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/de/playtest-mtg</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/es/playtest-mtg</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pt-br/playtest-mtg</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/it/playtest-mtg</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pl/playtest-mtg</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/playtest-mtg"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/playtest-mtg"/>
   </url>
   <url>
     <loc>https://playsim.live/mtg-arena-alternative</loc>
     <changefreq>monthly</changefreq>
     <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/ja/mtg-arena-alternative</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/fr/mtg-arena-alternative</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/de/mtg-arena-alternative</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/es/mtg-arena-alternative</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pt-br/mtg-arena-alternative</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/it/mtg-arena-alternative</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pl/mtg-arena-alternative</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/mtg-arena-alternative"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/mtg-arena-alternative"/>
   </url>
   <url>
     <loc>https://playsim.live/commander</loc>
     <changefreq>monthly</changefreq>
-    <priority>0.85</priority>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/ja/commander</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/fr/commander</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/de/commander</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/es/commander</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pt-br/commander</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/it/commander</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pl/commander</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/commander"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/commander"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/commander"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/commander"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/commander"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/commander"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/commander"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/commander"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/commander"/>
   </url>
   <url>
     <loc>https://playsim.live/oathbreaker</loc>
     <changefreq>monthly</changefreq>
-    <priority>0.85</priority>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/ja/oathbreaker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/fr/oathbreaker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/de/oathbreaker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/es/oathbreaker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pt-br/oathbreaker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/it/oathbreaker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pl/oathbreaker</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/oathbreaker"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/oathbreaker"/>
   </url>
   <url>
     <loc>https://playsim.live/dandan</loc>
     <changefreq>monthly</changefreq>
-    <priority>0.85</priority>
+    <priority>0.9</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/ja/dandan</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/fr/dandan</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/de/dandan</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/es/dandan</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pt-br/dandan</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/it/dandan</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
+  </url>
+  <url>
+    <loc>https://playsim.live/pl/dandan</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+    <xhtml:link rel="alternate" hreflang="en" href="https://playsim.live/dandan"/>
+    <xhtml:link rel="alternate" hreflang="ja" href="https://playsim.live/ja/dandan"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://playsim.live/fr/dandan"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://playsim.live/de/dandan"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://playsim.live/es/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://playsim.live/pt-br/dandan"/>
+    <xhtml:link rel="alternate" hreflang="it" href="https://playsim.live/it/dandan"/>
+    <xhtml:link rel="alternate" hreflang="pl" href="https://playsim.live/pl/dandan"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://playsim.live/dandan"/>
   </url>
 </urlset>

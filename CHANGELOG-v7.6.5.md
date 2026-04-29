@@ -822,3 +822,169 @@ Anyone promising faster is selling snake oil.
 - `public/dandan.html` (new)
 - `SEO-PLAYBOOK.md` (new) — full action plan for what only the maintainer can do
 
+
+---
+
+## v7.6.5.5 — Outreach kit + 7-language SEO translations
+
+### Outreach kit (OUTREACH-KIT.md)
+Comprehensive copy-paste-ready post templates for every channel:
+- **Hacker News Show HN** — sleek title, brief technical body, post-once-and-walk-away guidance, no engagement bait
+- **Reddit** — six subreddit-specific templates (r/magicTCG, r/EDH, r/oathbreaker, r/Pauper, r/BudgetBrews, r/ModernMagic + r/Pioneer + r/spikes), each acknowledging manual-rules limitation upfront and comparing openly to Cockatrice/MTGA/MTGO
+- **Discord** — general MTG + format-specific templates with offer-to-join hook
+- **Wiki** — guidance for mtg.fandom.com edits (NOT Wikipedia, which will revert), edit-text + edit-summary templates, anti-spam tactics
+- **MTG content creators** — Tier 1/2/3 list (Crim's the Word, Mana Source, Spice8Rack, MissTimmy, Wedge, I Hate Your Deck, TCC, MTGGoldfish, Command Zone, LegenVD, PleasantKenobi etc.) plus an outreach email template with channel-specific compliment hook
+- **itch.io** — listing instructions, full description copy, tags
+- **ProductHunt** — pre-launch checklist, launch-day tagline + description, launch-day routine, what NOT to do
+- **Reddit Ads** — €15-25/day budget guide, target subs list, per-sub destination URLs, CTR/CPA thresholds for kill/scale decisions
+- **Facebook** — recommends skip-and-spend-elsewhere
+- **Week-by-week sequencing** — first month launch plan
+
+### Translations: 7 languages × 7 pages = 49 translated landing pages
+
+Languages added (priority by MTG market size):
+1. Japanese (ja) — Japan, huge MTG market
+2. French (fr) — France, Belgium, Quebec
+3. German (de) — Germany, Austria
+4. Spanish (es) — Spain, Argentina, Mexico, Latin America
+5. Portuguese-BR (pt-br) — Brazil
+6. Italian (it) — Italy
+7. Polish (pl) — Poland
+
+Tier 2 deferred (Russian, Chinese, Czech, Dutch, Finnish, Swedish, etc.) — listed in user's country list but excluded from this pass for quality. Translating 18 languages poorly is worse than 7 well; for top-priority markets (Japan, Germany), the user should hire a native-speaker translator after seeing initial traffic.
+
+### URL structure
+
+- English originals at root: `/play-magic-online-free`, `/commander`, `/dandan` etc.
+- Translations at `/lang/slug`: `/ja/dandan`, `/fr/commander`, `/de/oathbreaker` etc.
+- Language hub pages: `/ja/`, `/fr/`, `/de/`, `/es/`, `/pt-br/`, `/it/`, `/pl/` — each lists the 7 pages in that language with CTA to the app at `/`
+
+### Hreflang network
+
+Every page has 9 hreflang alternates:
+- 1 to English at root URL
+- 7 to each translated language
+- 1 to x-default (English)
+
+This signals to Google that these are language alternates of the same content. The sitemap.xml has 57 URLs (1 home + 56 pages = 8 langs × 7 slugs) with full xhtml:link alternate metadata.
+
+### Files touched (v7.6.5.5)
+
+- `OUTREACH-KIT.md` — new, complete outreach playbook
+- `index.html` — added hreflang to all 7 language roots
+- `vercel.json` — extended SPA-rewrite-exclusion negative-lookahead to include `ja/|fr/|de/|es/|pt-br/|it/|pl/` so localized URLs serve from `public/{lang}/`
+- `public/sitemap.xml` — 57 URLs with full hreflang network
+- `public/ja/index.html` (new) — Japanese hub page (5.9 KB)
+- `public/ja/{7 slugs}.html` (new) — 7 Japanese landing pages
+- `public/fr/index.html` (new) + 7 pages
+- `public/de/index.html` (new) + 7 pages
+- `public/es/index.html` (new) + 7 pages
+- `public/pt-br/index.html` (new) + 7 pages
+- `public/it/index.html` (new) + 7 pages
+- `public/pl/index.html` (new) + 7 pages
+
+Total: 56 new files (7 hubs + 49 landing pages).
+
+### Translation quality notes
+
+Translations are SEO-grade — grammatically correct, naturally phrased, with localized keyword targeting (e.g. "MTG 無料" for JP, "MTG kostenlos" for DE, "MTG za darmo" for PL, "MTG grátis" for PT-BR). A native speaker would catch idiom/register quirks; for high-priority markets (especially Japan and Germany), I recommend hiring a human translator once Search Console shows meaningful traffic from those locales — but the indexable content is in place to start ranking.
+
+Special-character handling: Japanese is written natively in 平仮名/片仮名/漢字; German uses proper „Anführungszeichen" quote pairs; French uses non-breaking spaces around punctuation as French typography requires (more or less — minor variations native speaker may notice). The Dandân character (â with circumflex) is preserved across all languages.
+
+
+---
+
+## v7.6.5.5 — Hotfixes + alias rules + UX polish
+
+A grab-bag of bugs the user found in production. Big ones:
+
+### Bugs fixed
+
+**Phantom white "0" in Your Deck after Create Room.**
+Classic React 0-renders-as-zero. `isJoinedGuest = myRoomId && mySeat && mySeat > 0` — when the host (mySeat=0), `mySeat && ...` evaluated to the number `0`, which `{isJoinedGuest && <jsx>}` happily rendered as text. Wrapped in `!!()` to force boolean.
+
+**Dandân library blanks after first sync, all subsequent draws are topdeck-placeholder back.**
+`maskPrivateZones` was masking every player's library — including in Dandân, where the library is shared and public. On broadcast the library became `[stub, stub, …]`; the Dandân share-mirror in `applyRemoteStateBySeat` then copied those stubs to every seat. Skip-mask in Dandân; hand stays per-player private.
+
+**Lobby chat "could not find avatar_img column in the schema cache".**
+PostgREST cache stale. `notify pgrst, 'reload schema';` (now baked into the v7.6.5.5 SQL).
+
+**broadcast_announcement "could not find function" in moderator panel.**
+Same stale-cache root cause. Same fix.
+
+### UX additions
+
+**Mousewheel ±1 on life and commander damage cells.**
+Hover any LIFE or commander damage cell, scroll to ±1. Native non-passive wheel listeners (React's onWheel is passive by default and can't preventDefault), delegated by `data-cmddmg-seat` for the cmd-dmg cells.
+
+**Avatar image everywhere, no more emoji-only.**
+- In-game chat messages now carry `avatarImg` through the network event payload; render shows a 14×14 round image, falls back to emoji when absent.
+- Open-rooms list uses `room.hostAvatarImg` (added to room meta on create) and shows a gamemode badge with icon + label (purple for Dandân, gold for everything else).
+- Waiting-room player slots render 32×32 round images when present.
+- Joiner pushes their `avatarImg` into `meta.players` so everyone sees their picture.
+
+**Game mode filters the deck list.**
+Both the main deck picker and the "Choose Your Deck" popup now filter by the current `gamemode` (matching `deck.format`). Empty-state messages distinguish "no decks at all" vs "no decks in this format" with helpful guidance. When the user changes gamemode and the selected deck no longer matches, the selection is cleared so they don't silently sit on the wrong deck.
+
+### Search modal parity (huge)
+
+`SearchLibModal` (the F-key search) was lacking everything `ZoneViewerModal` (the graveyard/exile 🔍 icons) had. Now at parity:
+
+- **Left-click to select**, shift-click for range
+- **Right-click for inline context menu** — zone-appropriate actions:
+  - library: → Hand / → BF / → Graveyard / → Exile / → Top / → Bottom
+  - graveyard: → Hand / Reanimate / → Top / → Bottom / Shuffle / → Exile
+  - exile: → Hand / → BF / → Graveyard / → Top / → Bottom / Shuffle
+  - opp_hand / opp_library (after access granted): Request Steal / Discard / Exile
+- **Multi-card actions** when a selection is active — single right-click acts on all selected.
+- **Tab-switch logging** via `onZoneView` — fires `addLog("👁 is viewing My Library")` etc., broadcasts to opponents through the existing action stream so they can see what zone you're looking at.
+- **F → Opp Hand / Opp Library wait state** — now shows a "Asking [opp] for permission, please wait" overlay with a Cancel button. Auto-switches to the listing once access is granted (`oppHandAccess` / `oppLibAccess` flips). Same overlay also fires when switching tabs to a locked opp zone from inside the listing view.
+
+The graveyard/exile 🔍 viewers also fire `onZoneView` on open, so the action log gets `👁 is viewing ☠ Graveyard`, etc.
+
+### Username uniqueness + impersonation prevention
+
+New migration `schema-patch-v7.6.5.5-alias-rules.sql`. Run AFTER v7.6.5.3.
+
+**DB enforcement (source of truth):**
+- `is_alias_reserved(text) → bool` — two-layer regex blocklist:
+  - SUBSTRING (anywhere): administrator, moderator, developer, official(s), wizard(s), wotc, mtg/mtgo/mtga, "of the coast", tcgplaysim/playsim, anthropic, claude, "magic the gathering"
+  - WHOLE-WORD (bordered by non-alphanumeric): admin, mod(s), dev(s), staff, ceo, owner, founder, support, system, server, bot, null, undefined, root, sudo, host, gm
+- `profiles_validate_alias` BEFORE INSERT/UPDATE trigger — enforces length (2–24), reserved-word blocklist, case-insensitive uniqueness. Skipped on UPDATE when alias unchanged. Skipped entirely when caller (auth.uid()) is a moderator — moderators can grant restricted aliases via `mod_edit_profile`.
+- `profiles_alias_lower_uniq` unique index on `lower(alias)` — best-effort backstop against race conditions; degrades gracefully to trigger-only enforcement if existing duplicates block index creation.
+- `notify pgrst, 'reload schema';` at the end so PostgREST picks up the new function immediately.
+
+**Frontend (`src/lib/profiles.js`):**
+- `isAliasReserved(alias)` — JS mirror of the SQL regex (keep in sync).
+- `isAliasAvailable(alias)` async — length + reserved + DB uniqueness check. Used for fast UX feedback before the round-trip; trigger remains source of truth.
+- `aliasErrorToMessage(reasonOrErr)` — single human-friendly sentence for any of the failure modes.
+- `upsertMyProfile` re-throws cloud errors with friendly messages so the UI can surface them inline.
+
+**ProfileSetup form:**
+- Live debounced (350ms) alias check as you type — input border turns green ✓ on OK, red ✕ on bad with an inline error message below ("This alias is already in use" / "This alias contains a restricted word" / "Alias must be at least 2 characters" / etc.).
+- Save button disabled while checking or on bad alias.
+- "Saving…" / "Checking name…" button labels.
+
+**ProfileSettings (in-game profile editor):**
+- `handleSave` validates alias before round-trip; surfaces server errors back in the existing `msg` toast.
+
+### Files touched
+
+- `src/Playground.jsx` — phantom-0 fix, mousewheel on life/cmd dmg, InGameChat avatar img, open-rooms gamemode + avatar, room meta fields, waiting-slot avatars, Dandân library mask skip, full SearchLibModal rewrite (multi-select, ctx menu, wait overlay), ZoneViewerModal onZoneView prop, deck-list filter by gamemode (×2), gamemode-change clears stale selDeckId, alias validation in ProfileSetup + ProfileSettings, saveProfile re-throws on cloud error.
+- `src/lib/profiles.js` — full rewrite with isAliasReserved / isAliasAvailable / aliasErrorToMessage; upsertMyProfile pre-validates and maps trigger errors.
+- `supabase/schema-patch-v7.6.5.5-alias-rules.sql` (new) — alias blocklist + uniqueness trigger + index + schema reload.
+
+### Run order for the SQL
+
+```sql
+-- 1. Apply the new migration
+\i supabase/schema-patch-v7.6.5.5-alias-rules.sql
+
+-- 2. (Diagnostic, optional) Find any existing case-insensitive duplicates
+--    that may have prevented the unique index from being created:
+select lower(alias), count(*) from public.profiles
+ group by 1 having count(*)>1;
+```
+
+If duplicates exist, decide manually (rename one, or merge accounts). The trigger is enforcing on new writes regardless.
+

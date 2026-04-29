@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { storage } from "./lib/storage";
 import { NetSync } from "./lib/netSync";
+import { isAliasAvailable, isAliasReserved, aliasErrorToMessage } from "./lib/profiles";
 // v7.6.5: moderation infrastructure — automod filter + Supabase wrappers
 // for lobby chat, moderation log, strike counter, media revocation.
 import { inspect as automodInspect, STRIKE_THRESHOLD } from "./lib/automod";
@@ -2519,6 +2520,38 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
   const cmdrDmg = player?.commanderDamage || {};
   const lifeColor = life<=5?"#f87171" : life<=10?"#fbbf24" : life<=15?"#e8e2d0" : T.accent;
 
+  // v7.6.5.5: mousewheel +/- on life and commander damage cells (on hover).
+  // Native non-passive listeners — React's onWheel is passive by default
+  // (won't preventDefault), so attach via useEffect with {passive:false}.
+  const lifeWheelRef = useRef(null);
+  const cmdContainerRef = useRef(null);
+  useEffect(() => {
+    const el = lifeWheelRef.current;
+    if (!el || readOnly || !onChangeLife) return;
+    const handler = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1 : -1;
+      onChangeLife(life + delta);
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [life, onChangeLife, readOnly]);
+  useEffect(() => {
+    const el = cmdContainerRef.current;
+    if (!el || readOnly || !onChangeCmdDmg) return;
+    const handler = (e) => {
+      const cell = e.target.closest("[data-cmddmg-seat]");
+      if (!cell) return;
+      e.preventDefault();
+      const seat = parseInt(cell.dataset.cmddmgSeat, 10);
+      const cur = cmdrDmg[seat] || 0;
+      const delta = e.deltaY < 0 ? 1 : -1;
+      onChangeCmdDmg(seat, Math.max(0, Math.min(99, cur + delta)));
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [cmdrDmg, onChangeCmdDmg, readOnly]);
+
   const startEdit = (key, current) => {
     if (readOnly) return;
     setDraftValue(String(current ?? 0));
@@ -2556,10 +2589,12 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
       borderRadius:5,
       width:"100%",
     }}>
-      {/* Life — click to type. v7.6.5: slightly smaller (was 16 → 13) so the
-          row is more compact and the graveyard pile below isn't clipped. */}
+      {/* Life — click to type, mousewheel ±1 (v7.6.5.5). v7.6.5: slightly
+          smaller (was 16 → 13) so the row is more compact and the graveyard
+          pile below isn't clipped. */}
       <div
-        title={readOnly?`${player?.profile?.alias||"Player"} — ${life} life`:"Click to set life"}
+        ref={lifeWheelRef}
+        title={readOnly?`${player?.profile?.alias||"Player"} — ${life} life`:"Click to set · Wheel to ±1"}
         onClick={()=>startEdit("life", life)}
         style={{
           flex:"0 0 auto", minWidth:34,
@@ -2600,7 +2635,7 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
           counter style. Color stays neutral (T.accent → T.text gradient based
           on damage tier), so the row reads as a single stat group. Tooltip
           carries the opp's alias; lethal flips the cell red. */}
-      <div style={{flex:1,display:"flex",justifyContent:"flex-end",gap:4}}>
+      <div ref={cmdContainerRef} style={{flex:1,display:"flex",justifyContent:"flex-end",gap:4}}>
         {(opponents||[]).map(opp => {
           const seat = opp.seat;
           const dmg  = cmdrDmg[seat] || 0;
@@ -2613,7 +2648,8 @@ function CommandBar({player, allPlayers, mySeat, opponents, onChangeLife, onChan
           const editKey = `cmd_${seat}`;
           return (
             <div key={seat}
-              title={`${opp.alias||`P${seat+1}`} — ${dmg}/21 cmdr dmg${lethal?" (LETHAL)":""}`}
+              data-cmddmg-seat={seat}
+              title={`${opp.alias||`P${seat+1}`} — ${dmg}/21 cmdr dmg${lethal?" (LETHAL)":""} · Click to set · Wheel to ±1`}
               onClick={()=>startEdit(editKey, dmg)}
               style={{
                 display:"flex", alignItems:"center", gap:3,
@@ -3347,7 +3383,7 @@ function InGameChat({playerName,avatar,profile,isOpen,onToggle,log=[],showLog,on
           seenEvtIds.current.add(ev.id);
           const p=ev.payload||{};
           if(ev.kind==="chat"&&p.text){
-            chatMsgs.push({id:p.id||`h${ev.id}`,sender:p.alias||p.sender||"Player",avatar:p.avatar||"🧙",text:p.text,ts:p.ts||Date.parse(ev.created_at)||Date.now()});
+            chatMsgs.push({id:p.id||`h${ev.id}`,sender:p.alias||p.sender||"Player",avatar:p.avatar||"🧙",avatarImg:p.avatarImg||"",text:p.text,ts:p.ts||Date.parse(ev.created_at)||Date.now()});
           } else if(ev.kind==="action"&&p.text){
             const alias=p.alias||p.sender||"Player";
             logEntries.push(`${alias}: ${p.text}`);
@@ -3372,7 +3408,7 @@ function InGameChat({playerName,avatar,profile,isOpen,onToggle,log=[],showLog,on
       if(!m.text)return;
       if(m.id&&seenEvtIds.current.has(m.id))return;
       if(m.id)seenEvtIds.current.add(m.id);
-      setMessages(ms=>[...ms,{id:m.id||uid(),sender:m.alias||m.sender||"Player",avatar:m.avatar||"🧙",text:m.text,ts:m.ts||Date.now()}]);
+      setMessages(ms=>[...ms,{id:m.id||uid(),sender:m.alias||m.sender||"Player",avatar:m.avatar||"🧙",avatarImg:m.avatarImg||"",text:m.text,ts:m.ts||Date.now()}]);
     };
     const onAct=(e)=>{
       const m=e.detail||{};
@@ -3430,13 +3466,14 @@ function InGameChat({playerName,avatar,profile,isOpen,onToggle,log=[],showLog,on
       // a bug.
       console.warn("[automod] inspect failed:", e);
     }
-    const msg={id:uid(),sender:playerName,avatar,text,ts:Date.now()};
+    const avatarImg = profile?.avatarImg || "";
+    const msg={id:uid(),sender:playerName,avatar,avatarImg,text,ts:Date.now()};
     setMessages(m=>[...m,msg]);
     if(msg.id)seenEvtIds.current.add(msg.id);
     setInput("");
     const net=window.__MTG_V7__?.netSync;
     if(net){
-      try{net.appendEvent("chat",{sender:playerName,avatar,text,ts:msg.ts,id:msg.id});}catch(e){}
+      try{net.appendEvent("chat",{sender:playerName,avatar,avatarImg,text,ts:msg.ts,id:msg.id});}catch(e){}
     }
   };
 
@@ -3489,8 +3526,11 @@ function InGameChat({playerName,avatar,profile,isOpen,onToggle,log=[],showLog,on
                 borderRadius:5,
                 background:m.system?"transparent":`${T.panel}99`,
                 border:m.system?"none":`1px solid ${T.border}20`}}>
-                {!m.system&&<div style={{fontSize:8,color:T.accent,fontFamily:"Cinzel, serif",marginBottom:2}}>
-                  {m.avatar} {m.sender}
+                {!m.system&&<div style={{fontSize:8,color:T.accent,fontFamily:"Cinzel, serif",marginBottom:2,display:"flex",alignItems:"center",gap:4}}>
+                  {m.avatarImg
+                    ? <img src={m.avatarImg} alt="" style={{width:14,height:14,borderRadius:"50%",objectFit:"cover",border:`1px solid ${T.accent}40`,flexShrink:0}}/>
+                    : <span style={{fontSize:11,lineHeight:1}}>{m.avatar}</span>}
+                  <span>{m.sender}</span>
                 </div>}
                 <div style={{fontSize:11,color:m.system?T.muted:T.text,fontFamily:"Crimson Text, serif",lineHeight:1.4,
                   fontStyle:m.system?"italic":"normal"}}>{m.text}</div>
@@ -3502,7 +3542,8 @@ function InGameChat({playerName,avatar,profile,isOpen,onToggle,log=[],showLog,on
           <div style={{display:"flex",flexWrap:"wrap",gap:2,padding:"4px 8px",borderTop:`1px solid ${T.border}20`}}>
             {REACTIONS.map(r=>(
               <button key={r} onClick={()=>{
-                const msg={id:uid(),sender:playerName,avatar,text:r,ts:Date.now()};
+                const avatarImg = profile?.avatarImg || "";
+                const msg={id:uid(),sender:playerName,avatar,avatarImg,text:r,ts:Date.now()};
                 setMessages(m=>[...m,msg]);
                 // v2 fix (bug #2): reactions also broadcast.
                 const net=window.__MTG_V7__?.netSync;
@@ -4265,8 +4306,39 @@ function ProfileSetup({existing,onSave}){
   const [artResults,setArtResults]=useState([]);
   const [artLoading,setArtLoading]=useState(false);
   const [customAvatarUrl,setCustomAvatarUrl]=useState(existing?.avatarImg||"");
+  // v7.6.5.5: inline alias validation. State machine:
+  //   "idle" — no alias entered
+  //   "checking" — debounce in flight
+  //   "ok" — alias is unique & not reserved
+  //   "bad:<reason>" — show inline error message
+  const [aliasState,setAliasState]=useState("idle");
+  const [aliasMsg,setAliasMsg]=useState("");
+  const [saving,setSaving]=useState(false);
+  const aliasCheckTmr=useRef(null);
   const canvasRef=useRef(null);
   const artTmr=useRef(null);
+
+  // Debounced alias check (350ms after typing stops)
+  useEffect(()=>{
+    clearTimeout(aliasCheckTmr.current);
+    const trimmed = alias.trim();
+    // Skip check entirely if alias is unchanged from existing — no need to
+    // re-validate the user's own current name.
+    if (existing && trimmed.toLowerCase() === (existing.alias||"").toLowerCase()) {
+      setAliasState("ok"); setAliasMsg(""); return;
+    }
+    if (!trimmed) { setAliasState("idle"); setAliasMsg(""); return; }
+    if (trimmed.length < 2) { setAliasState("bad:too_short"); setAliasMsg(aliasErrorToMessage("too_short")); return; }
+    if (trimmed.length > 24) { setAliasState("bad:too_long"); setAliasMsg(aliasErrorToMessage("too_long")); return; }
+    if (isAliasReserved(trimmed)) { setAliasState("bad:reserved"); setAliasMsg(aliasErrorToMessage("reserved")); return; }
+    setAliasState("checking"); setAliasMsg("");
+    aliasCheckTmr.current = setTimeout(async ()=>{
+      const av = await isAliasAvailable(trimmed);
+      if (av.available) { setAliasState("ok"); setAliasMsg(""); }
+      else { setAliasState(`bad:${av.reason}`); setAliasMsg(aliasErrorToMessage(av.reason)); }
+    }, 350);
+    return ()=>clearTimeout(aliasCheckTmr.current);
+  },[alias, existing?.alias]);
 
   const ART_PRESETS=["jace","liliana","chandra","garruk","ajani","nissa","elspeth","teferi","sorin","nicol bolas","serra","mirri"];
 
@@ -4341,10 +4413,30 @@ function ProfileSetup({existing,onSave}){
         {/* Alias */}
         <label style={{display:"block",marginBottom:18}}>
           <span style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".15em",textTransform:"uppercase"}}>Planeswalker Alias</span>
-          <input value={alias} onChange={e=>setAlias(e.target.value)} placeholder="Your name in the Multiverse"
-            style={{...iS,fontSize:15,fontFamily:"Cinzel, serif",color:T.accent,marginTop:5}}
-            onFocus={e=>{e.target.style.borderColor=T.accent;e.target.style.boxShadow="0 0 12px rgba(200,168,112,.2)";}}
-            onBlur={e=>{e.target.style.borderColor=T.border;e.target.style.boxShadow="none";}}/>
+          <div style={{position:"relative"}}>
+            <input value={alias} onChange={e=>setAlias(e.target.value)} placeholder="Your name in the Multiverse" maxLength={24}
+              style={{...iS,fontSize:15,fontFamily:"Cinzel, serif",
+                color:aliasState.startsWith("bad")?"#f87171":T.accent,
+                marginTop:5,
+                borderColor: aliasState==="ok" ? "#4ade80" :
+                             aliasState.startsWith("bad") ? "#f87171" :
+                             T.border,
+                paddingRight:36,
+              }}
+              onFocus={e=>{if(!aliasState.startsWith("bad")&&aliasState!=="ok"){e.target.style.borderColor=T.accent;e.target.style.boxShadow="0 0 12px rgba(200,168,112,.2)";}}}
+              onBlur={e=>{if(!aliasState.startsWith("bad")&&aliasState!=="ok"){e.target.style.borderColor=T.border;e.target.style.boxShadow="none";}}}/>
+            {/* Status indicator */}
+            <span style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:14,marginTop:3,pointerEvents:"none"}}>
+              {aliasState==="checking" && <span style={{color:T.accent,opacity:.7}}>⋯</span>}
+              {aliasState==="ok"       && <span style={{color:"#4ade80"}}>✓</span>}
+              {aliasState.startsWith("bad") && <span style={{color:"#f87171"}}>✕</span>}
+            </span>
+          </div>
+          {aliasMsg && (
+            <div style={{marginTop:6,fontSize:11,color:"#f87171",fontFamily:"Crimson Text,serif",fontStyle:"italic",lineHeight:1.4}}>
+              {aliasMsg}
+            </div>
+          )}
         </label>
 
         {/* Avatar section */}
@@ -4463,18 +4555,37 @@ function ProfileSetup({existing,onSave}){
             marginTop:8,border:`1px solid ${T.border}30`,transition:"background .3s"}}/>
         </div>
 
-        <button onClick={()=>{
+        <button onClick={async()=>{
           if(!alias.trim())return;
+          // Block save until validation is "ok" (or "checking" → wait it out).
+          // The DB trigger is the source of truth; we just shouldn't bother
+          // calling it if we already know the alias is bad.
+          if (aliasState.startsWith("bad")) return;
+          if (aliasState === "checking") return; // still validating
           const gm=GAMEMATS[gmIdx];
-          onSave({alias:alias.trim(),avatar,avatarImg,gamematIdx:gmIdx,gamemat:gm.bg||(gmCustom||T.panel),gamematCustom:gmCustom});
-        }} style={{
+          setSaving(true);
+          try {
+            await onSave({alias:alias.trim(),avatar,avatarImg,gamematIdx:gmIdx,gamemat:gm.bg||(gmCustom||T.panel),gamematCustom:gmCustom});
+          } catch (e) {
+            // saveProfile in the parent throws if upsertMyProfile errors
+            const msg = aliasErrorToMessage(e?.message || e);
+            setAliasState("bad:server");
+            setAliasMsg(msg);
+          } finally {
+            setSaving(false);
+          }
+        }}
+          disabled={saving || aliasState.startsWith("bad") || aliasState==="checking" || !alias.trim()}
+          style={{
           ...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,
             {width:"100%",padding:"12px",fontSize:13,fontFamily:"Cinzel Decorative, serif",
-            fontWeight:700,letterSpacing:".06em",boxShadow:"0 8px 24px rgba(200,168,112,.3)"}),
+            fontWeight:700,letterSpacing:".06em",boxShadow:"0 8px 24px rgba(200,168,112,.3)",
+            opacity:(saving||aliasState.startsWith("bad")||aliasState==="checking"||!alias.trim())?.55:1,
+            cursor:(saving||aliasState.startsWith("bad")||aliasState==="checking"||!alias.trim())?"not-allowed":"pointer"}),
           border:`1px solid ${T.accent}60`}}
-          onMouseOver={e=>{e.currentTarget.style.filter="brightness(1.15)";e.currentTarget.style.boxShadow="0 12px 36px rgba(200,168,112,.4)";}}
+          onMouseOver={e=>{if(!e.currentTarget.disabled){e.currentTarget.style.filter="brightness(1.15)";e.currentTarget.style.boxShadow="0 12px 36px rgba(200,168,112,.4)";}}}
           onMouseOut={e=>{e.currentTarget.style.filter="none";e.currentTarget.style.boxShadow="0 8px 24px rgba(200,168,112,.3)";}}>
-          Enter the Multiverse ✦
+          {saving ? "Saving…" : aliasState==="checking" ? "Checking name…" : "Enter the Multiverse ✦"}
         </button>
       </div>
     </div>
@@ -4504,12 +4615,27 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
       resolveDandanVariant(dandanVariantId);
     }
   },[gamemode, dandanVariantId]);
+  // v7.6.5.5: when gamemode changes and the currently selected deck doesn't
+  // match the new format, clear the selection. The deck list is filtered by
+  // gamemode now — keeping a stale selDeckId would silently sit on a deck
+  // the user can't see in the list. Skipped for Dandân (variant takes over).
+  useEffect(()=>{
+    if(gamemode==="dandan" || !selDeckId) return;
+    const sel = decks.find(d=>d.id===selDeckId);
+    if(sel && (sel.format||"standard")!==gamemode){
+      setSelDeckId("");
+    }
+  },[gamemode, decks, selDeckId]);
   // v7.4: when joining another host's room, we can pick our deck from our
   // own library OR from the host's library (the host publishes their decks
   // alongside their player row).
   const [deckSource,setDeckSource]=useState("mine"); // "mine" | "host"
   const [hostDecks,setHostDecks]=useState([]); // host's published deck library
-  const isJoinedGuest = myRoomId && mySeat && mySeat > 0;
+  // v7.6.5.5: explicit Boolean. Was `myRoomId && mySeat && mySeat > 0` —
+  // when host (mySeat===0), the expression evaluates to the number `0`,
+  // which React renders as the text "0" in `{isJoinedGuest && <jsx>}` chains.
+  // That was the phantom white "0" appearing in Your Deck after Create Room.
+  const isJoinedGuest = !!(myRoomId && mySeat>0);
 
   const loadRooms=async()=>{
     try{const keys=await storage.list("room_",true);
@@ -4551,12 +4677,15 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
       : null;
     const playerDeck = gamemode==="dandan" ? dandanDeck : decks.find(d=>d.id===selDeckId);
     // v7.4: host publishes their entire deck library so guests can pick from it
+    // v7.6.5.5: also publish hostAvatarImg so the open-rooms list can show the
+    // real avatar image, not just the emoji fallback.
     const meta={
       id,name:roomName.trim(),host:profile.alias,hostAvatar:profile.avatar,
+      hostAvatarImg: profile.avatarImg||"",
       maxPlayers:maxP,gamemode,
       // v7.6.4: include Dandân variant id so joiners can display it.
       dandanVariantId: gamemode==="dandan" ? dandanVariantId : null,
-      players:[{alias:profile.alias,avatar:profile.avatar,ready:false}],
+      players:[{alias:profile.alias,avatar:profile.avatar,avatarImg:profile.avatarImg||"",ready:false}],
       status:"waiting",created:Date.now(),hostDecks:decks,
     };
     try{
@@ -4613,7 +4742,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
         // (Don't just use meta.players.length — stale stubs can skew it.)
         const pIdx = meta.players.length;
         if(pIdx>=meta.maxPlayers){alert("Room is full");setLoading(false);return;}
-        meta.players.push({alias:profile.alias,avatar:profile.avatar,ready:false});
+        meta.players.push({alias:profile.alias,avatar:profile.avatar,avatarImg:profile.avatarImg||"",ready:false});
         await storage.set(`room_${roomId}_meta`,JSON.stringify(meta),true);
         // v7.6.4: if Dandân, the deck is the host-chosen variant — auto-assign
         // it to the joiner instead of forcing a deck-pick.
@@ -4767,30 +4896,44 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             </div>
           )}
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-            {(deckSource==="host"?hostDecks:decks).map(d=>(
-              <button key={`${deckSource}-${d.id}`} onClick={async()=>{
-                setSelDeckId(d.id);
-                // v7.4: if host-deck chosen, update our player_row's `deck` field immediately
-                if(deckSource==="host" && myRoomId && mySeat!=null){
-                  try{
-                    const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
-                    const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
-                    obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
-                    await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
-                  }catch{}
-                } else if(myRoomId && mySeat!=null){
-                  try{
-                    const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
-                    const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
-                    obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
-                    await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
-                  }catch{}
-                }
-              }}
-                style={{...btn(d.id===selDeckId?`${T.accent}1a`:`${T.panel}99`,d.id===selDeckId?T.accent:T.muted,
-                  {border:`1px solid ${d.id===selDeckId?T.accent:`${T.border}30`}`,fontSize:10})}}
-                onMouseOver={hov} onMouseOut={uhov}>{d.name}{deckSource==="host"?" ⚔":""}</button>
-            ))}
+            {(() => {
+              // v7.6.5.5: filter decks by current gamemode. A deck without
+              // an explicit format defaults to "standard". Empty result is
+              // surfaced below as a helpful message instead of a phantom blank.
+              const all = (deckSource==="host"?hostDecks:decks);
+              const filtered = all.filter(d => (d.format||"standard")===gamemode);
+              if (filtered.length === 0 && all.length > 0) {
+                return (
+                  <span style={{fontSize:9,color:T.muted,fontStyle:"italic",fontFamily:"Crimson Text,serif",lineHeight:1.6,display:"block",padding:"4px 0"}}>
+                    No <b style={{color:T.accent,fontStyle:"normal"}}>{gamemode}</b> decks {deckSource==="host"?"published by host":"in your library"}. Pick a different mode, or build one in the Deckbuilder.
+                  </span>
+                );
+              }
+              return filtered.map(d=>(
+                <button key={`${deckSource}-${d.id}`} onClick={async()=>{
+                  setSelDeckId(d.id);
+                  // v7.4: if host-deck chosen, update our player_row's `deck` field immediately
+                  if(deckSource==="host" && myRoomId && mySeat!=null){
+                    try{
+                      const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                      const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                      obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
+                      await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                    }catch{}
+                  } else if(myRoomId && mySeat!=null){
+                    try{
+                      const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                      const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                      obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
+                      await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                    }catch{}
+                  }
+                }}
+                  style={{...btn(d.id===selDeckId?`${T.accent}1a`:`${T.panel}99`,d.id===selDeckId?T.accent:T.muted,
+                    {border:`1px solid ${d.id===selDeckId?T.accent:`${T.border}30`}`,fontSize:10})}}
+                  onMouseOver={hov} onMouseOut={uhov}>{d.name}{deckSource==="host"?" ⚔":""}</button>
+              ));
+            })()}
             {deckSource==="host" && hostDecks.length===0 && (
               <span style={{fontSize:9,color: T.muted,fontStyle:"italic"}}>Host hasn't published any decks yet</span>
             )}
@@ -4872,7 +5015,10 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                   border:p?`1px solid ${T.accent}60`:`1px dashed ${T.border}`,
                   textAlign:"center",transition:"all .2s",
                 }}>
-                  <div style={{fontSize:20,opacity:p?1:.3}}>{p?.avatar||"·"}</div>
+                  {/* v7.6.5.5: avatar image when present, else emoji fallback */}
+                  {p?.avatarImg
+                    ? <img src={p.avatarImg} alt="" style={{width:32,height:32,borderRadius:"50%",objectFit:"cover",border:`1px solid ${T.accent}60`,display:"block",margin:"0 auto"}}/>
+                    : <div style={{fontSize:20,opacity:p?1:.3}}>{p?.avatar||"·"}</div>}
                   <div style={{fontSize:10,color:p?T.text:T.muted,fontFamily:"Cinzel,serif",marginTop:3}}>
                     {p?.alias || `Seat ${i+1}`}
                   </div>
@@ -4939,9 +5085,29 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           <div key={room.id} style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:`${T.bg}b3`,borderRadius:7,border:`1px solid ${T.border}30`,marginBottom:6,transition:"border-color .15s"}}
             onMouseOver={e=>e.currentTarget.style.borderColor=`${T.accent}40`}
             onMouseOut={e=>e.currentTarget.style.borderColor=`${T.border}30`}>
-            <div style={{flex:1}}>
-              <div style={{color:T.accent,fontFamily:"Cinzel, serif",fontSize:12}}>{room.name}</div>
-              <div style={{fontSize:10,color: T.muted}}>{room.host} {room.hostAvatar} · {room.players.length}/{room.maxPlayers} players</div>
+            <div style={{flex:1,display:"flex",flexDirection:"column",gap:2,minWidth:0}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{color:T.accent,fontFamily:"Cinzel, serif",fontSize:12}}>{room.name}</span>
+                {/* v7.6.5.5: gamemode badge so the lobby browser shows what the host picked */}
+                {room.gamemode && (() => {
+                  const gm = GAMEMODES.find(g=>g.id===room.gamemode);
+                  const accent = gm?.special ? "#a855f7" : T.accent;
+                  return (
+                    <span style={{padding:"1px 7px",fontSize:8,background:`${accent}15`,color:accent,
+                      border:`1px solid ${accent}40`,borderRadius:3,letterSpacing:".06em",
+                      textTransform:"uppercase",fontFamily:"Cinzel,serif",flexShrink:0}}>
+                      {gm?.icon} {gm?.label||room.gamemode}
+                    </span>
+                  );
+                })()}
+              </div>
+              <div style={{fontSize:10,color: T.muted,display:"flex",alignItems:"center",gap:4}}>
+                {/* v7.6.5.5: prefer avatar image from profile when host has one */}
+                {room.hostAvatarImg
+                  ? <img src={room.hostAvatarImg} alt="" style={{width:14,height:14,borderRadius:"50%",objectFit:"cover",border:`1px solid ${T.accent}30`,flexShrink:0}}/>
+                  : <span>{room.hostAvatar}</span>}
+                <span>{room.host} · {room.players.length}/{room.maxPlayers} players</span>
+              </div>
             </div>
             {/* v7.6.1: always allow clicking. joinRoom detects rejoin via user_id;
                 if a non-rejoining user clicks a truly full room, joinRoom alerts. */}
@@ -4999,45 +5165,65 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             )}
 
             {/* Deck list — same click handler as main picker (writes to player_row) */}
+            {/* v7.6.5.5: filter by gamemode (matching deck format), with
+                helpful empty-state messages for the three failure cases:
+                no decks at all / no host decks published / no decks of this format. */}
             <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
-              {(deckSource==="host"?hostDecks:decks).length===0?(
-                <div style={{color: T.muted,fontSize:11,textAlign:"center",
-                  padding:16,fontStyle:"italic",
-                  border:`1px dashed ${T.border}`,borderRadius:6}}>
-                  {deckSource==="host"
-                    ? "Host hasn't published any decks yet — switch to your library or wait."
-                    : "You haven't built any decks yet. Leave the room and visit the Deckbuilder first."}
-                </div>
-              ):(deckSource==="host"?hostDecks:decks).map(d=>(
-                <button key={`popup-${deckSource}-${d.id}`} onClick={async()=>{
-                  setSelDeckId(d.id);
-                  if(deckSource==="host" && myRoomId && mySeat!=null){
-                    try{
-                      const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
-                      const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
-                      obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
-                      await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
-                    }catch{}
-                  } else if(myRoomId && mySeat!=null){
-                    try{
-                      const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
-                      const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
-                      obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
-                      await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
-                    }catch{}
-                  }
-                }}
-                  style={{...btn(`${T.bg}b0`,T.text,
-                    {border:`1px solid ${T.border}`,fontSize:12,padding:"10px 12px",
-                     textAlign:"left",fontFamily:"Cinzel, serif",transition:"all .15s"})}}
-                  onMouseOver={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.background=`${T.accent}12`;}}
-                  onMouseOut ={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=`${T.bg}b0`;}}>
-                  <span style={{color:T.accent,marginRight:8}}>✦</span>
-                  {d.name}
-                  {deckSource==="host" && <span style={{color:"#a855f7",marginLeft:6,fontSize:10}}>(borrowed)</span>}
-                  {Array.isArray(d.mainboard) && <span style={{color: T.muted,marginLeft:8,fontSize:10}}>· {d.mainboard.length} cards</span>}
-                </button>
-              ))}
+              {(() => {
+                const all = (deckSource==="host"?hostDecks:decks);
+                if (all.length === 0) {
+                  return (
+                    <div style={{color: T.muted,fontSize:11,textAlign:"center",
+                      padding:16,fontStyle:"italic",
+                      border:`1px dashed ${T.border}`,borderRadius:6}}>
+                      {deckSource==="host"
+                        ? "Host hasn't published any decks yet — switch to your library or wait."
+                        : "You haven't built any decks yet. Leave the room and visit the Deckbuilder first."}
+                    </div>
+                  );
+                }
+                const filtered = all.filter(d => (d.format||"standard")===gamemode);
+                if (filtered.length === 0) {
+                  return (
+                    <div style={{color:T.muted,fontSize:11,textAlign:"center",
+                      padding:16,fontStyle:"italic",
+                      border:`1px dashed ${T.border}`,borderRadius:6,lineHeight:1.5}}>
+                      No <b style={{color:T.accent,fontStyle:"normal"}}>{gamemode}</b> decks {deckSource==="host"?"published by host":"in your library"}.<br/>
+                      <span style={{fontSize:10}}>Pick a different mode in the Game Mode panel above, or build a {gamemode} deck in the Deckbuilder.</span>
+                    </div>
+                  );
+                }
+                return filtered.map(d=>(
+                  <button key={`popup-${deckSource}-${d.id}`} onClick={async()=>{
+                    setSelDeckId(d.id);
+                    if(deckSource==="host" && myRoomId && mySeat!=null){
+                      try{
+                        const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                        const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                        obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
+                        await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                      }catch{}
+                    } else if(myRoomId && mySeat!=null){
+                      try{
+                        const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                        const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                        obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
+                        await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                      }catch{}
+                    }
+                  }}
+                    style={{...btn(`${T.bg}b0`,T.text,
+                      {border:`1px solid ${T.border}`,fontSize:12,padding:"10px 12px",
+                       textAlign:"left",fontFamily:"Cinzel, serif",transition:"all .15s"})}}
+                    onMouseOver={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.background=`${T.accent}12`;}}
+                    onMouseOut ={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=`${T.bg}b0`;}}>
+                    <span style={{color:T.accent,marginRight:8}}>✦</span>
+                    {d.name}
+                    {deckSource==="host" && <span style={{color:"#a855f7",marginLeft:6,fontSize:10}}>(borrowed)</span>}
+                    {Array.isArray(d.mainboard) && <span style={{color: T.muted,marginLeft:8,fontSize:10}}>· {d.mainboard.length} cards</span>}
+                  </button>
+                ));
+              })()}
             </div>
 
             {/* Escape hatch — leave room without picking */}
@@ -5321,12 +5507,22 @@ function HandOverlay({hand,handRef,containerRef,hovered,selected,setHovered,setS
 
 /* Deck Viewer panel - bottom strip like Untap.in */
 /* ─── ZoneViewerModal ─────────────────────────────────────────────── */
-function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,onClose,onBulkExile,onBulkShuffle,onRequestCardAction}){
+function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,onClose,onBulkExile,onBulkShuffle,onRequestCardAction,onZoneView}){
   const [search,setSearch]=useState("");
   const [typeTab,setTypeTab]=useState("All");
   const [localCtx,setLocalCtx]=useState(null);
   const [selected,setSelected]=useState(new Set()); // Set of iids
   const lastClickedIid=useRef(null);
+
+  // v7.6.5.5: fire onZoneView when this viewer opens or zone identity changes.
+  // The parent uses this to push "X is viewing graveyard / exile" into the
+  // action log so opponents can see what zone you're looking at.
+  useEffect(()=>{
+    if(onZoneView && zone){
+      onZoneView(`${icon||""} ${title}`.trim());
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[zone]);
 
   const typeOrder=["All","Creatures","Planeswalkers","Instants","Sorceries","Enchantments","Artifacts","Lands","Other"];
   const getType=c=>{
@@ -5599,13 +5795,31 @@ function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,
 }
 
 /* ─── SearchLibModal ──────────────────────────────────────────────── */
-function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,onClose,oppHandAccess,oppLibAccess,onRequestOppAccess}){
+/* v7.6.5.5: full parity with ZoneViewerModal for click & right-click —
+   - Left-click toggles selection; shift-click selects a range
+   - Right-click opens an inline context menu with zone-appropriate actions
+     (own zones: → Hand / → BF / → Top / → Bottom / Shuffle / → Exile;
+      opp_hand / opp_library after grant: Request Discard / Steal / Exile)
+   - Switching to opp_hand or opp_library without access fires a request
+     and shows a "waiting for permission" overlay (auto-switches to the
+     listing once access is granted; Cancel returns to picker)
+   - Tab switches and zone entries fire onZoneView(zoneLabel) so
+     "X is viewing graveyard" / "...library" gets into the action log. */
+function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,onClose,oppHandAccess,oppLibAccess,onRequestOppAccess,onZoneView,onRequestCardAction}){
   const [libSearch,setLibSearch]=useState("");
   const [libTypeTab,setLibTypeTab]=useState("All");
   // v7.6.5.3: start with NO zone selected — user must explicitly pick.
   // Avoids accidentally revealing the top of your own library before you
   // wanted to see it (a spoiler when scrying).
   const [searchZone,setSearchZone]=useState(null);
+  // v7.6.5.5: pending opp-zone request (null|"opp_hand"|"opp_library").
+  // While set, we render a "waiting for permission" overlay; auto-switch
+  // to the listing when access flips true.
+  const [pendingZone,setPendingZone]=useState(null);
+  const [selected,setSelected]=useState(new Set()); // iids
+  const [localCtx,setLocalCtx]=useState(null);      // {x,y,card}
+  const lastClickedIid=useRef(null);
+
   const zoneCards={
     library:player.library,
     graveyard:player.graveyard,
@@ -5630,9 +5844,119 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
   const col=zoneColor[searchZone]||T.accent;
   const isOpp=searchZone&&searchZone.startsWith("opp_");
 
-  // v7.6.5.3: zone picker shown when nothing is selected yet — avoids
-  // accidentally revealing your deck top before you intended.
-  if(!searchZone){
+  // v7.6.5.5: log zone view whenever searchZone settles on a real zone.
+  useEffect(()=>{
+    if(searchZone && onZoneView){
+      onZoneView(zoneLabel[searchZone]);
+    }
+    // Clear selection on zone change — avoids leaking selected iids across zones
+    setSelected(new Set());
+    setLocalCtx(null);
+    lastClickedIid.current=null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[searchZone]);
+
+  // v7.6.5.5: when access is granted to a pending opp zone, auto-switch.
+  useEffect(()=>{
+    if(pendingZone==="opp_hand" && oppHandAccess){
+      setSearchZone("opp_hand"); setPendingZone(null);
+    } else if(pendingZone==="opp_library" && oppLibAccess){
+      setSearchZone("opp_library"); setPendingZone(null);
+    }
+  },[oppHandAccess,oppLibAccess,pendingZone]);
+
+  // Helper: cards affected by a context-menu action — selected set or just
+  // the right-clicked card (when no multi-selection).
+  const getTargets=(card)=>{
+    if(selected.size>1&&selected.has(card.iid)){
+      return srcCards.filter(c=>selected.has(c.iid));
+    }
+    return [card];
+  };
+
+  // Apply an own-zone action to all targets via the parent's onCtx contract.
+  // Mirrors ZoneViewerModal.applyToTargets — onCtx(syntheticEvt, card, fromZone, targetZone).
+  const applyToTargets=(card,targetZone)=>{
+    const targets=getTargets(card);
+    targets.forEach(c=>onCtx&&onCtx({clientX:0,clientY:0,preventDefault:()=>{}},c,searchZone,targetZone));
+    setSelected(new Set());
+    setLocalCtx(null);
+  };
+
+  // For opp_hand / opp_library — actions are REQUESTS (owner approves).
+  const applyOppRequest=(card,action,actionLabel)=>{
+    const targets=getTargets(card);
+    if(onRequestCardAction){
+      onRequestCardAction({zone:searchZone, action, actionLabel, cards:targets});
+    }
+    setSelected(new Set());
+    setLocalCtx(null);
+  };
+
+  // Build the menu items for the current zone.
+  const buildLocalCtx=(card)=>{
+    const n=getTargets(card).length;
+    const suffix=n>1?` (${n} cards)`:"";
+    const items=[];
+    if(searchZone==="library"){
+      items.push({icon:"↩",label:`→ Hand${suffix}`,             action:()=>applyToTargets(card,"hand")});
+      items.push({icon:"▶",label:`→ Battlefield${suffix}`,      action:()=>applyToTargets(card,"battlefield"),color:"#4ade80"});
+      items.push({icon:"☠",label:`→ Graveyard${suffix}`,        action:()=>applyToTargets(card,"graveyard"),color:"#a78bfa"});
+      items.push({icon:"✦",label:`→ Exile${suffix}`,            action:()=>applyToTargets(card,"exile"),color:"#60a5fa"});
+      items.push("---");
+      items.push({icon:"↑",label:`→ Top of Library${suffix}`,   action:()=>applyToTargets(card,"library-top")});
+      items.push({icon:"↓",label:`→ Bottom of Library${suffix}`,action:()=>applyToTargets(card,"library-bottom")});
+    }else if(searchZone==="graveyard"){
+      items.push({icon:"↩",label:`→ Hand${suffix}`,             action:()=>applyToTargets(card,"hand")});
+      items.push({icon:"▶",label:`Reanimate → BF${suffix}`,     action:()=>applyToTargets(card,"battlefield"),color:"#4ade80"});
+      items.push({icon:"↑",label:`→ Top of Library${suffix}`,   action:()=>applyToTargets(card,"library-top")});
+      items.push({icon:"↓",label:`→ Bottom of Library${suffix}`,action:()=>applyToTargets(card,"library-bottom")});
+      items.push({icon:"🔀",label:`Shuffle into Library${suffix}`,action:()=>applyToTargets(card,"shuffle")});
+      items.push("---");
+      items.push({icon:"✦",label:`→ Exile${suffix}`,            action:()=>applyToTargets(card,"exile"),color:"#60a5fa"});
+    }else if(searchZone==="exile"){
+      items.push({icon:"↩",label:`→ Hand${suffix}`,             action:()=>applyToTargets(card,"hand")});
+      items.push({icon:"▶",label:`→ Battlefield${suffix}`,      action:()=>applyToTargets(card,"battlefield"),color:"#4ade80"});
+      items.push({icon:"☠",label:`→ Graveyard${suffix}`,        action:()=>applyToTargets(card,"graveyard")});
+      items.push({icon:"↑",label:`→ Top of Library${suffix}`,   action:()=>applyToTargets(card,"library-top")});
+      items.push({icon:"↓",label:`→ Bottom of Library${suffix}`,action:()=>applyToTargets(card,"library-bottom")});
+      items.push({icon:"🔀",label:`Shuffle into Library${suffix}`,action:()=>applyToTargets(card,"shuffle")});
+    }else if((searchZone==="opp_hand"||searchZone==="opp_library") && onRequestCardAction){
+      // Opp private zones — only after access granted. Actions are REQUESTS.
+      items.push({icon:"⚔",label:`Request: put under my control${suffix}`,action:()=>applyOppRequest(card,"steal","put under requester's control"),color:"#fbbf24"});
+      items.push({icon:"☠",label:`Request: discard${suffix}`,            action:()=>applyOppRequest(card,"discard","discarded to graveyard"),color:"#a78bfa"});
+      items.push({icon:"✦",label:`Request: exile${suffix}`,              action:()=>applyOppRequest(card,"exile","exiled"),color:"#60a5fa"});
+    }
+    // opp_graveyard / opp_exile are public view-only — empty menu (right-click does nothing useful)
+    return items;
+  };
+
+  const handleCardClick=(e,card)=>{
+    e.stopPropagation();
+    if(e.shiftKey&&lastClickedIid.current){
+      const ids=filtered.map(c=>c.iid);
+      const a=ids.indexOf(lastClickedIid.current);
+      const b=ids.indexOf(card.iid);
+      const [lo,hi]=[Math.min(a,b),Math.max(a,b)];
+      setSelected(prev=>{
+        const next=new Set(prev);
+        ids.slice(lo,hi+1).forEach(id=>next.add(id));
+        return next;
+      });
+    }else{
+      setSelected(prev=>{
+        const next=new Set(prev);
+        if(next.has(card.iid)) next.delete(card.iid);
+        else next.add(card.iid);
+        return next;
+      });
+      lastClickedIid.current=card.iid;
+    }
+    setLocalCtx(null);
+  };
+
+  // ── Picker view ────────────────────────────────────────────────────────
+  if(!searchZone && !pendingZone){
     const pickerZones = [
       { id:"library",       label:"📚 My Library",        sub:`${player.library.length} cards`,    color:T.accent,   needs:false },
       { id:"graveyard",     label:"☠ My Graveyard",       sub:`${player.graveyard.length} cards`,  color:"#a78bfa",  needs:false },
@@ -5657,7 +5981,12 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {pickerZones.map(z=>(
               <button key={z.id} onClick={()=>{
-                if(z.needs){ onRequestOppAccess?.(z.id); return; }
+                if(z.needs){
+                  // v7.6.5.5: switch to "waiting for permission" overlay
+                  setPendingZone(z.id);
+                  onRequestOppAccess?.(z.id);
+                  return;
+                }
                 setSearchZone(z.id); setLibTypeTab("All");
               }}
                 style={{
@@ -5684,26 +6013,71 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
     );
   }
 
+  // ── Waiting-for-permission overlay (opp_hand / opp_library) ────────────
+  if(pendingZone){
+    const oppAlias = opponent?.profile?.alias || "your opponent";
+    const zoneText = pendingZone==="opp_hand" ? "hand" : "library";
+    return (
+      <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.93)",
+        display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000,backdropFilter:"blur(6px)"}}>
+        <div className="slide-in" style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+          border:`1px solid #fb923c60`,borderRadius:12,padding:28,width:440,maxWidth:"94vw",
+          boxShadow:"0 24px 80px rgba(0,0,0,.95)",textAlign:"center"}}>
+          <div style={{fontSize:36,marginBottom:10,animation:"pulse 1.6s ease-in-out infinite"}}>🔒</div>
+          <div style={{color:"#fb923c",fontFamily:"Cinzel Decorative,serif",fontSize:15,letterSpacing:".05em",marginBottom:8}}>
+            Asking {oppAlias} for permission
+          </div>
+          <div style={{color:T.muted,fontSize:12,fontFamily:"Crimson Text,serif",fontStyle:"italic",marginBottom:18,lineHeight:1.5}}>
+            Waiting for them to grant access to their {zoneText}. They'll see a prompt and can allow or decline.
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+            <button onClick={()=>{setPendingZone(null);}}
+              style={{...btn(`${T.panel}99`,T.text,{padding:"8px 22px",border:`1px solid ${T.border}`,fontFamily:"Cinzel,serif",fontSize:11})}}
+              onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+            <button onClick={()=>{setPendingZone(null);onClose?.();}}
+              style={{...btn("transparent",T.muted,{padding:"8px 16px",border:`1px solid ${T.border}40`,fontFamily:"Cinzel,serif",fontSize:11})}}
+              onMouseOver={hov} onMouseOut={uhov}>Close ✕</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Listing view ───────────────────────────────────────────────────────
   return(
     <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.93)",
-      display:"flex",flexDirection:"column",zIndex:10000,backdropFilter:"blur(6px)"}}>
+      display:"flex",flexDirection:"column",zIndex:10000,backdropFilter:"blur(6px)"}}
+      onClick={()=>{if(localCtx)setLocalCtx(null);else setSelected(new Set());}}>
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 18px",
         background:`linear-gradient(180deg,${T.panel},transparent)`,borderBottom:`1px solid ${col}30`,flexShrink:0,flexWrap:"wrap"}}>
         <span style={{color:col,fontFamily:"Cinzel,serif",fontSize:13,letterSpacing:".08em"}}>{zoneLabel[searchZone]} ({srcCards.length})</span>
+        {selected.size>0&&(
+          <span style={{fontSize:9,color:col,fontFamily:"Cinzel,serif",background:`${col}18`,
+            border:`1px solid ${col}40`,borderRadius:4,padding:"2px 8px"}}>
+            {selected.size} selected
+          </span>
+        )}
         <input value={libSearch} onChange={e=>setLibSearch(e.target.value)} placeholder="Search cards…"
+          onClick={e=>e.stopPropagation()}
           style={{...{display:"block",padding:"4px 10px",background:"rgba(5,10,18,.8)",border:`1px solid ${T.border}`,
             color:T.text,borderRadius:5,fontSize:11,fontFamily:"Crimson Text,serif"},width:180}}
           onFocus={e=>e.target.style.borderColor=col} onBlur={e=>e.target.style.borderColor=T.border}/>
         <div style={{flex:1}}/>
-        {searchZone==="library"&&<button onClick={()=>{onShuffle();onClose();}}
+        {searchZone==="library"&&<button onClick={(e)=>{e.stopPropagation();onShuffle();onClose();}}
           style={{...btn("rgba(251,191,36,.08)","#fbbf24",{border:"1px solid rgba(251,191,36,.2)",fontSize:10})}}
           onMouseOver={hov} onMouseOut={uhov}>🔀 Shuffle & Close</button>}
-        <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        <button onClick={(e)=>{e.stopPropagation();onClose();}} style={{...btn("transparent",T.muted,{fontSize:16,border:"none",padding:"2px 8px"})}} onMouseOver={hov} onMouseOut={uhov}>✕</button>
       </div>
       <div style={{display:"flex",gap:3,padding:"5px 16px",flexShrink:0,flexWrap:"wrap",borderBottom:`1px solid ${col}15`}}>
         {Object.keys(zoneCards).map(z=>(
-          <button key={z} onClick={()=>{
-            if(needsRequest[z]){onRequestOppAccess&&onRequestOppAccess(z);return;}
+          <button key={z} onClick={(e)=>{
+            e.stopPropagation();
+            if(needsRequest[z]){
+              // Switch to waiting overlay for this zone
+              setPendingZone(z);
+              onRequestOppAccess&&onRequestOppAccess(z);
+              return;
+            }
             setSearchZone(z);setLibTypeTab("All");
           }}
             style={{...btn(searchZone===z?`${zoneColor[z]}25`:"transparent",
@@ -5718,56 +6092,116 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
       </div>
       <div style={{display:"flex",gap:3,padding:"4px 16px",flexShrink:0,flexWrap:"wrap",borderBottom:`1px solid ${col}10`}}>
         {typesPresent.map(t=>(
-          <button key={t} onClick={()=>setLibTypeTab(t)}
+          <button key={t} onClick={(e)=>{e.stopPropagation();setLibTypeTab(t);}}
             style={{...btn(libTypeTab===t?`${col}20`:"transparent",libTypeTab===t?col:T.muted,
               {fontSize:8,border:`1px solid ${libTypeTab===t?col+"40":`${T.border}15`}`,padding:"2px 7px",borderRadius:3})}}
             onMouseOver={hov} onMouseOut={uhov}>{t}</button>
         ))}
       </div>
+      {/* Selection hint */}
+      {filtered.length>0 && (searchZone==="library"||searchZone==="graveyard"||searchZone==="exile"||(isOpp&&onRequestCardAction&&(searchZone==="opp_hand"||searchZone==="opp_library"))) && (
+        <div style={{padding:"4px 18px",fontSize:8,color:T.muted,fontFamily:"Cinzel,serif",flexShrink:0}}>
+          Left-click to select · Shift+click for range · Right-click for actions
+        </div>
+      )}
       <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexWrap:"wrap",gap:8,alignContent:"flex-start"}}>
         {filtered.length===0&&<div style={{color:T.border,fontFamily:"Cinzel,serif",fontSize:11,padding:20,width:"100%",textAlign:"center",fontStyle:"italic"}}>No cards here</div>}
-        {filtered.map((card,i)=>(
-          <div key={card.iid||i} title={card.name}
-            onMouseEnter={()=>onHover&&onHover(card)}
-            onMouseLeave={()=>onHover&&onHover(null)}
-            onContextMenu={e=>{
-              e.preventDefault();
-              // Show context menu without closing window
-              onCtx&&onCtx(e,card,isOpp?"opp_exile":searchZone);
-            }}
-            onMouseDown={e=>{
-              if(e.button!==0)return;
-              // Drag out of search window — close and hand off to float drag
-              const handleMove=(mv)=>{
-                const dx=mv.clientX-e.clientX,dy=mv.clientY-e.clientY;
-                if(Math.sqrt(dx*dx+dy*dy)>8){
-                  window.removeEventListener("mousemove",handleMove);
-                  window.removeEventListener("mouseup",handleUp);
-                  // Synthesise a mousedown on the card for the float drag system
-                  onClose();
-                  // Start float drag by dispatching to parent via a custom event
-                  const evt=new CustomEvent("mtg-float-drag",{detail:{card,zone:isOpp?"opp_exile":searchZone,x:mv.clientX,y:mv.clientY}});
-                  window.dispatchEvent(evt);
+        {filtered.map((card,i)=>{
+          const isSel=selected.has(card.iid);
+          return (
+            <div key={card.iid||i} title={card.name}
+              onMouseEnter={()=>onHover&&onHover(card)}
+              onMouseLeave={()=>onHover&&onHover(null)}
+              onClick={(e)=>handleCardClick(e,card)}
+              onContextMenu={e=>{
+                e.preventDefault();
+                e.stopPropagation();
+                // If right-clicking an unselected card, select just that one
+                if(!selected.has(card.iid)){
+                  setSelected(new Set([card.iid]));
+                  lastClickedIid.current=card.iid;
                 }
-              };
-              const handleUp=()=>{window.removeEventListener("mousemove",handleMove);window.removeEventListener("mouseup",handleUp);};
-              window.addEventListener("mousemove",handleMove);
-              window.addEventListener("mouseup",handleUp);
-            }}
-            style={{cursor:"grab",transition:"transform .1s",flexShrink:0}}
-            onMouseOver={e=>e.currentTarget.style.transform="translateY(-4px) scale(1.04)"}
-            onMouseOut={e=>e.currentTarget.style.transform="none"}>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
-              <CardImg card={card} size="md" noHover/>
-              {isOpp&&onUpdateGame&&(
-                <button onClick={e=>{e.stopPropagation();onUpdateGame({requestMsg:`${player.profile?.alias||"Player"} requests: ${card.name}`,requestTs:Date.now()});}}
-                  style={{...btn("rgba(74,222,128,.1)","#4ade80",{fontSize:7,padding:"1px 5px",border:"1px solid rgba(74,222,128,.2)"})}}
-                  onMouseOver={hov} onMouseOut={uhov}>→ Request</button>
+                setLocalCtx({x:e.clientX,y:e.clientY,card});
+              }}
+              onMouseDown={e=>{
+                if(e.button!==0)return;
+                // Drag-to-float threshold: only start drag if mouse moves >8px
+                const sx=e.clientX,sy=e.clientY;
+                const onMove=(mv)=>{
+                  if(Math.abs(mv.clientX-sx)>8||Math.abs(mv.clientY-sy)>8){
+                    window.removeEventListener("mousemove",onMove);
+                    window.removeEventListener("mouseup",onUp);
+                    onClose();
+                    const evt=new CustomEvent("mtg-float-drag",{detail:{card,zone:isOpp?"opp_exile":searchZone,x:mv.clientX,y:mv.clientY}});
+                    window.dispatchEvent(evt);
+                  }
+                };
+                const onUp=()=>{window.removeEventListener("mousemove",onMove);window.removeEventListener("mouseup",onUp);};
+                window.addEventListener("mousemove",onMove);
+                window.addEventListener("mouseup",onUp);
+              }}
+              style={{
+                cursor:"pointer",transition:"transform .1s,box-shadow .1s",flexShrink:0,position:"relative",
+                borderRadius:7,
+                outline:isSel?`2px solid ${col}`:"2px solid transparent",
+                boxShadow:isSel?`0 0 12px ${col}60,0 0 0 2px ${col}40`:"none",
+                transform:isSel?"translateY(-3px) scale(1.04)":"none",
+              }}
+              onMouseOver={e=>{if(!isSel)e.currentTarget.style.transform="translateY(-4px) scale(1.04)";}}
+              onMouseOut={e=>{if(!isSel)e.currentTarget.style.transform="none";}}>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                <CardImg card={card} size="md" noHover/>
+              </div>
+              {isSel&&(
+                <div style={{position:"absolute",top:3,right:3,width:16,height:16,borderRadius:"50%",
+                  background:col,display:"flex",alignItems:"center",justifyContent:"center",
+                  fontSize:9,color:"#080f1c",fontWeight:700,pointerEvents:"none",
+                  boxShadow:`0 0 6px ${col}`}}>✓</div>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
+      {/* Inline context menu */}
+      {localCtx&&(()=>{
+        const items=buildLocalCtx(localCtx.card);
+        if(items.length===0)return null;
+        const menuW=240,menuH=items.length*34+32;
+        const x=Math.min(localCtx.x,window.innerWidth-menuW-8);
+        const y=Math.min(localCtx.y,window.innerHeight-menuH-8);
+        const n=getTargets(localCtx.card).length;
+        return(
+          <div className="slide-in" onClick={e=>e.stopPropagation()}
+            style={{position:"fixed",left:x,top:y,
+              background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+              border:`1px solid ${col}40`,borderRadius:8,zIndex:16000,
+              minWidth:menuW,boxShadow:"0 16px 48px rgba(0,0,0,.95)",overflow:"hidden"}}>
+            <div style={{padding:"5px 12px 4px",fontSize:8,color:col,letterSpacing:".12em",
+              fontFamily:"Cinzel,serif",borderBottom:`1px solid ${col}20`,
+              display:"flex",alignItems:"center",gap:6}}>
+              <span style={{opacity:.7}}>{localCtx.card.name}</span>
+              {n>1&&<span style={{background:`${col}25`,borderRadius:3,padding:"0 5px",color:col}}>{n} cards</span>}
+            </div>
+            {items.map((item,i)=>
+              item==="---"?(
+                <div key={i} style={{borderTop:`1px solid ${T.border}20`,margin:"3px 0"}}/>
+              ):(
+                <div key={i}
+                  onClick={()=>{item.action();}}
+                  style={{padding:"7px 13px",cursor:"pointer",fontSize:12,
+                    color:item.color||T.text,fontFamily:"Crimson Text,serif",
+                    display:"flex",alignItems:"center",gap:8,transition:"background .1s,padding-left .1s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.background="#1a2a4a";e.currentTarget.style.paddingLeft="17px";}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.paddingLeft="13px";}}>
+                  <span style={{opacity:.7,fontSize:13}}>{item.icon||"·"}</span>
+                  <span>{item.label}</span>
+                </div>
+              )
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -9550,13 +9984,35 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       )}
 
       {/* Search Library modal */}
-      {/* Search Library modal */}
       {showSearchLib&&(
         <SearchLibModal
           player={player} opponent={opponent}
-          onCtx={handleCtx} onHover={setHovered}
+          onHover={setHovered}
           onShuffle={shuffle} onUpdateGame={onUpdateGame}
           oppHandAccess={oppHandAccess} oppLibAccess={oppLibAccess}
+          /* v7.6.5.5: onCtx now mirrors the ZoneViewerModal contract —
+             (e, card, fromZone, targetZone) where targetZone routes to a
+             real move action; falls back to handleCtx for global menu. */
+          onCtx={(e,card,fromZone,targetZone)=>{
+            if(targetZone==="hand")            { moveCard(card,fromZone,"hand"); }
+            else if(targetZone==="battlefield"){ SFX.playAction(fromZone==="graveyard"?"reanimate":"toBF"); moveCard(card,fromZone,"battlefield"); }
+            else if(targetZone==="exile")      { SFX.playAction("toExile");   moveCard(card,fromZone,"exile"); }
+            else if(targetZone==="graveyard")  { moveCard(card,fromZone,"graveyard"); }
+            else if(targetZone==="library-top"){ moveCard(card,fromZone,"library","top"); }
+            else if(targetZone==="library-bottom"){ moveCard(card,fromZone,"library","bottom"); }
+            else if(targetZone==="shuffle")    {
+              moveCard(card,fromZone,"library","bottom");
+              setTimeout(()=>{upd(p=>({...p,library:shuffleArr(p.library)}));SFX.playAction("shuffle");},10);
+            }
+            else { handleCtx(e,card,fromZone); } // fallback
+          }}
+          /* v7.6.5.5: tab-switch / zone-entry logging */
+          onZoneView={(zoneLabel)=>{
+            try{ addLog(`👁 is viewing ${zoneLabel}`); }catch{}
+          }}
+          /* v7.6.5.5: opp_hand / opp_library — request actions reuse the
+             existing card-action request system. */
+          onRequestCardAction={requestCardAction}
           onRequestOppAccess={(zone)=>{
             // Broadcast access request via game state
             onUpdateGame({oppAccessRequest:{zone,fromPlayer:playerIdx,ts:Date.now()}});
@@ -9937,6 +10393,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         <ZoneViewerModal title="Graveyard" icon="☠" color="#a78bfa"
           cards={player.graveyard} zone="graveyard"
           onHover={setHovered}
+          onZoneView={(label)=>{ try{ addLog(`👁 is viewing ${label}`); }catch{} }}
           onCtx={(e,card,fromZone,targetZone)=>{
             // targetZone comes from inline context menu; route to real actions
             if(targetZone==="hand")            { moveCard(card,fromZone,"hand"); }
@@ -9970,6 +10427,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         <ZoneViewerModal title="Exile" icon="✦" color="#60a5fa"
           cards={player.exile} zone="exile"
           onHover={setHovered}
+          onZoneView={(label)=>{ try{ addLog(`👁 is viewing ${label}`); }catch{} }}
           onCtx={(e,card,fromZone,targetZone)=>{
             if(targetZone==="hand")            { moveCard(card,fromZone,"hand"); }
             else if(targetZone==="battlefield"){ SFX.playAction("reanimate"); moveCard(card,fromZone,"battlefield"); }
@@ -11312,6 +11770,16 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
 
   const handleSave = async () => {
     setSaving(true); setMsg(null);
+    // v7.6.5.5: validate alias if it changed
+    const trimmed = (alias||"").trim();
+    if (trimmed.toLowerCase() !== (profile?.alias||"").toLowerCase()) {
+      const av = await isAliasAvailable(trimmed);
+      if (!av.available) {
+        setSaving(false);
+        setMsg({ kind: 'error', text: aliasErrorToMessage(av.reason) });
+        return;
+      }
+    }
     // v7.6.4: when a custom URL is provided, it's the playmat. Otherwise use the preset gradient.
     const customMat = (gmCustomUri||"").trim();
     const matBg = customMat
@@ -11319,7 +11787,7 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
       : (GAMEMATS[gmIdx]?.bg || GAMEMATS[3].bg);
     const updated = {
       ...profile,
-      alias: alias.trim() || profile?.alias || "Player",
+      alias: trimmed || profile?.alias || "Player",
       avatar,
       avatarImg,
       gamematIdx: gmIdx,
@@ -11327,7 +11795,18 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
       gamematCustom: customMat || null,
       sleeveUri: sleeveUri.trim() || null,
     };
-    try { onSave(updated); } catch (e) { console.warn('[ProfileSettings save]', e); }
+    try {
+      const res = await onSave(updated);
+      if (res && res.error) {
+        setSaving(false);
+        setMsg({ kind: 'error', text: aliasErrorToMessage(res.error) });
+        return;
+      }
+    } catch (e) {
+      setSaving(false);
+      setMsg({ kind: 'error', text: aliasErrorToMessage(e?.message || e) });
+      return;
+    }
 
     // Auth changes — only if anything changed
     try {
@@ -13759,9 +14238,21 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   },[]);
 
   const saveProfile=async p=>{
+    // v7.6.5.5: throw on cloud failure so ProfileSetup can surface alias
+    // errors inline (taken / reserved / too long) instead of silently
+    // applying a local-only profile and bouncing back to the menu.
+    if(onProfileSaved){
+      try{
+        const result = await onProfileSaved(p);
+        if (result && result.error) {
+          throw new Error(result.error.message || 'Could not save profile');
+        }
+      }catch(e){
+        console.warn("[saveProfile cloud]", e);
+        throw e;
+      }
+    }
     setProfile(p);
-    // v7: cloud-persist via prop, plus keep a local mirror for offline.
-    if(onProfileSaved){ try{ await onProfileSaved(p); }catch(e){ console.warn("[saveProfile cloud]",e); } }
     try{await storage.set("mtg_profile_v1",JSON.stringify(p));}catch{}
     // v7.6.1: DO NOT call setView("menu") here — this function is also invoked
     // from the in-game gamemat picker via window.__MTG_V7__.saveProfile, and
@@ -13798,12 +14289,26 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
   // If topRevealed is on for that seat, the first library card stays unmasked.
   const maskPrivateZones = useCallback((gs)=>{
     if(!gs || !Array.isArray(gs.players)) return gs;
+    // v7.6.5.5: Dandân — the library is SHARED and PUBLIC (both players draw
+    // from it and both need to see card identities). Masking the library here
+    // turned every card into a `{iid, _masked:"library"}` stub on broadcast,
+    // and the Dandân share-mirror in applyRemoteStateBySeat then copied those
+    // stubs to every seat, blanking the deck. Hand stays masked (still per-
+    // player private).
+    const isDandan = gs.gamemode === 'dandan';
     return {
       ...gs,
       players: gs.players.map((p,idx)=>{
         const handStub = (c)=>({iid:c?.iid||uid(),faceDown:true,_masked:"hand"});
         const libStub  = (c)=>({iid:c?.iid||uid(),faceDown:true,_masked:"library"});
         const lib = p.library || [];
+        if (isDandan) {
+          return {
+            ...p,
+            hand:    (p.hand || []).map(handStub),
+            // library passes through unchanged — shared & public in Dandân
+          };
+        }
         // Preserve top card if the seat has topRevealed (or per-iid reveal) set.
         const topRevealedId = p.revealTopOnce;
         let maskedLib;

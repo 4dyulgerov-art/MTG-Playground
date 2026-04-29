@@ -4,7 +4,7 @@
   "trailingSlash": false,
   "rewrites": [
     {
-      "source": "/((?!sitemap\\.xml|robots\\.txt|favicon\\.|apple-touch-icon|manifest\\.json|og-image\\.|assets/|play-magic-online-free|free-mtg-playtester|playtest-mtg|mtg-arena-alternative|commander|oathbreaker|dandan|.*\\..*).*)",
+      "source": "/((?!sitemap\\.xml|robots\\.txt|favicon\\.|apple-touch-icon|manifest\\.json|og-image\\.|assets/|play-magic-online-free|free-mtg-playtester|playtest-mtg|mtg-arena-alternative|commander|oathbreaker|dandan|ja/|fr/|de/|es/|pt-br/|it/|pl/|.*\\..*).*)",
       "destination": "/"
     }
   ],
@@ -20,19 +20,25 @@
     {
       "source": "/sitemap.xml",
       "headers": [
-        { "key": "Content-Type", "value": "application/xml; charset=utf-8" },
+        { "key": "Content-Type",  "value": "application/xml; charset=utf-8" },
         { "key": "Cache-Control", "value": "public, max-age=3600" }
       ]
     },
     {
       "source": "/robots.txt",
       "headers": [
-        { "key": "Content-Type", "value": "text/plain; charset=utf-8" },
+        { "key": "Content-Type",  "value": "text/plain; charset=utf-8" },
         { "key": "Cache-Control", "value": "public, max-age=3600" }
       ]
     },
     {
       "source": "/(play-magic-online-free|free-mtg-playtester|playtest-mtg|mtg-arena-alternative|commander|oathbreaker|dandan)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/(ja|fr|de|es|pt-br|it|pl)/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
       ]
