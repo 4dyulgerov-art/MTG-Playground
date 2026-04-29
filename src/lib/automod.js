@@ -69,19 +69,45 @@ const BLOCK_HASH_PREFIXES = new Set([
 
 // Plaintext block patterns — for things that ARE okay to have in source.
 // These are short, unambiguous, and have no MTG-gameplay collision.
+//
+// HARD SLURS — added in v7.6.5.1 emergency patch.
+// Built from character classes rather than literal slur strings:
+//   • Resists common leetspeak substitutions (1=l/i, 3=e, 4=@=a, 0=o, etc.)
+//   • Doesn't ship a discoverable slur wordlist in the bundle
+//   • Word-boundary anchored to avoid false positives on legitimate words
+// Order: most-common slurs first (regex engine short-circuits on first match).
 const BLOCK_PATTERNS = [
-  // Suicide encouragement.
+  // ── Hard slurs (universally agreed; no benign use) ─────────────────────
+  // n-word + variants ("er", "a", plurals). Character classes catch
+  // substitutions like n1gger, n!gga, niggur. Doubled g enforced (>=2).
+  /\bn[il1!|]+[gq]{2,}[a@4eo0u]+(r|rs|z)?\b/i,
+  // f-slur + variants. {1,3} on g lets it match "fag", "fagg", "faggot".
+  // The trailing group is optional so it catches the bare 3-letter form.
+  /\bf[a@4]+[gq]{1,3}([eo03][tsz]+)?\b/i,
+  // r-slur — disability slur, common harassment vector.
+  /\br+[e3]+t[a@4]+r+d+(ed|s)?\b/i,
+  // anti-Asian slur (the one starting with ch-)
+  /\bch[il1!|]+n+k+[sz]?\b/i,
+  // anti-Hispanic slur (the one starting with sp-)
+  /\bsp[il1!|]+[ckq]+(s)?\b/i,
+  // anti-Jewish slur (the one starting with k-)
+  /\bk[il1!|]+k[e3]+[sz]?\b/i,
+  // anti-Roma slur
+  /\bgyp+[sz][il1!|]+[e3]?[sz]?\b/i,
+  // ── Suicide encouragement ──────────────────────────────────────────────
   /\bk[\W_]*y[\W_]*s\b/i,                        // "kys"
-  /\bkill\s+yo?u?r?\s*self\b/i,                  // "kill yourself" / "kill urself"
+  /\bkill\s+(?:yo?u?r?|ur)\s*self\b/i,            // "kill yourself" / "kill urself" / "kill ur self"
   /\bgo\s+(?:and\s+)?die\b/i,                    // "go die" / "go and die"
   /\bcommit\s+(?:suicide|sudoku)\b/i,            // includes the common 4chan misspelling
-  // Explicit personalised violent threat.
+  // ── Personalised violent threat ────────────────────────────────────────
   /\bi(?:'m| am| will| ?ll)\s+going\s+to\s+(?:kill|murder|rape)\s+you\b/i,
   /\bi(?:'ll| will)\s+(?:kill|murder|rape)\s+you\b/i,
-  // Sexual content involving minors — substring is enough; this is a
-  // permanent ban.
+  // ── CSAM allusions — substring is enough; this is a permanent ban ──────
   /\bcp\b.{0,15}\b(?:link|url|share|post|trade)\b/i,
   /\bchild(?:ren)?\s+(?:porn|sex|nude)/i,
+  // ── 14/88 dogwhistle (often paired) ────────────────────────────────────
+  /\b14[\s\-_/]*88\b/,
+  /\b88[\s\-_/]*14\b/,
 ];
 
 // ── TIER 2: flag (don't block) ─────────────────────────────────────────────

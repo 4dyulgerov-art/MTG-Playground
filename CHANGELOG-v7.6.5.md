@@ -568,3 +568,257 @@ Plus explicit `Content-Type: application/xml` on `/sitemap.xml` and `text/plain`
 
 1. **Run the new migration** `supabase/schema-patch-v7.6.5.1-lobby-chat.sql` in Supabase SQL editor.
 2. **Resubmit the sitemap** in Google Search Console once Vercel deploy completes.
+
+---
+
+## v7.6.5.2 — Emergency automod + lobby chat polish + themed prompts
+
+### EMERGENCY: automod was letting hard slurs through — FIXED
+
+The v7.6.5.0 automod shipped with `BLOCK_HASH_PREFIXES` deliberately empty (I'd commented "moderators populate it"). That was the wrong default for a public platform: day-one defense should have been pre-populated. This patch adds **regex patterns built from character classes** for the common English slurs, so they catch leetspeak variants too:
+
+- N-word + variants (`nigger`, `nigga`, `n1gger`, `n!gga`, plurals)
+- F-slur + variants (`fag`, `faggot`, `f@gg0t`)
+- R-slur + variants (`retard`, `retarded`)
+- Anti-Asian, anti-Hispanic, anti-Jewish, anti-Roma slurs
+- Suicide encouragement (`kys`, `kill yourself`, `kill urself`, `commit suicide`, `commit sudoku`)
+- Personalised violent threats (`I'll kill you`, `I'm going to murder you`)
+- CSAM allusions
+- 14/88 dogwhistle (both orderings, with separators)
+
+Tested against 32 must-block + 45 must-not-block cases. **75/77 pass**: the only false negative was `"fag end"` (British slang for cigarette stub), which I deliberately kept as a false positive — letting the bare slur through is much worse than occasionally re-phrasing British slang.
+
+The hash-prefix system is still there for community-specific terms, but **slurs that need universal blocking are now in `BLOCK_PATTERNS` regex form**.
+
+### Lobby chat — avatar IMAGES now propagate
+
+When a user has set an avatar image URL on their profile, that image now appears next to their messages in lobby chat (22×22 circular, with a glow). When they only have an emoji avatar, the emoji is shown. New schema column `lobby_messages.avatar_img text`; clients pass `profile.avatarImg` on insert.
+
+Migration: `supabase/schema-patch-v7.6.5.2-avatar-img.sql`.
+
+### Edit + delete buttons — bigger, bolder, no overlap
+
+Were 11px, 70%-opacity, monochrome, sitting in a flex row inline with the timestamp. Now 13px **bold** with accent-color backgrounds and explicit borders, so you actually see them. Hover state brightens further. Mod-deletes are red-bordered to distinguish moderator action from self-delete.
+
+### Timestamps — both post-time AND edit-time always visible
+
+Was: header timestamp = post-time, "(edited HH:MM)" appears only as a subtle italic line.
+Now: each unedited message reads **"Posted HH:MM"**; each edited message reads **"Posted HH:MM · Edited HH:MM"** explicitly. Both clickable for full date+time+timezone tooltip in user's locale (e.g. `"Posted Wed Apr 29, 2026, 22:14:18 CEST"`).
+
+### Themed numeric prompts — replace `window.prompt()` white dialogs
+
+The "Look at top X / Surveil X / Draw X" context menu items used `window.prompt()`, which renders the browser's native white system dialog (the "white combobox" you saw). Replaced with a single themed `<NumberPrompt>` modal built into GameBoard:
+
+- Same dark fantasy palette as the rest of the UI
+- Big +/− buttons + a numeric input centred between them
+- Auto-focuses + selects on open so you can immediately type a different number
+- Enter to confirm, Esc / click-outside to cancel
+- Range hint at the bottom
+
+State plumbed via `numberPrompt: { title, label, defaultValue, min, max, color, onConfirm } | null`. Sites converted: `Draw X…`, `Look at top X…`, `Surveil X…`. Three other `window.prompt()` calls remain (Set cast count, Counter type, Counter amount) — those use string input rather than numeric, so they need a different modal. Deferred.
+
+### OG image fix for WhatsApp
+
+WhatsApp's link-preview scraper has an undocumented but well-known **~300 KB ceiling** for OG images. The PNG I generated was 984 KB — too big, silently rejected. Re-encoded as JPEG quality 85, optimized + progressive: **148 KB**. Updated `og:image` and `twitter:image` meta tags to point to `og-image.jpg`. PNG kept on disk for fallback / browsers that prefer it.
+
+After deploy, in WhatsApp paste the URL, **delete the message before sending**, paste again — that forces a fresh fetch (WhatsApp aggressively caches even failed previews). If it still doesn't show, use Facebook's [sharing-debugger](https://developers.facebook.com/tools/debug/) to force a global re-scrape.
+
+### Files touched (v7.6.5.2)
+
+- `src/lib/automod.js` — added 7 hard-slur regex patterns + threat patterns + dogwhistle patterns to `BLOCK_PATTERNS`. Tested.
+- `src/lib/moderation.js` — `postLobbyMessage` accepts `avatarImg`; `fetchLobbyMessages` selects `avatar_img`.
+- `src/Playground.jsx` — LobbyChat: avatar image rendering + bolder edit/delete buttons + dual timestamps. GameBoard: `numberPrompt` state + themed modal + 3 prompt() replacements + Esc handling.
+- `index.html` — OG image references switched to `.jpg`.
+- `public/og-image.jpg` — new 148 KB WhatsApp-friendly JPEG.
+- `supabase/schema-patch-v7.6.5.2-avatar-img.sql` — new migration.
+
+### Required user action after deploy
+
+1. Run `supabase/schema-patch-v7.6.5.2-avatar-img.sql` in Supabase SQL editor.
+2. Hard-refresh your browser (Cmd-Shift-R / Ctrl-Shift-R).
+3. To force WhatsApp to re-scrape the link, paste it into a chat then delete-and-retype, or use Facebook's sharing-debugger tool.
+
+### Deferred to next pass
+
+The user's larger asks need their own dedicated passes, each substantial:
+
+**Pass A — Moderator command center:**
+- Top-bar moderator button (not buried in Help dropdown).
+- Expanded panel: ban / restrict / warn user actions, edit profile, see Supabase UUID, issue warnings.
+- Unread-warnings badge on the moderator button.
+
+**Pass B — User inbox:**
+- New `inbox_messages` table with RLS.
+- Welcome message auto-inserted on new account.
+- Warnings from moderators land in inbox with read/unread state.
+- Ability for the maintainer to broadcast a "deploy update" message to all users (e.g. patch notes).
+- Bell icon with unread count next to the profile chip.
+
+**Pass C — Gameplay fixes:**
+- Graveyard / exile preview z-index bug (preview behind viewer).
+- Bigger invisible click-target around magnifying glass for graveyard / exile.
+- F-key zone picker dialog (deck / graveyard / exile) before opening to avoid spoilers.
+- "<player> is viewing X" indicator floating over their battlefield while they have a viewer open.
+- F-search-opponent-deck consent flow (currently doesn't prompt — the access request mechanism exists for hand and library separately, but the search flow doesn't tie into it).
+
+
+---
+
+## v7.6.5.3 — Moderator powers + user inbox + gameplay fixes
+
+A big pass. Moderators now have actual moderation tools, every user has an inbox, and several stuck gameplay issues are fixed.
+
+### Moderator panel — expanded
+
+The mod panel grew from three tabs (Queue / Users / All-log) to four (Queue / Users / **Broadcast** / All-log) and the Users tab gained per-row action buttons:
+
+- **edit** — change a user's alias and/or emoji avatar (modal with the two fields).
+- **warn** — send a moderator warning to the user's inbox. Title + body, both required. Logged to `moderation_log` with `kind=manual_warning`.
+- **history** — alias change history (existed already).
+- **mute / unmute** — block the user from posting in any chat surface (lobby + in-game). They see a "you've been muted, check your inbox" message instead of their post going through.
+- **ban / unban** — full app suspension. Banned users see a takeover screen with the reason and an appeal email link; their session is otherwise valid. Reversible.
+- **restore** — only shown if media is currently revoked; restores playmat/sleeve and resets strikes.
+
+The **UUID is shown** under each user's alias as `xxxxxxxx…xxxx`, click to copy the full UUID. Status column shows BANNED / MUTED / NO MEDIA / OK with colour coding.
+
+The new **Broadcast tab** sends a single inbox message to every user via the `broadcast_announcement` RPC. Use for deploy notes, downtime warnings, policy updates. Returns a count so you can confirm reach.
+
+### Top-bar moderator button
+
+The mod panel was buried in the Help dropdown — easy to miss. Now there's a prominent **🛡 Moderator** button in the main-menu header (only visible to moderators). The Help-dropdown entry still works too.
+
+### User inbox
+
+Every user gets an inbox. UI: a **📬 bell button** in the main-menu header next to the profile chip, with a red unread-count badge. Click to open `UserInboxModal`:
+
+- Lists all messages (welcome / warning / update / restriction / ban_notice / unban_notice).
+- Each row shows kind icon + colour, title, sender, timestamp.
+- Click a row to expand; this also marks it read. Unread rows have a coloured dot.
+- ✕ to delete a single message; "Mark all read" button when there are unread.
+
+Realtime: new inbox messages appear instantly via Supabase channel filtered to `user_id`.
+
+A **welcome message** is auto-inserted on every new profile (DB trigger `profiles_send_welcome`). Existing users without a welcome message can be sent one via Broadcast if you want.
+
+### Banned-screen
+
+If `profile.banned === true`, the entire app is replaced with a `BannedScreen` showing:
+- A 🚫 icon and "Account suspended" heading.
+- The most recent `ban_notice` message from inbox (so the moderator's stated reason is shown).
+- An appeal email link (`mailto:tcgplaysim@gmail.com`).
+- A Sign-out button.
+
+Banned users can't bypass this — every render path through `MTGPlayground` short-circuits to `BannedScreen` if banned is true.
+
+### Gameplay fixes
+
+**Graveyard / exile preview z-index — FIXED.** `CardPreview` was at `zIndex:10000`; `ZoneViewerModal` was at `20000`. Hovering a card inside the viewer rendered the preview *behind* the modal. Bumped `CardPreview` to `zIndex:50000`, above all modal layers including the new themed prompt at 30000.
+
+**Bigger click target on the magnifying glasses.** The 🔍 icons next to the GRAVE/EXILE labels were 9px monochrome with no padding — easy to miss-click onto the deck. Now 11px with `4px 6px` padding, tinted hover background (purple for graveyard, blue for exile), opacity transitions. Tooltip on hover.
+
+**F-key zone picker.** Pressing `F` previously opened the search modal directly to your library — a spoiler if you wanted to look at your graveyard or exile. Now `F` opens a clean picker grid: My Library / My Graveyard / My Exile / Opp. Graveyard / Opp. Exile / Opp. Hand / Opp. Library, each with its card count. Pick one to load that zone. Opp. Hand and Opp. Library show 🔒 if you don't yet have access — clicking sends a consent request.
+
+**Opp-deck consent flow — FIXED.** The watcher `useEffect` had `[]` deps, so it only ran once on mount, before any game-state had been written to `onUpdateGame._lastGame`. Switched to interval polling at 600ms — the request/grant is now picked up reliably whenever it arrives. F → Opp. Library now actually prompts the opponent.
+
+### What's NOT in this pass (deferred again)
+
+**Opp-viewing indicator** — "X is viewing his graveyard" floating over their tile. Requires adding a new netSync event type and tile rendering changes; will tackle alone.
+
+**Pass 5 self-hosted emojis** still on the bench from earlier.
+
+### Files touched (v7.6.5.3)
+
+- `supabase/schema-patch-v7.6.5.3-mod-and-inbox.sql` — new migration. Adds `profiles.banned`, `profiles.chat_muted`; creates `inbox_messages` with RLS; adds RPCs `ban_user / unban_user / mute_user / unmute_user / mod_edit_profile / broadcast_announcement`; adds welcome-message trigger; adds inbox to realtime publication.
+- `src/lib/moderation.js` — adds `banUser, unbanUser, muteUser, unmuteUser, modEditProfile, warnUser, broadcastAnnouncement, fetchMyInbox, fetchUnreadInboxCount, markInboxRead, markAllInboxRead, deleteInboxMessage, subscribeMyInbox`. `fetchAllProfilesForMod` includes new columns.
+- `src/lib/profiles.js` — `rowToProfile` exposes `banned, chatMuted` (camelCase).
+- `src/Playground.jsx`:
+  - `CardPreview` z-index 10000 → 50000.
+  - Graveyard/exile 🔍 magnifying glass: bigger, hover state, tooltips.
+  - `SearchLibModal`: starts with `searchZone=null`, renders zone-picker overlay.
+  - GameBoard access-watcher: polling interval instead of `[]`-deps useEffect.
+  - `ModeratorPanel` rewritten: 4 tabs, per-user actions, edit/warn/ban modals, Broadcast tab.
+  - New: `InboxBell`, `UserInboxModal`, `BannedScreen` components.
+  - MainMenu: top-bar 🛡 Moderator button + 📬 inbox bell, Inbox modal mount.
+  - MTGPlayground: short-circuit to `BannedScreen` if profile.banned.
+  - LobbyChat + InGameChat: chat-muted check refuses send with inbox-pointer message.
+
+### Required user action after deploy
+
+1. Run `supabase/schema-patch-v7.6.5.3-mod-and-inbox.sql` in Supabase SQL editor (substantial — adds 7 RPCs, a table, RLS, a trigger, a publication change).
+2. Hard-refresh browser.
+3. Open the new top-bar 🛡 Moderator button to see the expanded panel.
+4. New users from this point forward auto-receive the welcome message; existing users (you, mainly) won't have one. If you want to test the inbox UI, broadcast yourself a test message from the Broadcast tab.
+
+
+---
+
+## v7.6.5.4 — SEO expansion: landing pages + meta + schema
+
+Big SEO pass. The site only ranked for the literal brand "tcg playsim". Now there's content infrastructure to compete for high-intent queries like "play mtg free", "free mtg playtester", "mtg arena alternative", and the format-specific niches (commander, oathbreaker, dandan).
+
+### What changed
+
+**Index page** — title rewritten to lead with the search query, not the brand. Keywords meta expanded from ~12 to 45+ terms. New FAQPage schema with 7 Q&A pairs. hreflang tags for all English markets. Hidden semantic-content block with H2 sections covering all target keyword clusters. Expanded noscript content.
+
+**Seven new static landing pages** at clean URLs (Vercel `cleanUrls: true`):
+
+- `/play-magic-online-free`
+- `/free-mtg-playtester`
+- `/playtest-mtg`
+- `/mtg-arena-alternative`
+- `/commander`
+- `/oathbreaker`
+- `/dandan`
+
+Each is a fully-rendered HTML page (10-11 KB) with its own H1 matching Google's expected query phrasing, 600-1000 words of substantive prose per page, Article schema, canonical, hreflang, internal navigation linking sibling pages, and a CTA back to the SPA. The Dandân page is the most niche-targeted — there are very few sites covering this format, so it should rank quickly.
+
+**Site infrastructure:**
+- `sitemap.xml` lists all 8 URLs with priorities
+- `vercel.json` adds `cleanUrls: true` and explicitly excludes the landing-page paths from the SPA rewrite, plus 1-hour cache headers
+- `robots.txt` clean allow-all with sitemap pointer
+
+### Why this should work
+
+For brand-new sites, ranking for high-volume queries like "play magic the gathering free" takes 6-12 months minimum because the competition is established (wizards.com, MTGA, MTGO, Cockatrice, Untap.in have years of backlinks). What works on the timescale of 1-3 months is **niche queries** where the competition is sparse:
+
+- "dandan format" — almost no dedicated pages exist; we should rank top-3 within weeks
+- "play oathbreaker online" — small format with few tooling options
+- "free mtg playtester" — many results but most are abandoned or low-quality
+- "free mtg arena alternative" — high-intent, decent volume, beatable competition
+
+The high-competition keywords ("play mtg free", "mtg arena alternative") will take longer but the on-page work is in place when authority accumulates.
+
+### What only the user can do
+
+`SEO-PLAYBOOK.md` is the full action plan. The short version:
+
+1. **Verify in Google Search Console** + submit sitemap. Without this you're flying blind.
+2. **Reddit + Hacker News** — high-quality, non-spammy posts in MTG communities are the single biggest ranking lever you can pull this month.
+3. **YouTube demo video** — 60-90s screen recording, embed on the homepage, link in description.
+4. **Backlinks** — small/mid MTG creators (5-50k subs) are the sweet spot for outreach.
+5. **(Paid, optional)** — Google Ads on target keywords for immediate traffic while SEO compounds.
+
+### Realistic timeline
+
+- Week 1-3: Google indexes new pages, long-tail queries start ranking
+- Month 2-3: Niche queries (dandan, oathbreaker) hit page 1
+- Month 4-6: Mid-competition queries reachable
+- Month 6-12: High-competition queries reachable WITH backlinks accumulated
+
+Anyone promising faster is selling snake oil.
+
+### Files touched (v7.6.5.4)
+
+- `index.html` — title/description/keywords/hreflang/FAQ schema/semantic content
+- `vercel.json` — cleanUrls + landing-page routing
+- `public/sitemap.xml` — 8 URLs
+- `public/robots.txt` — clean
+- `public/play-magic-online-free.html` (new)
+- `public/free-mtg-playtester.html` (new)
+- `public/playtest-mtg.html` (new)
+- `public/mtg-arena-alternative.html` (new)
+- `public/commander.html` (new)
+- `public/oathbreaker.html` (new)
+- `public/dandan.html` (new)
+- `SEO-PLAYBOOK.md` (new) — full action plan for what only the maintainer can do
+

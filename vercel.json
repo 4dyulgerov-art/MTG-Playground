@@ -1,8 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true,
+  "trailingSlash": false,
   "rewrites": [
     {
-      "source": "/((?!sitemap\\.xml|robots\\.txt|favicon\\.|apple-touch-icon|manifest\\.json|og-image\\.|assets/|.*\\..*).*)",
+      "source": "/((?!sitemap\\.xml|robots\\.txt|favicon\\.|apple-touch-icon|manifest\\.json|og-image\\.|assets/|play-magic-online-free|free-mtg-playtester|playtest-mtg|mtg-arena-alternative|commander|oathbreaker|dandan|.*\\..*).*)",
       "destination": "/"
     }
   ],
@@ -27,6 +29,12 @@
       "headers": [
         { "key": "Content-Type", "value": "text/plain; charset=utf-8" },
         { "key": "Cache-Control", "value": "public, max-age=3600" }
+      ]
+    },
+    {
+      "source": "/(play-magic-online-free|free-mtg-playtester|playtest-mtg|mtg-arena-alternative|commander|oathbreaker|dandan)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=3600, must-revalidate" }
       ]
     }
   ]

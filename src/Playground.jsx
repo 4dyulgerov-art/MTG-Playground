@@ -3315,7 +3315,7 @@ function PlanechasePanel({active, onPlaneswalk, onChaos, onClose}){
 }
 
 /* ─── InGameChat ──────────────────────────────────────────────────── */
-function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLog}){
+function InGameChat({playerName,avatar,profile,isOpen,onToggle,log=[],showLog,onToggleLog}){
   const [messages,setMessages]=useState([
     {id:uid(),sender:"System",text:"Game started. Good luck!",ts:Date.now(),system:true},
   ]);
@@ -3391,6 +3391,13 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
   const send=async ()=>{
     if(!input.trim())return;
     const text=input.trim();
+    // v7.6.5.3: chat-muted check — same rule as lobby chat.
+    if(profile?.chatMuted){
+      setMessages(m=>[...m,{id:uid(),sender:"system",avatar:"🛡",
+        text:"You have been muted by a moderator and cannot post in chat. Check your inbox for details.",ts:Date.now()}]);
+      setInput("");
+      return;
+    }
     // v7.6.5: automod inline. Block on hard violations; flag soft hits.
     // Failures here are non-fatal — if the network's down or the lib
     // throws, we degrade to the pre-7.6.5 behaviour (always allow).
@@ -3734,7 +3741,7 @@ function CardPreview({card}){
   // v7.6.5: bigger preview (was 190 → 260) to make hover-to-read viable.
   const PREV_W = 260;
   return(
-    <div className="fade-in" style={{position:"fixed",left:14,bottom:HAND_H+14,zIndex:10000,pointerEvents:"none"}}>
+    <div className="fade-in" style={{position:"fixed",left:14,bottom:HAND_H+14,zIndex:50000,pointerEvents:"none"}}>
       {img?(
         <div style={{position:"relative"}}>
           <img src={img} alt={name} style={{
@@ -5595,7 +5602,10 @@ function ZoneViewerModal({title,icon,color,cards,zone,onCtx,onHover,onDragStart,
 function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,onClose,oppHandAccess,oppLibAccess,onRequestOppAccess}){
   const [libSearch,setLibSearch]=useState("");
   const [libTypeTab,setLibTypeTab]=useState("All");
-  const [searchZone,setSearchZone]=useState("library");
+  // v7.6.5.3: start with NO zone selected — user must explicitly pick.
+  // Avoids accidentally revealing the top of your own library before you
+  // wanted to see it (a spoiler when scrying).
+  const [searchZone,setSearchZone]=useState(null);
   const zoneCards={
     library:player.library,
     graveyard:player.graveyard,
@@ -5618,7 +5628,62 @@ function SearchLibModal({player,opponent,onCtx,onHover,onShuffle,onUpdateGame,on
   });
   const typesPresent=["All",...typeOrder.slice(1).filter(t=>srcCards.some(c=>getType(c)===t))];
   const col=zoneColor[searchZone]||T.accent;
-  const isOpp=searchZone.startsWith("opp_");
+  const isOpp=searchZone&&searchZone.startsWith("opp_");
+
+  // v7.6.5.3: zone picker shown when nothing is selected yet — avoids
+  // accidentally revealing your deck top before you intended.
+  if(!searchZone){
+    const pickerZones = [
+      { id:"library",       label:"📚 My Library",        sub:`${player.library.length} cards`,    color:T.accent,   needs:false },
+      { id:"graveyard",     label:"☠ My Graveyard",       sub:`${player.graveyard.length} cards`,  color:"#a78bfa",  needs:false },
+      { id:"exile",         label:"✦ My Exile",           sub:`${player.exile.length} cards`,      color:"#60a5fa",  needs:false },
+      { id:"opp_graveyard", label:"☠ Opp. Graveyard",     sub:`${(opponent?.graveyard||[]).length} cards`, color:"#f87171", needs:false },
+      { id:"opp_exile",     label:"✦ Opp. Exile",         sub:`${(opponent?.exile||[]).length} cards`,     color:"#f97316", needs:false },
+      { id:"opp_hand",      label:"✋ Opp. Hand",         sub:oppHandAccess?`${(opponent?.hand||[]).length} cards`:"Requires consent", color:"#fb923c", needs:!oppHandAccess },
+      { id:"opp_library",   label:"📚 Opp. Library",      sub:oppLibAccess?`${(opponent?.library||[]).length} cards`:"Requires consent", color:"#fb923c", needs:!oppLibAccess },
+    ];
+    return (
+      <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.93)",
+        display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000,backdropFilter:"blur(6px)"}}>
+        <div className="slide-in" style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+          border:`1px solid ${T.accent}40`,borderRadius:12,padding:24,width:520,maxWidth:"94vw",
+          boxShadow:"0 24px 80px rgba(0,0,0,.95)"}}>
+          <div style={{color:T.accent,fontFamily:"Cinzel Decorative,serif",fontSize:16,marginBottom:6,letterSpacing:".05em",textAlign:"center"}}>
+            🔍 Which zone to search?
+          </div>
+          <div style={{color:T.muted,fontSize:11,fontFamily:"Cinzel,serif",letterSpacing:".06em",textAlign:"center",marginBottom:18,fontStyle:"italic"}}>
+            Pick what you want to look at — your deck won't be revealed until you click
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            {pickerZones.map(z=>(
+              <button key={z.id} onClick={()=>{
+                if(z.needs){ onRequestOppAccess?.(z.id); return; }
+                setSearchZone(z.id); setLibTypeTab("All");
+              }}
+                style={{
+                  textAlign:"left",padding:"12px 14px",
+                  background:`${z.color}10`, color:z.color,
+                  border:`1px solid ${z.color}40`, borderRadius:8,
+                  cursor:"pointer", transition:"background .12s, transform .12s",
+                  fontFamily:"Cinzel,serif", opacity:z.needs?.7:1,
+                }}
+                onMouseOver={e=>{e.currentTarget.style.background=`${z.color}22`;e.currentTarget.style.transform="translateY(-1px)";}}
+                onMouseOut={e=>{e.currentTarget.style.background=`${z.color}10`;e.currentTarget.style.transform="none";}}>
+                <div style={{fontSize:13,fontWeight:600,marginBottom:3}}>{z.needs?"🔒 ":""}{z.label}</div>
+                <div style={{fontSize:10,color:T.muted,letterSpacing:".05em"}}>{z.sub}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{display:"flex",justifyContent:"center",marginTop:18}}>
+            <button onClick={onClose}
+              style={{...btn(`${T.panel}99`,T.muted,{padding:"7px 18px",border:`1px solid ${T.border}40`,fontFamily:"Cinzel,serif",fontSize:11})}}
+              onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return(
     <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.93)",
       display:"flex",flexDirection:"column",zIndex:10000,backdropFilter:"blur(6px)"}}>
@@ -7063,7 +7128,12 @@ function BoardSide({
                 }}>
                 <div style={{color:"#a78bfa",fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em",textAlign:"center",marginBottom:2,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
                   <span>GRAVE {player.graveyard.length}</span>
-                  {!readOnly&&<span style={{cursor:"pointer",opacity:.6,fontSize:9}} onClick={e=>{e.stopPropagation();setShowGraveViewer(true);}}>🔍</span>}
+                  {!readOnly&&<span title="Search graveyard"
+                    style={{cursor:"pointer",opacity:.7,fontSize:11,padding:"4px 6px",
+                      borderRadius:3,transition:"background .12s, opacity .12s"}}
+                    onClick={e=>{e.stopPropagation();setShowGraveViewer(true);}}
+                    onMouseOver={e=>{e.currentTarget.style.opacity=1;e.currentTarget.style.background="rgba(167,139,250,.18)";}}
+                    onMouseOut={e=>{e.currentTarget.style.opacity=.7;e.currentTarget.style.background="transparent";}}>🔍</span>}
                 </div>
                 <div style={{display:"flex",justifyContent:"center"}}>
                 {player.graveyard.length>0?(
@@ -7109,7 +7179,12 @@ function BoardSide({
                 }}>
                 <div style={{color:"#60a5fa",fontFamily:"Cinzel,serif",fontSize:8,letterSpacing:".1em",textAlign:"center",marginBottom:2,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
                   <span>EXILE {player.exile.length}</span>
-                  {!readOnly&&<span style={{cursor:"pointer",opacity:.6,fontSize:9}} onClick={e=>{e.stopPropagation();setShowExileViewer(true);}}>🔍</span>}
+                  {!readOnly&&<span title="Search exile"
+                    style={{cursor:"pointer",opacity:.7,fontSize:11,padding:"4px 6px",
+                      borderRadius:3,transition:"background .12s, opacity .12s"}}
+                    onClick={e=>{e.stopPropagation();setShowExileViewer(true);}}
+                    onMouseOver={e=>{e.currentTarget.style.opacity=1;e.currentTarget.style.background="rgba(96,165,250,.18)";}}
+                    onMouseOut={e=>{e.currentTarget.style.opacity=.7;e.currentTarget.style.background="transparent";}}>🔍</span>}
                 </div>
                 <div style={{display:"flex",justifyContent:"center"}}>
                 {player.exile.length>0?(
@@ -7274,6 +7349,10 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
   // v7.6.4: Dandân format-info modal
   const [showDandanInfo,setShowDandanInfo]=useState(false);
   const [showMillPrompt,setShowMillPrompt]=useState(false);
+  // v7.6.5.2: themed numeric prompt — replaces window.prompt() (which renders
+  // a browser-native white dialog that breaks the theme). Set with
+  // { title, label, defaultValue, min, max, color, onConfirm } to open.
+  const [numberPrompt,setNumberPrompt] = useState(null);
   const [showGamematPicker,setShowGamematPicker]=useState(false);
   const [gamematUrl,setGamematUrl]=useState(player.profile?.gamematCustom||"");
   const [gamematName,setGamematName]=useState("");
@@ -7684,18 +7763,32 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     setTimeout(()=>setSparks(s=>s.filter(p=>p.id!==id)),800);
   };
 
-  // Watch for opp access requests/grants targeting this player
+  // v7.6.5.3-fix: was useEffect with [] deps — that only fires on mount,
+  // before any game-state updates land in onUpdateGame._lastGame, so the
+  // "F → search opp library" consent flow never prompted the opponent.
+  // Polling every 600ms picks up the request/grant once it's been written
+  // by the broadcaster. Cleared on unmount.
   useEffect(()=>{
-    const req=onUpdateGame._lastGame?.oppAccessRequest;
-    if(req&&req.toPlayer===undefined&&req.fromPlayer!==playerIdx){
-      setOppAccessRequest(req);
-    }
-    const grant=onUpdateGame._lastGame?.oppAccessGranted;
-    if(grant&&grant.toPlayer===playerIdx){
-      if(grant.zone==="opp_hand")setOppHandAccess(true);
-      if(grant.zone==="opp_library")setOppLibAccess(true);
-    }
-  },[]);
+    const tick = ()=>{
+      const lg = onUpdateGame?._lastGame;
+      if(!lg) return;
+      const req = lg.oppAccessRequest;
+      // Show the toast if the request came from a different seat AND we
+      // haven't already shown one for this request timestamp.
+      if(req && req.fromPlayer !== playerIdx
+         && (!oppAccessRequest || oppAccessRequest.ts !== req.ts)){
+        setOppAccessRequest(req);
+      }
+      const grant = lg.oppAccessGranted;
+      if(grant && grant.toPlayer === playerIdx){
+        if(grant.zone === "opp_hand"   ) setOppHandAccess(true);
+        if(grant.zone === "opp_library") setOppLibAccess(true);
+      }
+    };
+    tick();
+    const i = setInterval(tick, 600);
+    return ()=>clearInterval(i);
+  },[playerIdx, oppAccessRequest]);
 
   // helpers for flying card animations
   const refCenter=r=>{const rect=r?.current?.getBoundingClientRect();return rect?{x:rect.left+rect.width/2,y:rect.top+rect.height/2}:{x:window.innerWidth/2,y:window.innerHeight/2};};
@@ -8654,8 +8747,12 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       items.push({icon:"🎴",label:"Draw a card (C)",action:()=>draw(1)});
       items.push({icon:"🎴",label:"Draw 7 cards (Shift+C)",action:()=>draw(7)});
       items.push({icon:"🎴",label:"Draw X…",action:()=>{
-        const n=parseInt(window.prompt("Draw how many cards?","1")||"",10);
-        if(!isNaN(n)&&n>0) draw(n);
+        setNumberPrompt({
+          title:"🎴 Draw cards", label:"How many cards?",
+          defaultValue:1, min:1, max:player.library.length||999,
+          color:T.accent,
+          onConfirm:(n)=>{ if(n>0) draw(n); },
+        });
       }});
       items.push("---");
       items.push({icon:"▶",label:"→ Battlefield",action:mv("battlefield")});
@@ -8677,12 +8774,20 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       }});
       items.push({icon:"🔮",label:"Scry X… (G)",action:()=>setShowScry(true)});
       items.push({icon:"👁",label:"Look at top X…",action:()=>{
-        const n=parseInt(window.prompt("Look at how many cards?","3")||"",10);
-        if(!isNaN(n)&&n>0) lookAtTop(n);
+        setNumberPrompt({
+          title:"👁 Look at top of library", label:"How many cards?",
+          defaultValue:3, min:1, max:player.library.length||999,
+          color:T.accent,
+          onConfirm:(n)=>{ if(n>0) lookAtTop(n); },
+        });
       }});
       items.push({icon:"🔍",label:"Surveil X…",action:()=>{
-        const n=parseInt(window.prompt("Surveil how many cards?","2")||"",10);
-        if(!isNaN(n)&&n>0) surveil(n);
+        setNumberPrompt({
+          title:"🔍 Surveil", label:"How many cards?",
+          defaultValue:2, min:1, max:player.library.length||999,
+          color:"#a78bfa",
+          onConfirm:(n)=>{ if(n>0) surveil(n); },
+        });
       }});
       items.push("---");
       items.push({icon:"💀",label:"Mill X… → Graveyard (Shift+M)",action:()=>{setMillTarget("graveyard");setShowMillPrompt(true);},color:"#a78bfa"});
@@ -8764,6 +8869,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         if(showToken)        { setShowToken(false);          return; }
         if(showCustom)       { setShowCustom(false);         return; }
         if(showCounterPicker){ setShowCounterPicker(null);   return; }
+        if(numberPrompt)     { setNumberPrompt(null);          return; }
         if(showMillPrompt)   { setShowMillPrompt(false);     return; }
         if(showGamematPicker){ setShowGamematPicker(false);  return; }
         if(showGraveViewer)  { setShowGraveViewer(false);    return; }
@@ -9651,6 +9757,83 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         </div>
       )}
 
+      {/* v7.6.5.2: themed numeric prompt — replaces window.prompt() so
+          dialogs match the dark fantasy theme instead of the white
+          browser-native combobox. */}
+      {numberPrompt && (()=>{
+        const np = numberPrompt;
+        const color = np.color || T.accent;
+        const min = np.min ?? 1;
+        const max = np.max ?? 999;
+        const NumPromptInner = () => {
+          const [val,setVal] = useState(np.defaultValue ?? min);
+          const inputRef = useRef(null);
+          useEffect(()=>{
+            // Auto-focus + select-all so user can immediately type a different number.
+            const t = setTimeout(()=>{ inputRef.current?.focus(); inputRef.current?.select(); }, 50);
+            return ()=>clearTimeout(t);
+          },[]);
+          const submit = () => {
+            const n = parseInt(String(val), 10);
+            if(!isNaN(n) && n >= min && n <= max){
+              np.onConfirm(n);
+              setNumberPrompt(null);
+            }
+          };
+          const cancel = () => setNumberPrompt(null);
+          return (
+            <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.85)",
+              display:"flex",alignItems:"center",justifyContent:"center",zIndex:30000,backdropFilter:"blur(4px)"}}
+              onClick={cancel}>
+              <div className="slide-in" onClick={e=>e.stopPropagation()}
+                style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+                  border:`1px solid ${color}50`,borderRadius:10,padding:22,
+                  boxShadow:"0 24px 80px rgba(0,0,0,.95)",minWidth:280,textAlign:"center"}}>
+                <div style={{color,fontFamily:"Cinzel Decorative,serif",fontSize:14,marginBottom:14}}>{np.title}</div>
+                <div style={{fontSize:10,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",marginBottom:10}}>
+                  {np.label||"How many?"}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,justifyContent:"center"}}>
+                  <button onClick={()=>setVal(v=>Math.max(min, parseInt(String(v),10)-1 || min))}
+                    style={{...btn(`${T.panel}99`,T.text,{border:`1px solid ${T.border}`,padding:"4px 12px",fontSize:14})}}
+                    onMouseOver={hov} onMouseOut={uhov}>−</button>
+                  <input ref={inputRef} type="number" value={val}
+                    onChange={e=>setVal(e.target.value)}
+                    onKeyDown={e=>{ if(e.key==="Enter") submit(); if(e.key==="Escape") cancel(); }}
+                    min={min} max={max}
+                    style={{
+                      // v7.6.5.2: themed input — kills the browser default white combobox
+                      width:80, padding:"6px 10px",
+                      fontSize:24, fontFamily:"Cinzel Decorative,serif", textAlign:"center",
+                      color, background:`${T.bg}cc`,
+                      border:`1px solid ${color}40`, borderRadius:6,
+                      outline:"none",
+                      // hide the spin-buttons; we have our own +/-
+                      MozAppearance:"textfield", appearance:"textfield",
+                    }}/>
+                  <button onClick={()=>setVal(v=>Math.min(max, parseInt(String(v),10)+1 || min))}
+                    style={{...btn(`${T.panel}99`,color,{border:`1px solid ${color}40`,padding:"4px 12px",fontSize:14})}}
+                    onMouseOver={hov} onMouseOut={uhov}>+</button>
+                </div>
+                <div style={{fontSize:8,color:T.muted,fontFamily:"Cinzel,serif",marginBottom:14}}>
+                  Range: {min} – {max}
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={cancel}
+                    style={{...btn(`${T.panel}99`,T.text,{flex:1,border:`1px solid ${T.border}`})}}
+                    onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+                  <button onClick={submit}
+                    style={{...btn(`linear-gradient(135deg,${color},${color}88)`,T.bg,
+                      {flex:2,fontFamily:"Cinzel,serif",fontWeight:700})}}
+                    onMouseOver={hov} onMouseOut={uhov}>✦ Confirm</button>
+                </div>
+              </div>
+            </div>
+          );
+        };
+        return <NumPromptInner/>;
+      })()}
+
       {/* Mill X prompt */}
       {showMillPrompt&&(()=>{
         const isExile=millTarget==="exile";
@@ -9874,6 +10057,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       <InGameChat
         playerName={player.profile?.alias||"Player"}
         avatar={player.profile?.avatar||"🧙"}
+        profile={player.profile}
         isOpen={showChat}
         log={player.log}
         showLog={showLog}
@@ -11348,6 +11532,9 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
   const [deleteConfirm,setDeleteConfirm]=useState(null);
   // v7.6.5-fix: Help dropdown state — "manual"|"rules"|"bug"|"feature"|null.
   const [helpView,setHelpView]=useState(null);
+  // v7.6.5.3: top-bar inbox + moderator panel state.
+  const [showInbox,setShowInbox]=useState(false);
+  const [showModPanel,setShowModPanel]=useState(false);
   // v7.6.5.1: lobby chat collapsed state lifted up so the gallery can
   // reserve right-side space when chat is open. Persisted to localStorage
   // so the user's preference survives reloads.
@@ -11512,6 +11699,18 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
              border:"1px solid rgba(249,104,84,.30)",textDecoration:"none",
              display:"inline-flex",alignItems:"center",gap:6}),fontSize:11}}
            onMouseOver={hov} onMouseOut={uhov}>♥ Patreon</a>
+        {/* v7.6.5.3: prominent moderator button in the top bar (not buried
+            in the Help dropdown). Only visible to moderators. */}
+        {profile?.isModerator && (
+          <button onClick={()=>setShowModPanel(true)} title="Moderator panel"
+            style={{...btn("rgba(248,113,113,.10)","#f87171",
+              {fontFamily:"Cinzel,serif",padding:"8px 14px",border:"1px solid rgba(248,113,113,.30)"}),fontSize:11}}
+            onMouseOver={hov} onMouseOut={uhov}>🛡 Moderator</button>
+        )}
+        {/* v7.6.5.3: inbox bell — only when signed in. */}
+        {profile?.userId && (
+          <InboxBell profile={profile} onOpen={()=>setShowInbox(true)}/>
+        )}
         <button onClick={onRooms}
           style={{...btn("rgba(167,139,250,.08)","#a78bfa",{fontFamily:"Cinzel, serif",padding:"8px 16px",border:"1px solid rgba(167,139,250,.2)"}),fontSize:11}}
           onMouseOver={hov} onMouseOut={uhov}>⇄ Multiplayer</button>
@@ -11530,11 +11729,13 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
       </div>
 
       {/* Gallery */}
-      <div style={{flex:1,overflowY:"auto",padding:"24px",
-        // v7.6.5.1: reserve right-side space for the lobby chat sidebar
-        // so deck tiles aren't covered. transitions smoothly when chat
-        // is collapsed/expanded.
+      <div style={{flex:1,overflowY:"auto",
+        // v7.6.5.1: longhand padding (avoids the shorthand+longhand
+        // ordering subtlety in React inline styles) + box-sizing so the
+        // padding actually reduces the content width rather than adding to it.
+        paddingTop:24, paddingBottom:24, paddingLeft:24,
         paddingRight: 24 + chatReservedPx,
+        boxSizing:"border-box",
         transition:"padding-right .25s ease",
         position:"relative",zIndex:1}}>
         {/* v7.6.4: minimal search + format filter — slim search, format
@@ -11707,6 +11908,10 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
       {helpView==="feature" && <FeatureRequestModal   onClose={()=>setHelpView(null)} profile={profile}/>}
       {helpView==="report"  && <ReportUserModal       onClose={()=>setHelpView(null)} profile={profile}/>}
       {helpView==="mod"     && <ModeratorPanel        onClose={()=>setHelpView(null)}/>}
+      {/* v7.6.5.3: top-bar inbox + moderator panel mounts (independent of
+          the Help dropdown route — clicking the bell or 🛡 button opens these). */}
+      {showInbox    && <UserInboxModal  onClose={()=>setShowInbox(false)}/>}
+      {showModPanel && <ModeratorPanel  onClose={()=>setShowModPanel(false)}/>}
       {/* v7.6.5-fix: lobby chat sidebar — global chat for the main menu
           v7.6.5.1: collapsed state lifted up so gallery can reserve space */}
       <LobbyChat profile={profile} collapsed={chatCollapsed} onCollapsedChange={setChatCollapsed}/>
@@ -12407,6 +12612,12 @@ function LobbyChat({ profile, collapsed, onCollapsedChange }){
   const handleSend = async ()=>{
     const text = input.trim();
     if(!text || busy) return;
+    // v7.6.5.3: chat-muted check — moderators can mute a user, blocking
+    // them from posting in any chat surface without banning the account.
+    if(profile?.chatMuted){
+      setWarning("You have been muted by a moderator and cannot post in chat. Check your inbox for details.");
+      return;
+    }
     setWarning("");
     setBusy(true);
     try{
@@ -12449,7 +12660,7 @@ function LobbyChat({ profile, collapsed, onCollapsedChange }){
       // realtime subscription is configured. The realtime echo (if it
       // arrives) is deduped by id in the INSERT handler above.
       const { data: posted, error } = await Mod.postLobbyMessage({
-        alias: profile?.alias, avatar: profile?.avatar, text,
+        alias: profile?.alias, avatar: profile?.avatar, avatarImg: profile?.avatarImg, text,
       });
       if(error){
         setWarning("Couldn't send — " + (error.message === "not_authenticated" ? "please sign in to use lobby chat." : error.message));
@@ -12563,21 +12774,56 @@ function LobbyChat({ profile, collapsed, onCollapsedChange }){
           </div>
         ) : messages.map(m=>{
           const mine = isMine(m);
-          const canEdit = mine || isMod;
+          const canDelete = mine || isMod;
           const ts = _fmtTime(m.created_at);
           const ets = m.edited_at ? _fmtTime(m.edited_at) : null;
           const editing = editingId === m.id;
+          // v7.6.5.2: avatar = image URL if present, otherwise emoji
+          const avImg = m.avatar_img;
           return (
-            <div key={m.id} style={{marginBottom:8,padding:"6px 8px",
-              background:mine?`rgba(${T.accentRgb},.09)`:`rgba(${T.accentRgb},.04)`,
-              border:mine?`1px solid rgba(${T.accentRgb},.18)`:"1px solid transparent",
-              borderRadius:6,position:"relative"}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:2}}>
-                <span style={{fontSize:13}}>{m.avatar||"🧙"}</span>
-                <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:10,letterSpacing:".05em"}}>{m.alias||"Anonymous"}</span>
-                <span title={ts.full} style={{color:T.muted,fontSize:8,marginLeft:"auto",cursor:"help"}}>
-                  {ts.short}
+            <div key={m.id} style={{marginBottom:10,padding:"8px 10px",
+              background:mine?`rgba(${T.accentRgb},.10)`:`rgba(${T.accentRgb},.04)`,
+              border:mine?`1px solid rgba(${T.accentRgb},.22)`:"1px solid transparent",
+              borderRadius:7}}>
+              <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4}}>
+                {avImg ? (
+                  <img src={avImg} alt="" style={{
+                    width:22,height:22,borderRadius:"50%",objectFit:"cover",
+                    border:`1px solid ${T.accent}40`,flexShrink:0,
+                    boxShadow:`0 0 4px ${T.accent}30`,
+                  }} onError={e=>e.target.style.display="none"}/>
+                ) : (
+                  <span style={{fontSize:16,flexShrink:0,filter:"drop-shadow(0 0 4px rgba(200,168,112,.25))"}}>{m.avatar||"🧙"}</span>
+                )}
+                <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:11,letterSpacing:".05em",
+                  flex:"1 1 auto",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:600}}>
+                  {m.alias||"Anonymous"}
                 </span>
+                {/* v7.6.5.2: edit/delete buttons — bigger, bolder, accent-coloured.
+                    Sit on their own row at the right, can't visually overlap
+                    the timestamp because the timestamp is on the line below. */}
+                {!editing && mine && (
+                  <button onClick={()=>startEdit(m)} title="Edit your message"
+                    style={{background:`rgba(${T.accentRgb},.15)`,border:`1px solid rgba(${T.accentRgb},.4)`,
+                      color:T.accent,cursor:"pointer",fontSize:13,padding:"2px 7px",lineHeight:1,
+                      borderRadius:4,flexShrink:0,fontWeight:700}}
+                    onMouseOver={e=>{e.currentTarget.style.background=`rgba(${T.accentRgb},.30)`;}}
+                    onMouseOut={e=>{e.currentTarget.style.background=`rgba(${T.accentRgb},.15)`;}}>✏</button>
+                )}
+                {!editing && canDelete && (
+                  <button onClick={()=>handleDelete(m)}
+                    title={mine?"Delete your message":"Delete (moderator action)"}
+                    style={{background:mine?`rgba(${T.accentRgb},.10)`:"rgba(248,113,113,.15)",
+                      border:mine?`1px solid rgba(${T.accentRgb},.30)`:"1px solid rgba(248,113,113,.4)",
+                      color:mine?T.muted:"#fca5a5",cursor:"pointer",fontSize:13,padding:"2px 7px",
+                      lineHeight:1,borderRadius:4,flexShrink:0,fontWeight:700}}
+                    onMouseOver={e=>{
+                      e.currentTarget.style.background = mine ? `rgba(${T.accentRgb},.25)` : "rgba(248,113,113,.30)";
+                    }}
+                    onMouseOut={e=>{
+                      e.currentTarget.style.background = mine ? `rgba(${T.accentRgb},.10)` : "rgba(248,113,113,.15)";
+                    }}>✕</button>
+                )}
               </div>
               {editing ? (
                 <>
@@ -12596,24 +12842,23 @@ function LobbyChat({ profile, collapsed, onCollapsedChange }){
                 </>
               ) : (
                 <>
-                  <div style={{color:"#d4c5a0",fontFamily:"Crimson Text,serif",fontSize:12,wordBreak:"break-word"}}>{m.text}</div>
-                  {ets && (
-                    <div title={`Edited ${ets.full}`} style={{color:T.muted,fontSize:8,fontStyle:"italic",marginTop:2,cursor:"help"}}>
-                      (edited {ets.short})
-                    </div>
-                  )}
-                  {canEdit && (
-                    <div style={{position:"absolute",top:4,right:4,display:"flex",gap:2,opacity:.4,transition:"opacity .15s"}}
-                      onMouseOver={e=>e.currentTarget.style.opacity=1}
-                      onMouseOut={e=>e.currentTarget.style.opacity=.4}>
-                      {mine && (
-                        <button onClick={()=>startEdit(m)} title="Edit"
-                          style={{background:"transparent",border:"none",color:T.muted,cursor:"pointer",fontSize:11,padding:"2px 4px"}}>✏</button>
-                      )}
-                      <button onClick={()=>handleDelete(m)} title={mine?"Delete":"Delete (moderator)"}
-                        style={{background:"transparent",border:"none",color:mine?T.muted:"#f87171",cursor:"pointer",fontSize:11,padding:"2px 4px"}}>✕</button>
-                    </div>
-                  )}
+                  <div style={{color:"#d4c5a0",fontFamily:"Crimson Text,serif",fontSize:12,wordBreak:"break-word",marginBottom:3}}>{m.text}</div>
+                  {/* v7.6.5.2: explicit "Posted X · Edited Y" — both timestamps
+                      always visible if edited; just "Posted X" if unedited.
+                      Hover for full date+time+timezone in user's locale. */}
+                  <div style={{fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".05em",lineHeight:1.4}}>
+                    <span title={`Posted ${ts.full}`} style={{cursor:"help"}}>
+                      Posted {ts.short}
+                    </span>
+                    {ets && (
+                      <>
+                        <span style={{margin:"0 5px",opacity:.5}}>·</span>
+                        <span title={`Edited ${ets.full}`} style={{cursor:"help",fontStyle:"italic"}}>
+                          Edited {ets.short}
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </>
               )}
             </div>
@@ -12845,22 +13090,26 @@ Submitted at: ${new Date().toISOString()}`;
   );
 }
 
-/* ─── v7.6.5 ModeratorPanel ─────────────────────────────────────────────────
-   Visible only to users with profiles.is_moderator = true. Three tabs:
-     • Queue:  unreviewed moderation_log entries
-     • Users:  every profile, with strike count, media-revoked flag, alias
-               history accessible per row
-     • All:    full moderation_log for context
-   ─────────────────────────────────────────────────────────────────────────── */
+/* ─── v7.6.5 ModeratorPanel (expanded in v7.6.5.3) ─────────────────────────
+   Queue / Users / Broadcast / All-log tabs. Per-user actions: edit profile,
+   issue warning, mute / unmute, ban / unban, restore media, copy UUID.
+   Broadcast tab sends an inbox message to every user.
+   ─────────────────────────────────────────────────────────────────────── */
 function ModeratorPanel({onClose}){
   const [tab,setTab] = useState("queue");
   const [queue,setQueue] = useState([]);
   const [allLog,setAllLog] = useState([]);
   const [users,setUsers] = useState([]);
   const [busy,setBusy] = useState(true);
-  const [historyFor,setHistoryFor] = useState(null);  // user_id whose alias history is open
+  const [historyFor,setHistoryFor] = useState(null);
   const [history,setHistory] = useState([]);
   const [reviewNote,setReviewNote] = useState({});
+  const [actionUser,setActionUser] = useState(null);   // {user, kind: 'edit'|'warn'|'ban'}
+  const [actionForm,setActionForm] = useState({});
+  const [userSearch,setUserSearch] = useState("");
+  const [bcTitle,setBcTitle] = useState("");
+  const [bcBody,setBcBody] = useState("");
+  const [bcResult,setBcResult] = useState("");
 
   const refresh = useCallback(async ()=>{
     setBusy(true);
@@ -12869,35 +13118,45 @@ function ModeratorPanel({onClose}){
       Mod.fetchModerationLog({ limit:500 }),
       Mod.fetchAllProfilesForMod({ limit:1000 }),
     ]);
-    setQueue(q.data);
-    setAllLog(all.data);
-    setUsers(u.data);
+    setQueue(q.data); setAllLog(all.data); setUsers(u.data);
     setBusy(false);
   },[]);
-
   useEffect(()=>{ refresh(); },[refresh]);
 
-  const markReviewed = async (id)=>{
-    await Mod.markModerationReviewed(id, reviewNote[id] || null);
+  const markReviewed = async (id)=>{ await Mod.markModerationReviewed(id, reviewNote[id] || null); refresh(); };
+  const showHistory = async (userId)=>{ setHistoryFor(userId); const { data } = await Mod.fetchUsernameHistory(userId); setHistory(data); };
+  const restore = async (u)=>{ if(!confirm(`Restore media privileges and reset strikes for ${u.alias}?`)) return; await Mod.restoreMedia(u.user_id); refresh(); };
+  const toggleMute = async (u)=>{
+    if(u.chat_muted){ await Mod.unmuteUser(u.user_id); }
+    else{ if(!confirm(`Mute ${u.alias}? They won't be able to post in any chat.`)) return; await Mod.muteUser(u.user_id); }
     refresh();
   };
-
-  const showHistory = async (userId)=>{
-    setHistoryFor(userId);
-    const { data } = await Mod.fetchUsernameHistory(userId);
-    setHistory(data);
+  const toggleBan = async (u)=>{
+    if(u.banned){ if(!confirm(`Unban ${u.alias}?`)) return; await Mod.unbanUser(u.user_id); refresh(); }
+    else{ setActionUser(u); setActionForm({ kind:"ban", reason:"" }); }
+  };
+  const submitBan  = async ()=>{ await Mod.banUser(actionUser.user_id, actionForm.reason || null); setActionUser(null); setActionForm({}); refresh(); };
+  const submitWarn = async ()=>{ await Mod.warnUser(actionUser.user_id, actionUser.alias, actionForm.title, actionForm.body); setActionUser(null); setActionForm({}); refresh(); };
+  const submitEdit = async ()=>{ await Mod.modEditProfile(actionUser.user_id, { alias: actionForm.alias || undefined, avatar: actionForm.avatar || undefined }); setActionUser(null); setActionForm({}); refresh(); };
+  const copyUuid   = async (uuid)=>{ try{ await navigator.clipboard.writeText(uuid); }catch{} };
+  const broadcast  = async ()=>{
+    if(!bcTitle.trim() || !bcBody.trim()){ setBcResult("Title and body are required."); return; }
+    if(!confirm(`Send "${bcTitle.trim()}" to every user's inbox?`)) return;
+    const { data, error } = await Mod.broadcastAnnouncement(bcTitle.trim(), bcBody.trim());
+    if(error){ setBcResult("Failed: " + error.message); return; }
+    setBcResult(`✓ Sent to ${data || 0} user${data===1?"":"s"}.`);
+    setBcTitle(""); setBcBody("");
   };
 
-  const restore = async (userId)=>{
-    if(!confirm("Restore media privileges and reset strike count for this user?")) return;
-    await Mod.restoreMedia(userId);
-    refresh();
-  };
+  const filteredUsers = users.filter(u=>{
+    if(!userSearch.trim()) return true;
+    const q = userSearch.trim().toLowerCase();
+    return (u.alias||"").toLowerCase().includes(q) || (u.user_id||"").toLowerCase().includes(q);
+  });
 
   const Tab = ({id,label,count}) => (
     <button onClick={()=>setTab(id)}
-      style={{...btn(tab===id?`rgba(${T.accentRgb},.15)`:"transparent",
-        tab===id?T.accent:T.muted,
+      style={{...btn(tab===id?`rgba(${T.accentRgb},.15)`:"transparent", tab===id?T.accent:T.muted,
         {fontFamily:"Cinzel,serif",fontSize:11,padding:"6px 14px",
          border:`1px solid ${tab===id?`rgba(${T.accentRgb},.3)`:`${T.border}30`}`})}}
       onMouseOver={hov} onMouseOut={uhov}>
@@ -12906,11 +13165,10 @@ function ModeratorPanel({onClose}){
   );
 
   const LogRow = ({row,actionable}) => (
-    <div style={{padding:"10px 12px",margin:"6px 0",
-      background:`rgba(${T.accentRgb},.04)`,
+    <div style={{padding:"10px 12px",margin:"6px 0", background:`rgba(${T.accentRgb},.04)`,
       border:`1px solid rgba(${T.accentRgb},.15)`,borderRadius:6}}>
       <div style={{display:"flex",alignItems:"center",gap:10,fontSize:10,color:T.muted,fontFamily:"Cinzel,serif",marginBottom:5}}>
-        <span style={{color:row.kind==="automod_block"?"#f87171":row.kind==="report_user"?"#fbbf24":row.kind==="media_revoke"?"#f87171":"#a78bfa",fontWeight:700,letterSpacing:".05em"}}>
+        <span style={{color:row.kind==="automod_block"?"#f87171":row.kind==="report_user"?"#fbbf24":row.kind==="media_revoke"||row.kind==="manual_warning"?"#a78bfa":"#a78bfa",fontWeight:700,letterSpacing:".05em"}}>
           {row.kind.toUpperCase()}
         </span>
         <span>{row.surface||"—"}</span>
@@ -12921,27 +13179,17 @@ function ModeratorPanel({onClose}){
           <b>Offender:</b> {row.offender_alias} {row.offender_id && <span style={{fontSize:9,color:T.muted}}>({row.offender_id.slice(0,8)})</span>}
         </div>
       )}
-      {row.reporter_alias && (
-        <div style={{fontSize:11,color:"#d4c5a0",marginBottom:3}}>
-          <b>Reporter:</b> {row.reporter_alias}
-        </div>
-      )}
+      {row.reporter_alias && (<div style={{fontSize:11,color:"#d4c5a0",marginBottom:3}}><b>Reporter:</b> {row.reporter_alias}</div>)}
       {row.payload && Object.keys(row.payload||{}).length > 0 && (
-        <pre style={{fontSize:10,color:"#a8a8a8",margin:"4px 0",padding:6,background:"rgba(0,0,0,.3)",
-          borderRadius:4,whiteSpace:"pre-wrap",wordBreak:"break-word",fontFamily:"ui-monospace,monospace"}}>
+        <pre style={{fontSize:10,color:"#a8a8a8",margin:"4px 0",padding:6,background:"rgba(0,0,0,.3)",borderRadius:4,whiteSpace:"pre-wrap",wordBreak:"break-word",fontFamily:"ui-monospace,monospace"}}>
           {JSON.stringify(row.payload,null,2)}
         </pre>
       )}
-      {row.reviewed && (
-        <div style={{fontSize:10,color:"#34d399",fontStyle:"italic",marginTop:4}}>
-          ✓ Reviewed{row.reviewer_note ? ` — ${row.reviewer_note}`:""}
-        </div>
-      )}
+      {row.reviewed && (<div style={{fontSize:10,color:"#34d399",fontStyle:"italic",marginTop:4}}>✓ Reviewed{row.reviewer_note ? ` — ${row.reviewer_note}`:""}</div>)}
       {actionable && !row.reviewed && (
         <div style={{display:"flex",gap:8,marginTop:8}}>
           <input value={reviewNote[row.id]||""} onChange={e=>setReviewNote(p=>({...p,[row.id]:e.target.value}))}
-            placeholder="Optional note"
-            style={{...iS,marginTop:0,fontSize:10,padding:"4px 8px",flex:1}}/>
+            placeholder="Optional note" style={{...iS,marginTop:0,fontSize:10,padding:"4px 8px",flex:1}}/>
           <button onClick={()=>markReviewed(row.id)}
             style={{...btn(`rgba(${T.accentRgb},.15)`,T.accent,{fontSize:10,padding:"4px 10px",border:`1px solid rgba(${T.accentRgb},.3)`})}}
             onMouseOver={hov} onMouseOut={uhov}>✓ Mark reviewed</button>
@@ -12950,52 +13198,84 @@ function ModeratorPanel({onClose}){
     </div>
   );
 
+  const ActionBtn = ({onClick, color, children, title}) => (
+    <button onClick={onClick} title={title}
+      style={{background:`${color}15`,border:`1px solid ${color}40`, color, cursor:"pointer", fontSize:9,
+        padding:"3px 6px", borderRadius:3, fontFamily:"Cinzel,serif", whiteSpace:"nowrap"}}
+      onMouseOver={e=>e.currentTarget.style.background=`${color}30`}
+      onMouseOut={e=>e.currentTarget.style.background=`${color}15`}>{children}</button>
+  );
+
   return(
-    <HelpModalShell title="🛡 Moderator Panel" subtitle={busy ? "Loading…" : `${queue.length} unreviewed · ${users.length} users · ${allLog.length} log entries`} onClose={onClose} width={1000}>
+    <HelpModalShell title="🛡 Moderator Panel"
+      subtitle={busy ? "Loading…" : `${queue.length} unreviewed · ${users.length} users · ${allLog.length} log entries`}
+      onClose={onClose} width={1100}>
       <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
-        <Tab id="queue" label="Queue"  count={queue.length}/>
-        <Tab id="users" label="Users"  count={users.length}/>
-        <Tab id="all"   label="All log" count={allLog.length}/>
+        <Tab id="queue"     label="Queue"      count={queue.length}/>
+        <Tab id="users"     label="Users"      count={users.length}/>
+        <Tab id="broadcast" label="Broadcast"/>
+        <Tab id="all"       label="All log"    count={allLog.length}/>
       </div>
 
       {tab === "queue" && (
         <div>
-          {queue.length === 0 ? (
-            <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontStyle:"italic"}}>
-              ✓ Queue is empty.
-            </div>
-          ) : queue.map(row => <LogRow key={row.id} row={row} actionable/>)}
+          {queue.length === 0
+            ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontStyle:"italic"}}>✓ Queue is empty.</div>
+            : queue.map(row => <LogRow key={row.id} row={row} actionable/>)}
         </div>
       )}
 
       {tab === "users" && (
         <div>
-          <div style={{display:"grid",gridTemplateColumns:"24px 1.5fr 1fr 60px 80px 1fr",gap:8,
+          <div style={{marginBottom:10}}>
+            <input value={userSearch} onChange={e=>setUserSearch(e.target.value)}
+              placeholder="Search alias or UUID…"
+              style={{...iS,marginTop:0,fontSize:11,padding:"6px 10px",width:"100%",boxSizing:"border-box"}}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"24px 1.2fr 0.9fr 50px 90px 2fr",gap:6,
             fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".08em",
             textTransform:"uppercase",padding:"6px 8px",borderBottom:`1px solid rgba(${T.accentRgb},.15)`}}>
-            <span></span><span>Alias</span><span>Playmat</span><span>Strikes</span><span>Status</span><span>Actions</span>
+            <span></span><span>Alias / UUID</span><span>Playmat</span><span>Strk</span><span>Status</span><span>Actions</span>
           </div>
-          {users.map(u => {
+          {filteredUsers.map(u => {
             const playmat = u.gamemat_custom || "—";
             return (
-              <div key={u.user_id} style={{display:"grid",gridTemplateColumns:"24px 1.5fr 1fr 60px 80px 1fr",
-                gap:8,padding:"8px",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.04)",fontSize:11}}>
+              <div key={u.user_id} style={{display:"grid",gridTemplateColumns:"24px 1.2fr 0.9fr 50px 90px 2fr",
+                gap:6,padding:"7px 8px",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.04)",fontSize:11}}>
                 <span style={{fontSize:16}}>{u.avatar||"🧙"}</span>
-                <span style={{color:T.text,fontFamily:"Cinzel,serif"}}>{u.alias}{u.is_moderator && <span style={{marginLeft:6,fontSize:8,color:"#a78bfa"}}>MOD</span>}</span>
-                <span style={{color:T.muted,fontSize:10,wordBreak:"break-all"}} title={playmat}>
-                  {playmat === "—" ? "—" : (playmat.length > 28 ? playmat.slice(0,28)+"…" : playmat)}
+                <div style={{minWidth:0}}>
+                  <div style={{color:T.text,fontFamily:"Cinzel,serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {u.alias}{u.is_moderator && <span style={{marginLeft:6,fontSize:8,color:"#a78bfa"}}>MOD</span>}
+                  </div>
+                  <div onClick={()=>copyUuid(u.user_id)} title={`UUID: ${u.user_id} (click to copy)`}
+                    style={{color:T.muted,fontSize:9,fontFamily:"ui-monospace,monospace",cursor:"copy",
+                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {u.user_id.slice(0,8)}…{u.user_id.slice(-4)}
+                  </div>
+                </div>
+                <span style={{color:T.muted,fontSize:9,wordBreak:"break-all"}} title={playmat}>
+                  {playmat === "—" ? "—" : (playmat.length > 22 ? playmat.slice(0,22)+"…" : playmat)}
                 </span>
                 <span style={{color:u.strikes>=STRIKE_THRESHOLD?"#f87171":u.strikes>0?"#fbbf24":T.muted,
-                  textAlign:"center"}}>{u.strikes||0}</span>
-                <span>{u.media_revoked ? <span style={{color:"#f87171",fontSize:9}}>REVOKED</span> : <span style={{color:"#34d399",fontSize:9}}>OK</span>}</span>
-                <span style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                  <button onClick={()=>showHistory(u.user_id)}
-                    style={{...btn("transparent",T.accent,{fontSize:9,padding:"3px 7px",border:`1px solid rgba(${T.accentRgb},.25)`})}}
-                    onMouseOver={hov} onMouseOut={uhov}>history</button>
+                  textAlign:"center",fontWeight:700}}>{u.strikes||0}</span>
+                <span style={{display:"flex",flexDirection:"column",gap:2,fontSize:8,fontFamily:"Cinzel,serif"}}>
+                  {u.banned       && <span style={{color:"#f87171"}}>BANNED</span>}
+                  {u.chat_muted   && <span style={{color:"#fbbf24"}}>MUTED</span>}
+                  {u.media_revoked&& <span style={{color:"#fb923c"}}>NO MEDIA</span>}
+                  {!u.banned && !u.chat_muted && !u.media_revoked && <span style={{color:"#34d399"}}>OK</span>}
+                </span>
+                <span style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                  <ActionBtn onClick={()=>{setActionUser(u);setActionForm({kind:"edit",alias:u.alias,avatar:u.avatar});}} color={T.accent} title="Edit alias / avatar">edit</ActionBtn>
+                  <ActionBtn onClick={()=>{setActionUser(u);setActionForm({kind:"warn",title:"",body:""});}} color="#fbbf24" title="Send warning to inbox">warn</ActionBtn>
+                  <ActionBtn onClick={()=>showHistory(u.user_id)} color="#a78bfa" title="View alias history">history</ActionBtn>
+                  <ActionBtn onClick={()=>toggleMute(u)} color={u.chat_muted?"#34d399":"#fb923c"} title={u.chat_muted?"Unmute":"Mute (no chat)"}>
+                    {u.chat_muted?"unmute":"mute"}
+                  </ActionBtn>
+                  <ActionBtn onClick={()=>toggleBan(u)} color={u.banned?"#34d399":"#f87171"} title={u.banned?"Unban":"Ban from app"}>
+                    {u.banned?"unban":"ban"}
+                  </ActionBtn>
                   {u.media_revoked && (
-                    <button onClick={()=>restore(u.user_id)}
-                      style={{...btn("transparent","#34d399",{fontSize:9,padding:"3px 7px",border:"1px solid rgba(52,211,153,.3)"})}}
-                      onMouseOver={hov} onMouseOut={uhov}>restore</button>
+                    <ActionBtn onClick={()=>restore(u)} color="#34d399" title="Restore media + reset strikes">restore</ActionBtn>
                   )}
                 </span>
               </div>
@@ -13004,32 +13284,122 @@ function ModeratorPanel({onClose}){
         </div>
       )}
 
+      {tab === "broadcast" && (
+        <div style={{maxWidth:680}}>
+          <div style={{color:T.muted,fontSize:11,fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:14,fontStyle:"italic"}}>
+            Sends a single inbox message to <b>every user in the database</b>. Use for deploy notes, downtime warnings, policy updates. Be sparing — frequent broadcasts train people to ignore them.
+          </div>
+          <label style={{fontSize:10,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",display:"block",marginBottom:5}}>Title</label>
+          <input value={bcTitle} onChange={e=>setBcTitle(e.target.value)}
+            placeholder="e.g. v7.6.5 deployed — what's new"
+            style={{...iS,marginTop:0,fontSize:12,padding:"7px 10px",width:"100%",boxSizing:"border-box",marginBottom:12}}/>
+          <label style={{fontSize:10,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",display:"block",marginBottom:5}}>Body</label>
+          <textarea value={bcBody} onChange={e=>setBcBody(e.target.value)}
+            placeholder={"Lobby chat is live. Edit/delete your messages with the buttons next to your name. Bug reports → Help menu."}
+            style={{...iS,marginTop:0,fontSize:12,padding:"7px 10px",minHeight:140,resize:"vertical",
+              width:"100%",boxSizing:"border-box",fontFamily:"Crimson Text,serif",lineHeight:1.5}}/>
+          <div style={{display:"flex",gap:10,marginTop:14,alignItems:"center"}}>
+            <button onClick={broadcast} disabled={!bcTitle.trim()||!bcBody.trim()}
+              style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,
+                {padding:"9px 20px",fontFamily:"Cinzel,serif",fontWeight:700,fontSize:12,opacity:(!bcTitle.trim()||!bcBody.trim())?.4:1})}}
+              onMouseOver={hov} onMouseOut={uhov}>📣 Broadcast to all users</button>
+            {bcResult && (
+              <span style={{fontSize:11,color:bcResult.startsWith("✓")?"#34d399":"#f87171",fontStyle:"italic"}}>{bcResult}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {tab === "all" && (
         <div>
-          {allLog.length === 0 ? (
-            <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontStyle:"italic"}}>
-              No log entries yet.
+          {allLog.length === 0
+            ? <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontStyle:"italic"}}>No log entries yet.</div>
+            : allLog.map(row => <LogRow key={row.id} row={row} actionable={!row.reviewed}/>)}
+        </div>
+      )}
+
+      {actionUser && actionForm.kind === "edit" && (
+        <div onClick={()=>setActionUser(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:10006,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+            border:`1px solid rgba(${T.accentRgb},.3)`,borderRadius:10,padding:22,width:440}}>
+            <div style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:13,marginBottom:14}}>✏ Edit profile — {actionUser.alias}</div>
+            <label style={{fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",display:"block",marginBottom:4}}>Alias</label>
+            <input value={actionForm.alias||""} onChange={e=>setActionForm(p=>({...p,alias:e.target.value}))}
+              style={{...iS,marginTop:0,fontSize:12,padding:"6px 10px",width:"100%",boxSizing:"border-box",marginBottom:12}}/>
+            <label style={{fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",display:"block",marginBottom:4}}>Avatar (emoji)</label>
+            <input value={actionForm.avatar||""} onChange={e=>setActionForm(p=>({...p,avatar:e.target.value}))}
+              style={{...iS,marginTop:0,fontSize:12,padding:"6px 10px",width:"100%",boxSizing:"border-box",marginBottom:14}}/>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>setActionUser(null)} style={{...btn("transparent",T.muted,{padding:"7px 14px",fontSize:11,border:`1px solid ${T.border}40`})}}
+                onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+              <button onClick={submitEdit} style={{...btn(`rgba(${T.accentRgb},.15)`,T.accent,{padding:"7px 16px",fontSize:11,border:`1px solid rgba(${T.accentRgb},.3)`,fontFamily:"Cinzel,serif",fontWeight:700})}}
+                onMouseOver={hov} onMouseOut={uhov}>Save</button>
             </div>
-          ) : allLog.map(row => <LogRow key={row.id} row={row} actionable={!row.reviewed}/>)}
+          </div>
+        </div>
+      )}
+
+      {actionUser && actionForm.kind === "warn" && (
+        <div onClick={()=>setActionUser(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:10006,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+            border:"1px solid rgba(251,191,36,.4)",borderRadius:10,padding:22,width:520}}>
+            <div style={{color:"#fbbf24",fontFamily:"Cinzel,serif",fontSize:13,marginBottom:14}}>⚠ Issue warning — {actionUser.alias}</div>
+            <label style={{fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",display:"block",marginBottom:4}}>Title</label>
+            <input value={actionForm.title||""} onChange={e=>setActionForm(p=>({...p,title:e.target.value}))}
+              placeholder="Moderator warning"
+              style={{...iS,marginTop:0,fontSize:12,padding:"6px 10px",width:"100%",boxSizing:"border-box",marginBottom:12}}/>
+            <label style={{fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",display:"block",marginBottom:4}}>Body</label>
+            <textarea value={actionForm.body||""} onChange={e=>setActionForm(p=>({...p,body:e.target.value}))}
+              placeholder="Explain what they did, what's expected going forward, and any consequence on next offence."
+              style={{...iS,marginTop:0,fontSize:12,padding:"7px 10px",minHeight:120,resize:"vertical",width:"100%",boxSizing:"border-box",fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:14}}/>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>setActionUser(null)} style={{...btn("transparent",T.muted,{padding:"7px 14px",fontSize:11,border:`1px solid ${T.border}40`})}}
+                onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+              <button onClick={submitWarn} disabled={!actionForm.body?.trim()}
+                style={{...btn("rgba(251,191,36,.15)","#fbbf24",{padding:"7px 16px",fontSize:11,border:"1px solid rgba(251,191,36,.4)",fontFamily:"Cinzel,serif",fontWeight:700,opacity:actionForm.body?.trim()?1:.4})}}
+                onMouseOver={hov} onMouseOut={uhov}>⚠ Send warning</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {actionUser && actionForm.kind === "ban" && (
+        <div onClick={()=>setActionUser(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:10006,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+            border:"1px solid rgba(248,113,113,.4)",borderRadius:10,padding:22,width:480}}>
+            <div style={{color:"#f87171",fontFamily:"Cinzel,serif",fontSize:13,marginBottom:6}}>🚫 Ban — {actionUser.alias}</div>
+            <div style={{color:T.muted,fontSize:10,fontStyle:"italic",marginBottom:14}}>
+              The user will be unable to use the app. They'll see a "banned" screen with the reason below. Reversible via "unban".
+            </div>
+            <label style={{fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",display:"block",marginBottom:4}}>Reason (shown to user)</label>
+            <textarea value={actionForm.reason||""} onChange={e=>setActionForm(p=>({...p,reason:e.target.value}))}
+              placeholder={"e.g. Repeated hate speech in lobby chat. Contact tcgplaysim@gmail.com to appeal."}
+              style={{...iS,marginTop:0,fontSize:12,padding:"7px 10px",minHeight:90,resize:"vertical",width:"100%",boxSizing:"border-box",fontFamily:"Crimson Text,serif",lineHeight:1.5,marginBottom:14}}/>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>setActionUser(null)} style={{...btn("transparent",T.muted,{padding:"7px 14px",fontSize:11,border:`1px solid ${T.border}40`})}}
+                onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+              <button onClick={submitBan}
+                style={{...btn("rgba(248,113,113,.15)","#f87171",{padding:"7px 16px",fontSize:11,border:"1px solid rgba(248,113,113,.4)",fontFamily:"Cinzel,serif",fontWeight:700})}}
+                onMouseOver={hov} onMouseOut={uhov}>🚫 Confirm ban</button>
+            </div>
+          </div>
         </div>
       )}
 
       {historyFor && (
         <div onClick={()=>setHistoryFor(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:10005,
           display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div onClick={e=>e.stopPropagation()} style={{
-            background:`linear-gradient(160deg,${T.panel},${T.bg})`,
-            border:`1px solid rgba(${T.accentRgb},.3)`,borderRadius:10,padding:20,
-            width:420,maxHeight:"70vh",overflowY:"auto"}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+            border:`1px solid rgba(${T.accentRgb},.3)`,borderRadius:10,padding:20,width:420,maxHeight:"70vh",overflowY:"auto"}}>
             <div style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:13,marginBottom:10}}>Username history</div>
-            {history.length === 0 ? (
-              <div style={{color:T.muted,fontStyle:"italic",fontSize:11}}>No prior aliases recorded.</div>
-            ) : history.map((h,i)=>(
-              <div key={i} style={{padding:"6px 0",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",fontSize:11}}>
-                <span style={{color:T.text}}>{h.alias}</span>
-                <span style={{color:T.muted,fontSize:9}}>{new Date(h.changed_at).toLocaleString()}</span>
-              </div>
-            ))}
+            {history.length === 0
+              ? <div style={{color:T.muted,fontStyle:"italic",fontSize:11}}>No prior aliases recorded.</div>
+              : history.map((h,i)=>(
+                  <div key={i} style={{padding:"6px 0",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",fontSize:11}}>
+                    <span style={{color:T.text}}>{h.alias}</span>
+                    <span style={{color:T.muted,fontSize:9}}>{new Date(h.changed_at).toLocaleString()}</span>
+                  </div>
+                ))}
             <button onClick={()=>setHistoryFor(null)}
               style={{...btn("transparent",T.muted,{marginTop:14,padding:"5px 12px",fontSize:11,border:`1px solid ${T.border}40`})}}
               onMouseOver={hov} onMouseOut={uhov}>Close</button>
@@ -13039,6 +13409,180 @@ function ModeratorPanel({onClose}){
     </HelpModalShell>
   );
 }
+
+/* ─── v7.6.5.3 InboxBell + InboxModal ──────────────────────────────────────
+   Bell icon next to the profile chip; opens the user's inbox of welcome /
+   warning / update / restriction messages.
+   ─────────────────────────────────────────────────────────────────────── */
+const _kindMeta = {
+  welcome:      { icon:"🎉", color:"#34d399", label:"Welcome"     },
+  warning:      { icon:"⚠",  color:"#fbbf24", label:"Warning"     },
+  update:       { icon:"📣", color:"#60a5fa", label:"Announcement"},
+  notice:       { icon:"ℹ",  color:"#60a5fa", label:"Notice"      },
+  restriction:  { icon:"🛡",  color:"#fb923c", label:"Restriction" },
+  ban_notice:   { icon:"🚫", color:"#f87171", label:"Ban"         },
+  unban_notice: { icon:"✓",  color:"#34d399", label:"Restored"    },
+};
+function _inboxKindMeta(k){ return _kindMeta[k] || {icon:"📬",color:"#a78bfa",label:k}; }
+
+function InboxBell({ profile, onOpen }){
+  const [unread,setUnread] = useState(0);
+  useEffect(()=>{
+    if(!profile?.userId) return;
+    let cancelled = false;
+    Mod.fetchUnreadInboxCount().then(({count})=>{ if(!cancelled) setUnread(count); });
+    const sub = Mod.subscribeMyInbox(()=>setUnread(n => n + 1));
+    return ()=>{ cancelled = true; try{ sub?.unsubscribe(); }catch{} };
+  },[profile?.userId]);
+  const handleOpen = ()=>{
+    onOpen?.();
+    setTimeout(async ()=>{ const { count } = await Mod.fetchUnreadInboxCount(); setUnread(count); }, 800);
+  };
+  if(!profile) return null;
+  return (
+    <button onClick={handleOpen} title={unread ? `${unread} unread message${unread===1?"":"s"}` : "Inbox"}
+      style={{position:"relative",
+        background:unread>0?"rgba(96,165,250,.12)":"transparent",
+        border:`1px solid ${unread>0?"rgba(96,165,250,.35)":`${T.border}30`}`,
+        color:unread>0?"#60a5fa":T.muted, cursor:"pointer",
+        padding:"7px 10px", borderRadius:8, fontSize:14,
+        transition:"background .15s, border-color .15s"}}
+      onMouseOver={e=>{e.currentTarget.style.background=unread>0?"rgba(96,165,250,.22)":`${T.panel}cc`;}}
+      onMouseOut={e=>{e.currentTarget.style.background=unread>0?"rgba(96,165,250,.12)":"transparent";}}>
+      📬
+      {unread > 0 && (
+        <span style={{position:"absolute",top:-4,right:-4,background:"#f87171",color:"#fff",fontSize:9,fontWeight:700,
+          minWidth:16,height:16,padding:"0 4px",borderRadius:8, display:"flex",alignItems:"center",justifyContent:"center",
+          fontFamily:"Cinzel,serif", boxShadow:"0 0 6px rgba(248,113,113,.6)"}}>
+          {unread > 99 ? "99+" : unread}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function UserInboxModal({ onClose }){
+  const [messages,setMessages] = useState([]);
+  const [busy,setBusy] = useState(true);
+  const [open,setOpen] = useState(null);
+
+  const refresh = useCallback(async ()=>{
+    setBusy(true);
+    const { data } = await Mod.fetchMyInbox({ limit: 100 });
+    setMessages(data);
+    setBusy(false);
+  },[]);
+  useEffect(()=>{ refresh(); },[refresh]);
+
+  const expand = async (m)=>{
+    setOpen(o => o === m.id ? null : m.id);
+    if(!m.read){
+      await Mod.markInboxRead(m.id);
+      setMessages(prev => prev.map(x => x.id === m.id ? {...x, read:true} : x));
+    }
+  };
+  const del = async (m)=>{
+    if(!confirm("Delete this message?")) return;
+    await Mod.deleteInboxMessage(m.id);
+    setMessages(prev => prev.filter(x => x.id !== m.id));
+  };
+  const allRead = async ()=>{
+    await Mod.markAllInboxRead();
+    setMessages(prev => prev.map(x => ({...x, read:true})));
+  };
+
+  return (
+    <HelpModalShell title="📬 Inbox"
+      subtitle={busy ? "Loading…" : `${messages.length} message${messages.length===1?"":"s"}, ${messages.filter(m=>!m.read).length} unread`}
+      onClose={onClose} width={680}>
+      {messages.some(m=>!m.read) && (
+        <div style={{marginBottom:10,textAlign:"right"}}>
+          <button onClick={allRead}
+            style={{...btn("transparent",T.muted,{padding:"4px 10px",fontSize:10,border:`1px solid ${T.border}40`})}}
+            onMouseOver={hov} onMouseOut={uhov}>Mark all read</button>
+        </div>
+      )}
+      {messages.length === 0 && !busy && (
+        <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontStyle:"italic"}}>No messages.</div>
+      )}
+      {messages.map(m => {
+        const meta = _inboxKindMeta(m.kind);
+        const expanded = open === m.id;
+        return (
+          <div key={m.id} style={{marginBottom:8,padding:"10px 12px",
+            background: m.read ? `rgba(${T.accentRgb},.04)` : `${meta.color}12`,
+            border: `1px solid ${m.read ? `rgba(${T.accentRgb},.15)` : `${meta.color}40`}`,
+            borderRadius:7, cursor:"pointer",transition:"background .12s",
+          }} onClick={()=>expand(m)}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:expanded?6:0}}>
+              <span style={{fontSize:16}}>{meta.icon}</span>
+              <span style={{fontSize:8,color:meta.color,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",fontWeight:700}}>{meta.label}</span>
+              {!m.read && <span style={{width:7,height:7,borderRadius:"50%",background:meta.color,boxShadow:`0 0 6px ${meta.color}`}}/>}
+              <span style={{flex:1,minWidth:0,color:T.text,fontFamily:"Cinzel,serif",fontSize:12,fontWeight:m.read?400:600,
+                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title}</span>
+              <span style={{color:T.muted,fontSize:9,fontFamily:"Cinzel,serif",flexShrink:0}}>
+                {new Date(m.created_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+              </span>
+              <button onClick={e=>{e.stopPropagation();del(m);}}
+                title="Delete"
+                style={{background:"transparent",border:"none",color:T.muted,cursor:"pointer",fontSize:12,padding:"2px 6px"}}>✕</button>
+            </div>
+            {expanded && (
+              <>
+                <div style={{color:"#d4c5a0",fontFamily:"Crimson Text,serif",fontSize:13,lineHeight:1.6,
+                  whiteSpace:"pre-wrap",marginTop:6,paddingTop:6,
+                  borderTop:`1px solid ${meta.color}20`}}>{m.body}</div>
+                {m.sender_alias && (
+                  <div style={{marginTop:8,fontSize:9,color:T.muted,fontStyle:"italic"}}>— {m.sender_alias}</div>
+                )}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </HelpModalShell>
+  );
+}
+
+/* Banned-screen — replaces the entire app for users with profiles.banned=true. */
+function BannedScreen({ profile, onSignOut }){
+  const [latestNotice,setLatestNotice] = useState(null);
+  useEffect(()=>{
+    Mod.fetchMyInbox({ limit: 5 }).then(({data})=>{
+      const ban = (data||[]).find(m => m.kind === "ban_notice");
+      if(ban) setLatestNotice(ban);
+    });
+  },[]);
+  return (
+    <div style={{height:"100vh",background:T.bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{maxWidth:560,padding:32,background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+        border:"1px solid rgba(248,113,113,.4)",borderRadius:12, boxShadow:"0 24px 80px rgba(0,0,0,.8)"}}>
+        <div style={{fontSize:36,marginBottom:14,textAlign:"center"}}>🚫</div>
+        <div style={{color:"#f87171",fontFamily:"Cinzel Decorative,serif",fontSize:20,letterSpacing:".05em",textAlign:"center",marginBottom:8}}>
+          Account suspended
+        </div>
+        <div style={{color:T.muted,fontSize:11,fontFamily:"Cinzel,serif",letterSpacing:".06em",textAlign:"center",marginBottom:18,fontStyle:"italic"}}>
+          {profile?.alias ? `Hello ${profile.alias} — your` : "Your"} account has been suspended for violations of the Code of Conduct.
+        </div>
+        {latestNotice && (
+          <div style={{padding:"14px 16px",background:`rgba(${T.accentRgb},.05)`, border:`1px solid rgba(${T.accentRgb},.15)`,borderRadius:6,marginBottom:18,
+            color:"#d4c5a0",fontFamily:"Crimson Text,serif",fontSize:13,lineHeight:1.55,whiteSpace:"pre-wrap"}}>
+            {latestNotice.body}
+          </div>
+        )}
+        <div style={{color:T.muted,fontSize:11,fontFamily:"Crimson Text,serif",lineHeight:1.55,marginBottom:18,textAlign:"center"}}>
+          To appeal, contact <a href="mailto:tcgplaysim@gmail.com" style={{color:T.accent}}>tcgplaysim@gmail.com</a>.
+        </div>
+        <div style={{display:"flex",justifyContent:"center"}}>
+          <button onClick={onSignOut}
+            style={{...btn(`${T.panel}cc`,T.text,{padding:"8px 20px",fontSize:12,fontFamily:"Cinzel,serif",border:`1px solid ${T.border}50`})}}
+            onMouseOver={hov} onMouseOut={uhov}>Sign out</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 /* ─── App ─────────────────────────────────────────────────────────── */
 export default function MTGPlayground({ authUser = null, initialProfile = null, onProfileSaved = null, onSignOut = null } = {}){
@@ -13772,6 +14316,10 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
       <div style={{fontSize:9,color:"#2a3a5a",fontFamily:"Cinzel, serif",letterSpacing:".2em",animation:"pulse 1.5s ease-in-out infinite"}}>ENTERING THE MULTIVERSE…</div>
     </div>
   );
+
+  // v7.6.5.3: banned users see a takeover screen instead of the app.
+  // Their session is otherwise valid, so the only out is sign-out or appeal.
+  if(profile?.banned) return <BannedScreen profile={profile} onSignOut={onSignOut}/>;
 
   if(view==="profile")return<ProfileSetup existing={profile} onSave={async(p)=>{await saveProfile(p); setView("menu");}}/>;
   if(view==="deckbuilder")return<DeckBuilder deck={editingDeck} onSave={saveDeck} onBack={()=>setView("menu")} customCards={customCards}/>;

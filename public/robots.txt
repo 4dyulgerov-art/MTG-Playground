@@ -1,12 +1,7 @@
-# TCG Playsim — robots.txt
-# Allow all well-behaved crawlers full access. Single-page app; no
-# admin paths or private routes are server-rendered, so nothing
-# meaningful needs to be disallowed.
 User-agent: *
 Allow: /
 
-# Sitemap
-Sitemap: https://playsim.live/sitemap.xml
+# Block API endpoints if any are added later
+# Disallow: /api/
 
-# Polite-crawl hint for aggressive crawlers
-Crawl-delay: 1
+Sitemap: https://playsim.live/sitemap.xml

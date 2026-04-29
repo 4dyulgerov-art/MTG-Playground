@@ -17,6 +17,9 @@ function rowToProfile(row) {
     isModerator: !!row.is_moderator,
     mediaRevoked: !!row.media_revoked,
     strikes: row.strikes || 0,
+    // v7.6.5.3: ban + mute
+    banned:    !!row.banned,
+    chatMuted: !!row.chat_muted,
   };
 }
 
