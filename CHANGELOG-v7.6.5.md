@@ -239,3 +239,271 @@ The right-click menu on the topdeck portrait listed both "Draw This Card" (witho
 
 No DB schema changes. No relay changes. No config changes. Other gamemodes untouched.
 
+---
+
+## Pass 2 — Oathbreaker mode + emoji audit
+
+### Oathbreaker added to deckbuilder
+
+`oathbreaker` was already in the `GAMEMODES` constant — which is why it appeared in the lobby's format-filter dropdown and the room-creation gamemode picker (both iterate `GAMEMODES.map(...)`). But the deckbuilder's format-button row was a hardcoded array `["standard","commander","modern","legacy","pioneer","pauper"]`, so you couldn't actually save a deck *as* Oathbreaker. **Fix:** added `"oathbreaker"` to that array (between `commander` and `modern`).
+
+The cmdr zone reuses the existing `commanders[]` data structure for Oathbreaker — same as Commander, the cards in that array are placed in the command zone at game start. To make the deckbuilder UI match the format the user picked:
+
+- **Tab label** flips: `⚔ Commander` → `🛡 Oathbreaker` when `format === "oathbreaker"`.
+- **Header inside the zone** flips: `⚔ COMMAND ZONE · Starts the game here` → `🛡 COMMAND ZONE · Oathbreaker + Signature Spell`.
+- **Per-card label** is type-line aware: planeswalkers show `🛡 OATHBREAKER` (amber), instants/sorceries show `✦ SIGNATURE SPELL` (purple), anything else falls back to `🛡 COMMAND ZONE`. Color choice mirrors the existing format accent (oathbreaker is `#fbbf24` in the lobby tile).
+- **Empty-state hint** flips: instead of "No commander set", oathbreaker decks see "No oathbreaker / signature spell set" with a hint about picking a planeswalker first and then an instant/sorcery in the same color identity.
+- **Search-result ⚔ button tooltip** flips to "Set/Add as Oathbreaker or Signature Spell".
+- **`setAsCmdr` no longer force-resets format to `"commander"`** when the user is already in oathbreaker. Previously, clicking ⚔ on a planeswalker silently reverted the format back to commander, which was confusing and lost the singleton constraint distinction.
+
+What's NOT in this pass (deferred — would need spec discussion before implementing):
+
+- **Singleton + 60-card validation.** `getStartingLife` already returns 20 for oathbreaker, but there's no deck-size or singleton checker for any format yet — the same gap exists for commander too. Deck-validation is a single feature spanning all formats and belongs in its own pass.
+- **Color-identity check between oathbreaker and signature spell.** Oathbreaker rules require both cards share color identity. Not enforced.
+- **"Cast signature spell" mechanic.** Signature spell can only be cast if the oathbreaker is on the battlefield, and it returns to the command zone after resolving. The current command-zone "Cast" button (with the +2 commander tax) doesn't apply. For Pass 2, the "→ Battlefield (no tax)" item works as a manual workaround for the oathbreaker; the signature-spell return-to-command mechanic would need its own context-menu item.
+
+### Emoji audit — Unicode 13.0+ glyphs replaced for cross-OS compatibility
+
+Audit goal: every emoji in the source must render as an actual glyph (not `▢`) on default-font systems shipped before 2020. Unicode 13.0+ glyphs (added Sept 2020 / iOS 14.2 / Android 11) fail on older Windows 7/8 and any Linux distro on a pre-2020 fontconfig.
+
+Found 4 problematic emojis. All replaced with Unicode ≤8.0 alternatives:
+
+| Where | Old (Unicode) | New (Unicode) | Why |
+|---|---|---|---|
+| `WEATHER_OPTIONS.fireflies` | 🪲 Beetle (13.0) | 💫 Dizzy (6.0) | Looks like swirling lights — fits "fireflies" semantic better than the literal beetle anyway. |
+| `THEMES` icon for `wood` | 🪵 Wood (13.0) | 🌳 Deciduous Tree (6.0) | Tree fits "Oak Tavern" theme name; renders everywhere since 2010. |
+| `AVATARS` list | 🪄 Magic Wand (13.0) | 🦄 Unicorn (8.0/2015) | Keeps the magical/fantasy aesthetic. iOS 9.1+ / Android 7.0+. |
+| Custom-card forge header + button (×2) | 🪄 (13.0) | 🎨 Artist Palette (6.0) | "Create your own art" reads cleaner than "wand" anyway. |
+| Clone badge / log / context menu (×5) | 🪞 Mirror (13.0) | 👥 Busts in Silhouette (6.0) | Semantically "two of this thing" — fits clones. Visually distinct from the existing `⧉` (Copy) so the two MTG mechanics still look different. |
+
+Total: 11 occurrences across 5 emojis swapped. No other Unicode 13.0+ glyphs found in the source. Pass 5 (self-hosted Twemoji/OpenMoji SVG sprite system) will eventually make this audit moot — every emoji rendered as an inline `<svg>`, OS-independent — but until then, this gets the visible-broken cases fixed.
+
+### Topdeck context menu — redundant "Draw This Card" removed
+
+(Already noted above; included here for completeness.) The right-click menu on the topdeck portrait listed "Draw This Card" without a hotkey label and "Draw a card (C)" with one — both pulled the same card. Removed the unlabelled duplicate.
+
+### Files touched (Pass 2)
+
+- `src/Playground.jsx` — `WEATHER_OPTIONS`, `THEMES` icon map, `AVATARS`, `CardImg` clone badge, copyCard log, dissolve-clone log, two clone context-menu items, two custom-card UI strings, deckbuilder format-button row, cmdr-zone tab label, cmdr-zone header, cmdr-zone per-card label, cmdr-zone empty-state hint, `SearchCardRow` props, `SearchCardRow` caller, `setAsCmdr`.
+
+No DB schema changes. No relay changes. No config changes.
+
+---
+
+## Pass 3 — Help system: Manual, Code of Conduct, Bug-report, Feature-request
+
+### What's new on the main menu
+
+A single new button — **`ℹ Help ▾`** — sits in the main-menu header between **⇄ Multiplayer** and **🎨 Theme**. Clicking it opens a dropdown with four entries:
+
+- **📖 Manual** — long-form user guide
+- **📜 Code of Conduct** — platform rules
+- **🐛 Report a bug** — multi-field bug-report form
+- **💡 Suggest a feature** — feature-request form
+
+Each entry opens a full modal. Click outside the dropdown or hit `Esc` to dismiss without picking; click any modal's ✕ to close it.
+
+### `ManualModal` — built from the actual code
+
+Walks through nine sections that mirror the codebase's reality, not boilerplate text:
+
+1. Getting started (profile, alias, default playmat).
+2. Building a deck (search, batch import, sleeves, custom cards).
+3. Formats — every format the deckbuilder actually supports, with the real starting-life values from `getStartingLife()`.
+4. Starting a game — solo, hotseat, multiplayer rooms.
+5. Playing — phases, dragging, tapping, counters, targeting.
+6. **Zones &amp; what hotkeys do in each** — the SEO target the user called out. Per-zone hotkey reference (Hand / Battlefield / Graveyard-Exile / Library / Command zone) lifted from the actual hotkey switch in `useEffect` at line 8702 and the `buildCtx` library branch at line 8604.
+7. Hotkey reference (global + hover-card) — same data the existing `HotkeyHelp` modal uses, presented in a denser two-column grid.
+8. Online play details (hand privacy, library access requests, rejoin behaviour, chat focus).
+9. Where things live in the UI.
+
+Layout uses a small set of helper components (`HM_H` for section headers, `HM_H2` for sub-headers, `HM_Kbd` for inline keyboard chips) so future additions stay consistent.
+
+### `RulesModal` — written fresh
+
+The user asked for a code-of-conduct rewrite that reads as written from scratch — not a bullet-reorder of someone else's rules. The result is **seven thematically grouped sections** (Treat people decently / Keep it shareable / Don't impersonate / Play fair / Don't spam / Illegal stuff is illegal / Discord and platform are one space) with all wording original. Where Untap.in's reference document is one flat bulleted list, this version groups by intent and uses prose connective tissue. The closing para and the "be fair, be civil, keep the bugs in the bug-report form" sign-off are original.
+
+### `BugReportModal`
+
+Fields: short title; game-mode/screen dropdown; steps to reproduce; expected vs actual (side-by-side textareas); console-output paste box (with a one-line hint about how to find the DevTools console); contact (auto-defaults to the player's alias).
+
+Submit composes a `mailto:tcgplaysim@gmail.com?subject=[Bug] …&body=…` URL with everything URI-component encoded, opens in the default mail client. No backend deploy required, works on every system that has a default mail client. Two submission paths:
+
+- **📧 Open in email** — `window.location.href = mailto:` — typical case.
+- **📋 Copy to clipboard** — fallback for users without a mail client; copies the full payload (including `To:`, `Subject:`, body) so they can paste into webmail.
+
+The body auto-includes an environment fingerprint built from `navigator.userAgent`, `navigator.language`, `Intl.DateTimeFormat().resolvedOptions().timeZone`, and viewport dimensions — no information beyond what the browser already exposes in its User-Agent header. This saves the back-and-forth of "what browser are you on?" emails.
+
+### `FeatureRequestModal`
+
+Same submission pattern as the bug report, simpler set of fields (Where / What / Why / Contact). Subject line is `[Feature] …` so the maintainer's inbox can filter cleanly.
+
+### Why mailto and not a backend
+
+A Supabase Edge Function calling Resend (or similar) would be cleaner UX, but it requires deploying a function, setting `RESEND_API_KEY`, and configuring CORS. Not worth blocking ship on. The mailto path works immediately and degrades gracefully: if the user hasn't got a default mail client, the **📋 Copy to clipboard** button still gets them there. Upgrading to a real backend in a later pass means swapping the body of `_buildMailto` / the submit handlers — nothing else has to move.
+
+### Files touched (Pass 3)
+
+- `src/Playground.jsx` — added `HelpModalShell`, `HM_H`, `HM_H2`, `HM_Kbd`, `ManualModal`, `RulesModal`, `_buildMailto`, `_envFingerprint`, `BugReportModal`, `FeatureRequestModal`, `HelpDropdown`. Wired `helpView` state and `<HelpDropdown/>` button into `MainMenu`. Mounted the four modals inside `MainMenu`.
+
+No DB schema changes. No relay changes. No config changes.
+
+---
+
+## Pass 4 — SEO
+
+### `index.html` rebuilt
+
+Title pattern matches what Untap and Scryfall do (short brand + tagline + core keyword), capped at 60 characters so Google doesn't truncate. Description leads with the action verbs users search for ("Play", "Test", "Build") and names every supported format. Targets the keywords competitors rank on (playtester, browser, online, free, MTG).
+
+Added:
+
+- `<meta name="description">` — 155 char product description.
+- `<meta name="keywords">` — historical SEO; ignored by Google but parsed by Bing/DuckDuckGo.
+- `<meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">` — opt-in to large preview cards.
+- `<link rel="canonical">` — `https://playsim.live/`.
+- Open Graph tags (og:title, og:description, og:url, og:image, og:image:width/height/alt, og:locale, og:site_name).
+- Twitter Card (summary_large_image variant).
+- JSON-LD structured data: `WebApplication` + `WebSite` + `Organization` graph. `WebApplication` includes `applicationCategory: "GameApplication"`, `featureList`, `offers.price = "0"`. This is what gives you rich-result eligibility in Google search.
+- Hidden `<h1>` outside the React mount — gives non-JS-rendering crawlers (older Googlebot fallback paths, Bing, Slack/Discord unfurlers) something substantive to index.
+- `<noscript>` skeleton with the same content as plain text — for crawlers that disable JS.
+
+### `public/robots.txt`
+
+`Allow: /` for everyone, points to the sitemap, sets a polite 1s `Crawl-delay`. No Disallow rules — this is a single-page app, no admin routes.
+
+### `public/sitemap.xml`
+
+Single URL (the SPA root), `weekly` change frequency, priority 1.0. Required for Google Search Console verification once you add the property.
+
+### What the user needs to do (NOT in code)
+
+1. **Drop a 1200×630 PNG at `public/og-image.png`.** This is the social-share preview image. Without it, Discord / iMessage / Twitter / Facebook won't show a thumbnail when someone pastes the URL. Use a screenshot of the multiverse with a "TCG Playsim — Free MTG Playtester" overlay. Keep file size under 1 MB.
+2. **Verify the site in Google Search Console** at `search.google.com/search-console`. Add `https://playsim.live` as a Property, verify via the existing favicon-meta tag method, submit the sitemap.
+3. **Ask 3-5 MTG community members to link to playsim.live.** Backlinks are 50% of SEO. A single post in r/EDH or r/magicTCG is worth more than every meta tag.
+4. **Don't add hidden text or keyword-stuffed pages** to try to game ranking. Google's spam policies will deindex you, and recovery takes months.
+
+### Files touched (Pass 4)
+
+- `index.html` — full rewrite.
+- `public/robots.txt` — new file.
+- `public/sitemap.xml` — new file.
+
+---
+
+## Pass 6 — Lobby chat, automod, moderator panel, report-user
+
+> **Skipped Pass 5 (self-hosted emoji system) per user request — it remains pending.**
+
+### TL;DR
+
+The lobby gets a chat sidebar. Both that sidebar and the existing in-game chat run every message through a wordlist filter with two tiers (BLOCK vs FLAG). Strikes accumulate; at 5 strikes a user's custom playmat and sleeve URLs are suppressed network-wide. A Report-User flow captures an optional screenshot. A Moderator Panel shows the queue, the user roster, and full log. Anyone with `is_moderator = true` on their profile sees the panel.
+
+### Two judgment calls I made against your literal ask, and why
+
+1. **`kill` / `hate` / `destroy` / `bomb` are FLAG, not BLOCK.** Hard-blocking these would make MTG chat unusable ("I cast Lightning Bolt to kill your creature" / "this card is a bomb"). They land in the moderator queue instead. See `MODERATION-GUIDANCE-v7.6.5.md` for the reasoning and how to upgrade to a real moderation API.
+2. **No auto-email on every block.** The browser can't send email without a backend; `mailto:` requires a click. Instead, every block writes to `moderation_log`; the mod panel's Queue tab is the inbox. To add real auto-email later, write a Supabase Edge Function that subscribes to `INSERT` on `moderation_log` and calls Resend.
+
+I also did **not** implement vision-API image classification on playmat / sleeve URLs (you asked about this as an idea). Reason in the guidance doc: requires CSAM-reporting legal obligations, server-side fetch handling, paid API. The strike counter + manual mod review is the v7.6.5 defensive line.
+
+### Database schema (`supabase/schema-patch-v7.6.5-moderation.sql`)
+
+New columns on `profiles`:
+- `is_moderator boolean default false`
+- `media_revoked boolean default false`
+- `strikes int default 0`
+
+New tables:
+- `lobby_messages` — global lobby chat. RLS: anyone authenticated reads, only the author writes. Soft-cap 500 chars per message.
+- `moderation_log` — every automod hit, every report, every revocation. RLS: only moderators can read. Insert is permissive (clients log their own hits, with `reporter_id = auth.uid()` enforced). Update is moderator-only.
+- `usernames_history` — append-only via trigger on `profiles.alias` change. Lets a moderator see prior aliases (a common ban-evasion pattern).
+
+New RPCs:
+- `revoke_media(target uuid)` — sets `media_revoked = true`. Callable on yourself (so the strike counter can self-revoke) or on anyone if you're a moderator.
+- `restore_media(target uuid)` — moderator-only; resets the flag and zeros strikes.
+
+Promoting yourself to first moderator is one SQL statement (commented at the bottom of the patch file).
+
+### `src/lib/automod.js` — content filter
+
+Two-tier:
+
+- **`BLOCK`** — message dropped, `automod_block` logged, strike incremented. Hard violations only: explicit suicide encouragement (`kys`, `kill yourself` and variants), explicit personalised threats (`I'm going to kill you`), CSAM allusions.
+- **`FLAG`** — message goes through, `automod_flag` logged. Words like `kill`, `destroy`, `hate`, `bomb`. Dogwhistles (`1488`, `glowies`, the "legitimate concerns" wink).
+
+Slurs are stored as **SHA-256 hash prefixes**, not plaintext, so the source doesn't ship a discoverable slur list. The starter list is empty — moderators populate it for their community's languages by hashing terms. Documented in the file.
+
+Whole-word matching uses Unicode-aware boundaries (`\p{L}`) so "kill" doesn't match "Killian" or "skill".
+
+`inspect(text)` returns `{ verdict, matched, normalised }`. Async because of the SHA-256 hashing. There's also a sync version (`inspectSync`) that skips hashes — for live preview where you can't await.
+
+### `src/lib/moderation.js` — Supabase wrappers
+
+Thin wrapper around the new tables. Functions:
+
+- `fetchLobbyMessages(limit)` / `postLobbyMessage(...)` / `deleteLobbyMessage(id)` / `subscribeLobbyMessages(onInsert)` — realtime via Supabase channel.
+- `logModeration(...)` — write to `moderation_log`.
+- `fetchModerationLog({ limit, unreviewedOnly })` / `markModerationReviewed(id, note)`.
+- `incrementStrike(userId)` / `revokeMedia(userId)` / `restoreMedia(userId)`.
+- `fetchUsernameHistory(userId)`.
+- `fetchAllProfilesForMod()`.
+
+### `LobbyChat` component
+
+Sidebar on the right of the main menu. Collapsible (collapsed shows a vertical "💬 LOBBY" tab). Shows last 80 messages, newest at the bottom, auto-scrolls. Realtime subscription updates as messages land. Send-button + Enter-to-send. 500 char limit with live counter. On block, shows an inline warning explaining what happened and the consequence.
+
+### `ReportUserModal`
+
+Triggered from the Help dropdown (new "🚩 Report a user" entry, visible to everyone). Captures: target alias, reason (dropdown of code-of-conduct categories), free-text details, optional screenshot.
+
+Screenshot uses `html2canvas` lazy-loaded from CDN on first use. Browser security prevents auto-attaching files to `mailto:`, so the screenshot is downloaded to the user's Downloads folder and the user is told to attach it manually before sending. The report is **also** written to `moderation_log` so it reaches a moderator independent of whether the email lands.
+
+### `ModeratorPanel`
+
+Three tabs:
+
+1. **Queue** — every `moderation_log` row with `reviewed = false`, newest first. Each row shows kind, surface, offender, payload (auto-pretty-printed JSON), and an inline "✓ Mark reviewed" button with optional note field.
+2. **Users** — every profile, with their alias, custom playmat URL (truncated, hover-titled), strike count (color-coded amber → red), media-revoked status, and per-row actions: **history** (alias change history modal) and **restore** (only shown when revoked).
+3. **All log** — full `moderation_log`, reviewed and unreviewed.
+
+Visible only when `profile.is_moderator === true`. The HelpDropdown checks the profile and conditionally adds the "🛡 Moderator panel" entry.
+
+### Strike → revoke flow
+
+1. User sends a message that the automod blocks.
+2. `moderation_log` gets `automod_block` entry.
+3. `incrementStrike(user_id)` adds 1 to `profiles.strikes`.
+4. If new total >= `STRIKE_THRESHOLD` (5) and not already revoked: `revoke_media(user_id)` RPC sets `media_revoked = true`. Logged as `media_revoke`.
+5. From the next time the player loads a game, `applyDeck()` checks `profile.media_revoked` and falls back to default playmat / sleeve. Their custom URLs remain in their profile (so a moderator restore brings them back instantly), they just don't broadcast.
+
+### Files touched (Pass 6)
+
+- `supabase/schema-patch-v7.6.5-moderation.sql` — new file. Migration for the moderation schema.
+- `src/lib/automod.js` — new file. Wordlist filter.
+- `src/lib/moderation.js` — new file. Supabase wrappers.
+- `src/Playground.jsx` — added imports for automod + moderation; added `LobbyChat`, `ReportUserModal`, `ModeratorPanel` components; extended `HelpDropdown` with conditional Report / Mod-panel entries; mounted new modals + LobbyChat in `MainMenu`; applied automod inline in `InGameChat.send`; honored `profile.media_revoked` in `applyDeck`'s playmat + sleeve resolution.
+- `MODERATION-GUIDANCE-v7.6.5.md` — new file. Explains scope decisions, how to add words, recommended path to a real moderation API, image-classification options, NCMEC obligation note.
+
+### What the user needs to do after deploying
+
+1. Run `supabase/schema-patch-v7.6.5-moderation.sql` in the Supabase SQL editor.
+2. Run the moderator-promotion SQL at the bottom of that file (with your email substituted in).
+3. Reload the app. Lobby chat appears as a collapsible sidebar on the main menu. The Help dropdown now shows "🛡 Moderator panel" for you specifically.
+4. Read `MODERATION-GUIDANCE-v7.6.5.md` for the recommended next moves (OpenAI moderation API, email digest, image classification).
+
+### Outstanding pass
+
+- **Pass 5** — self-hosted emoji system (Twemoji or OpenMoji SVG sprites). Skipped per user request. Still pending.
+
+
+---
+
+## Pass 7 — Patreon support button
+
+Added a `♥ Patreon` link to the main-menu header (between the profile chip and the Multiplayer button). Renders as an `<a>` with `target="_blank"` and `rel="noopener noreferrer"` so the linked page can't reach back into the app via `window.opener` or leak the referrer. Styled with Patreon's brand coral (`#f96854`) but muted to fit the existing dark-fantasy palette. Heart glyph is `♥` (Unicode 1.1 from 1993) — universal across every OS and font.
+
+Links to: `https://www.patreon.com/cw/TCGPlaysim`.
+
+### Files touched (Pass 7)
+
+- `src/Playground.jsx` — `MainMenu` header.

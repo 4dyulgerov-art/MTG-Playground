@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { storage } from "./lib/storage";
 import { NetSync } from "./lib/netSync";
+// v7.6.5: moderation infrastructure — automod filter + Supabase wrappers
+// for lobby chat, moderation log, strike counter, media revocation.
+import { inspect as automodInspect, STRIKE_THRESHOLD } from "./lib/automod";
+import * as Mod from "./lib/moderation";
 
 /* ─── v7 surgical edit ─────────────────────────────────────────────────
    The inline localStorage shim has been replaced by an import from
@@ -1645,7 +1649,7 @@ const GAMEMATS=[
   {name:"Wine Cellar",    base:"#251020",  accent:"#e11d48"},
   {name:"Old Parchment",  base:"#2a2010",  accent:"#c8a870"},
 ].map(g=>({...g,url:null,bg:_mkMatBg(g.base, g.accent)})).concat([{name:"Custom",bg:null,url:null,base:null,accent:"#c8a870"}]);
-const AVATARS=["🧙","⚔️","🐉","🌙","⚡","🔮","🗡️","🛡️","🌊","🔥","🌿","💀","🦅","🎭","✨","🪄","🌸","🏔️","🦁","🐺","🦋","🌑","⭐","🌺"];
+const AVATARS=["🧙","⚔️","🐉","🌙","⚡","🔮","🗡️","🛡️","🌊","🔥","🌿","💀","🦅","🎭","✨","🦄","🌸","🏔️","🦁","🐺","🦋","🌑","⭐","🌺"];
 
 /* ─── All MTG counter types ───────────────────────────────────────── */
 const COUNTER_TYPES = [
@@ -1783,7 +1787,7 @@ const WEATHER_OPTIONS = [
   { id:"rain",       name:"Rain",        icon:"🌧️" },
   { id:"snow",       name:"Snow",        icon:"❄️" },
   { id:"stars",      name:"Starfield",   icon:"✨" },
-  { id:"fireflies",  name:"Fireflies",   icon:"🪲" },
+  { id:"fireflies",  name:"Fireflies",   icon:"💫" },
   { id:"embers",     name:"Embers",      icon:"🔥" },
 ];
 
@@ -2003,13 +2007,20 @@ const initPlayer=(deck,profile,life=20)=>{
   // v7.6.4: sleeve priority — deck.sleeveUri > profile.sleeveUri > null.
   // The deck object passed in is the source of truth for the in-game cardback,
   // so we mutate it (in this seat's local copy) to the resolved value.
+  // v7.6.5-fix: if profile.media_revoked is set, suppress custom sleeve too.
+  const _sleeveAllowed = !profile?.media_revoked;
   const resolvedDeck = deck ? {
     ...deck,
-    sleeveUri: deck.sleeveUri || profile?.sleeveUri || null,
+    sleeveUri: _sleeveAllowed ? (deck.sleeveUri || profile?.sleeveUri || null) : null,
   } : deck;
   return {
   profile:(()=>{
     const base = profile||{alias:"Player",avatar:"🧙",gamemat:GAMEMATS[0].bg,gamematCustom:""};
+    // v7.6.5-fix: if media_revoked is set on this profile by automod or a
+    // moderator, suppress any custom playmat URL — the user's own UI keeps
+    // the URL set (so they can see it themselves once restored), but the
+    // network-broadcast / shared view falls back to the default.
+    if(profile?.media_revoked) return base;
     // v7.6.1: if the deck has its own playmat, use it (but don't overwrite profile object).
     // CSS fix: wrap the URL in `url(...) center/cover no-repeat` — the raw URL alone
     // is not valid for the CSS `background` shorthand and rendered as black.
@@ -3116,7 +3127,7 @@ function ThemePicker({current,weather,onTheme,onWeather,onClose}){
               default:   "🔮",
               stone:     "⛰️",
               cobble:    "🧱",
-              wood:      "🪵",
+              wood:      "🌳",
               forest:    "🌿",
               parchment: "📜",
               ocean:     "🌊",
@@ -3377,9 +3388,41 @@ function InGameChat({playerName,avatar,isOpen,onToggle,log=[],showLog,onToggleLo
     };
   },[]);
 
-  const send=()=>{
+  const send=async ()=>{
     if(!input.trim())return;
     const text=input.trim();
+    // v7.6.5: automod inline. Block on hard violations; flag soft hits.
+    // Failures here are non-fatal — if the network's down or the lib
+    // throws, we degrade to the pre-7.6.5 behaviour (always allow).
+    try {
+      const verdict = await automodInspect(text);
+      if(verdict.verdict === "block"){
+        // Tell the user, log it, don't send.
+        setMessages(m=>[...m,{id:uid(),sender:"system",avatar:"🛡",
+          text:"Your message was blocked by the content filter.",ts:Date.now()}]);
+        Mod.logModeration({
+          kind:"automod_block",
+          surface:"in_game_chat",
+          offenderAlias: playerName,
+          payload:{ original_text:text, matched:verdict.matched },
+        }).catch(()=>{});
+        setInput("");
+        return;
+      }
+      if(verdict.verdict === "flag"){
+        Mod.logModeration({
+          kind:"automod_flag",
+          surface:"in_game_chat",
+          offenderAlias: playerName,
+          payload:{ original_text:text, matched:verdict.matched },
+        }).catch(()=>{});
+      }
+    } catch(e){
+      // If automod itself throws, let the message through — failing closed
+      // would silently break chat for every user the moment automod has
+      // a bug.
+      console.warn("[automod] inspect failed:", e);
+    }
     const msg={id:uid(),sender:playerName,avatar,text,ts:Date.now()};
     setMessages(m=>[...m,msg]);
     if(msg.id)seenEvtIds.current.add(msg.id);
@@ -3632,7 +3675,7 @@ function CardImg({card,tapped,faceDown,selected,size="md",onClick,onCtx,onHover,
       {card?.isClone&&(
         <div style={{position:"absolute",top:2,right:2,fontSize:8,background:"rgba(129,140,248,.85)",
           color:"#fff",padding:"0 3px",borderRadius:2,fontFamily:"Cinzel,serif",letterSpacing:".05em",
-          boxShadow:"0 0 6px #818cf870",pointerEvents:"none"}}>🪞</div>
+          boxShadow:"0 0 6px #818cf870",pointerEvents:"none"}}>👥</div>
       )}
       {card?.isCommander&&card?.zone==="battlefield"&&(
         <div style={{position:"absolute",top:2,left:2,fontSize:9,background:`rgba(${T.accentRgb},.9)`,
@@ -3846,7 +3889,7 @@ function FloatingCard({drag}){
 }
 
 /* ─── SearchCardRow / DeckCardRow ─────────────────────────────────── */
-function SearchCardRow({card,count,onAdd,onHover,onSetCommander}){
+function SearchCardRow({card,count,onAdd,onHover,onSetCommander,setCommanderLabel}){
   const img=getImg(card);
   return(
     <div onMouseEnter={()=>onHover(card)}
@@ -3868,7 +3911,7 @@ function SearchCardRow({card,count,onAdd,onHover,onSetCommander}){
       {count>0&&<span style={{fontSize:9,color:T.accent,minWidth:16,fontFamily:"Cinzel, serif",
         background:`${T.accent}1a`,padding:"1px 4px",borderRadius:3}}>{count}×</span>}
       {onSetCommander&&(
-        <button onClick={()=>onSetCommander(card)} title="Set/Add as Commander"
+        <button onClick={()=>onSetCommander(card)} title={setCommanderLabel||"Set/Add as Commander"}
 
           style={{...btn("rgba(52,211,153,.08)","#34d399",{padding:"2px 6px",fontSize:10,border:"1px solid rgba(52,211,153,.2)"})}
           } onMouseOver={hov} onMouseOut={uhov}>⚔</button>
@@ -4123,7 +4166,7 @@ function CustomCardCreator({onSave,onClose}){
         maxHeight:"92vh",overflowY:"auto",
         boxShadow:"0 24px 80px rgba(0,0,0,.95)",position:"relative"}}>
         <RitualCircle color="#a855f7"/>
-        <h3 style={{margin:"0 0 16px",color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:14,position:"relative"}}>🪄 Forge Custom Card</h3>
+        <h3 style={{margin:"0 0 16px",color:T.accent,fontFamily:"Cinzel Decorative, serif",fontSize:14,position:"relative"}}>🎨 Forge Custom Card</h3>
         {[["Name *","name","text"],["Mana Cost","manaCost","text"],["Type Line","typeLine","text"],["Image URL","imageUri","text"]].map(([l,k])=>(
           <label key={k} style={{display:"block",marginBottom:9,position:"relative"}}>
             <span style={{fontSize:8,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".1em",textTransform:"uppercase"}}>{l}</span>
@@ -7856,7 +7899,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         const rm=arr=>arr.filter(c=>c.iid!==card.iid);
         return{...p,library:rm(p.library),hand:rm(p.hand),battlefield:rm(p.battlefield),
           graveyard:rm(p.graveyard),exile:rm(p.exile),
-          log:[`T${turn}:🪞 ${card.name} clone dissolved`,...p.log].slice(0,80)};
+          log:[`T${turn}:👥 ${card.name} clone dissolved`,...p.log].slice(0,80)};
       });
       setSelected(new Set());
       return;
@@ -7909,7 +7952,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     if(amt>0) SFX.playAction("counter");
     upd(p=>{const u=arr=>arr.map(c=>c.iid===card.iid?{...c,counters:{...c.counters,[type]:(c.counters[type]||0)+amt}}:c);return{...p,battlefield:u(p.battlefield),hand:u(p.hand),graveyard:u(p.graveyard),log:[`T${turn}:${amt>0?"+":""} ${type} counter on ${card.name}`,...p.log].slice(0,80)};});
   },[upd,turn]);
-  const copyCard=useCallback((card,isCloneFlag)=>upd(p=>{const cp={...card,iid:uid(),x:(card.x||0)+16,y:(card.y||0)+16,isClone:!!isCloneFlag,isCopy:false,copyImageUri:null};const z=card.zone||"battlefield";return{...p,[z]:[...p[z],cp],log:[`T${turn}:${isCloneFlag?"🪞 Cloned":"⧉ Copied"} ${card.name}`,...p.log].slice(0,80)};}),[upd,turn]);
+  const copyCard=useCallback((card,isCloneFlag)=>upd(p=>{const cp={...card,iid:uid(),x:(card.x||0)+16,y:(card.y||0)+16,isClone:!!isCloneFlag,isCopy:false,copyImageUri:null};const z=card.zone||"battlefield";return{...p,[z]:[...p[z],cp],log:[`T${turn}:${isCloneFlag?"👥 Cloned":"⧉ Copied"} ${card.name}`,...p.log].slice(0,80)};}),[upd,turn]);
   const createToken=useCallback(data=>{
     SFX.playAction("token");
     upd(p=>{const tok=mkCard({...data,isToken:true},"battlefield");const pos=autoPos(p.battlefield,tok);return{...p,battlefield:[...p.battlefield,{...tok,...pos}],log:[`T${turn}:✦ Token: ${data.name}`,...p.log].slice(0,80)};});
@@ -8470,7 +8513,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       items.push({icon:"↑",label:"→ Library Top (T)",action:mv("library","top")});
       items.push({icon:"↓",label:"→ Library Bottom (.)",action:mv("library","bottom")});
       items.push({icon:"⧉",label:"Become a Copy of…",action:()=>setCopyMode({card}),color:"#60a5fa"});
-      items.push({icon:"🪞",label:"Clone (vanishes on death) (K)",action:()=>copyCard(card,true),color:"#818cf8"});
+      items.push({icon:"👥",label:"Clone (vanishes on death) (K)",action:()=>copyCard(card,true),color:"#818cf8"});
       // Multi-select actions when multiple selected
       if(selected.size>1){
         items.push("---");
@@ -8491,7 +8534,7 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
           cards.forEach(c=>moveCard(c,"battlefield","graveyard"));
           setSelected(new Set());
         },color:"#a78bfa"});
-        items.push({icon:"🪞",label:"Clone All Selected",action:()=>{
+        items.push({icon:"👥",label:"Clone All Selected",action:()=>{
           const ids=new Set(selected);
           const cards=player.battlefield.filter(c=>ids.has(c.iid));
           cards.forEach(c=>copyCard(c,true));
@@ -10461,7 +10504,10 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
     pushHistory();
     const entry=buildDeckEntry(card);
     setCommanders(prev=>prev.find(c=>c.scryfallId===entry.scryfallId)?prev:[...prev,entry]);
-    setFormat("commander");
+    // v7.6.5-fix: only force-set "commander" if the user hasn't already
+    // chosen oathbreaker. Otherwise clicking ⚔ on a planeswalker (to set it
+    // as the oathbreaker) silently reverted the format back to commander.
+    if(format!=="oathbreaker") setFormat("commander");
   };
 
   // Apply a specific printing's image to the selected card
@@ -10541,7 +10587,7 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
               onMouseOver={hov} onMouseOut={uhov}>📋 Batch Import</button>
             <button onClick={()=>setShowCustom(true)}
               style={{...btn("rgba(52,211,153,.06)","#34d399",{fontSize:10,border:"1px solid rgba(52,211,153,.15)",padding:"5px 10px"})}}
-              onMouseOver={hov} onMouseOut={uhov}>🪄 Custom</button>
+              onMouseOver={hov} onMouseOut={uhov}>🎨 Custom</button>
           </div>
           <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search by name, type, oracle text…" style={iS}
             onFocus={e=>{e.target.style.borderColor=T.accent;e.target.style.boxShadow="0 0 12px rgba(200,168,112,.15)";}}
@@ -10563,7 +10609,8 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
           {results.map(card=>(
             <SearchCardRow key={card.id||card.scryfallId} card={card}
               count={cards.find(c=>c.scryfallId===(card.id||card.scryfallId))?.quantity||0}
-              onAdd={()=>addCard(card)} onHover={setHovered} onSetCommander={setAsCmdr}/>
+              onAdd={()=>addCard(card)} onHover={setHovered} onSetCommander={setAsCmdr}
+              setCommanderLabel={format==="oathbreaker"?"Set/Add as Oathbreaker or Signature Spell":"Set/Add as Commander"}/>
           ))}
         </div>
       </div>
@@ -10597,7 +10644,12 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
               onMouseOver={hov} onMouseOut={uhov} title="Redo">↪</button>
           </div>
           <div style={{display:"flex",gap:3,marginBottom:8}}>
-            {["standard","commander","modern","legacy","pioneer","pauper"].map(f=>(
+            {/* v7.6.5-fix: oathbreaker added — was already in GAMEMODES (so it
+                shows up in the lobby format filter and room-creation gamemode
+                picker), but the deckbuilder used a hardcoded list that omitted
+                it. Singleton 60-card format with planeswalker oathbreaker +
+                signature spell in command zone, 20 life. */}
+            {["standard","commander","oathbreaker","modern","legacy","pioneer","pauper"].map(f=>(
               <button key={f} onClick={()=>setFormat(f)}
                 style={{...btn(f===format?`${T.accent}1a`:"transparent",f===format?T.accent:T.muted,{fontSize:9,border:`1px solid ${f===format?`rgba(${T.accentRgb},.3)`:`${T.border}20`}`,padding:"3px 7px"})}}
                 onMouseOver={hov} onMouseOut={uhov}>{f}</button>
@@ -10622,7 +10674,13 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
               ["main","🃏 Main",mainTotal],
               ["side","⚔ Sideboard",sideTotal],
               ["token","✦ Tokens",tokenTotal],
-              ["cmdr","⚔ Commander",commanders.length],
+              // v7.6.5-fix: tab label flips for oathbreaker so the deckbuilder
+              // doesn't lie about what format the cmdr zone represents.
+              [
+                "cmdr",
+                format==="oathbreaker" ? "🛡 Oathbreaker" : "⚔ Commander",
+                commanders.length,
+              ],
             ].map(([z,label,count])=>(
               <button key={z} onClick={()=>setActiveZone(z)}
                 onDragOver={e=>{e.preventDefault();e.currentTarget.style.background=`${T.accent}30`;}}
@@ -10645,7 +10703,16 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
           <div style={{flex:1,overflowY:"auto",padding:"6px 8px"}}>
             {activeZone==="cmdr"?(
               <div style={{padding:"18px 12px"}}>
-                <div style={{fontSize:9,color:T.accent,fontFamily:"Cinzel, serif",letterSpacing:".14em",marginBottom:10,textAlign:"center"}}>⚔ COMMAND ZONE · Starts the game here</div>
+                {/* v7.6.5-fix: header label is format-aware. Oathbreaker uses
+                    the same data structure (commanders[]) as Commander but
+                    represents the oathbreaker (planeswalker) and the
+                    signature spell (instant or sorcery), both of which start
+                    in the command zone. */}
+                <div style={{fontSize:9,color:T.accent,fontFamily:"Cinzel, serif",letterSpacing:".14em",marginBottom:10,textAlign:"center"}}>
+                  {format==="oathbreaker"
+                    ? "🛡 COMMAND ZONE · Oathbreaker + Signature Spell"
+                    : "⚔ COMMAND ZONE · Starts the game here"}
+                </div>
                 {commanders.length>0?(
                   <div style={{display:"flex",flexDirection:"column",gap:8}}>
                     {commanders.map((cmdr,ci)=>{
@@ -10658,7 +10725,33 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                         style={{display:"flex",gap:10,alignItems:"flex-start",background:isSel?`${T.accent}20`:`${T.accent}0d`,borderRadius:8,border:`1px solid ${isSel?T.accent:T.accent+"40"}`,padding:"8px 10px",cursor:"grab",transition:"background .1s"}}>
                         {cmdr.imageUri&&<img src={cmdr.imageUri} alt="" style={{width:48,height:67,borderRadius:3,objectFit:"cover",boxShadow:`0 0 10px ${T.accent}40`}}/>}
                         <div style={{flex:1}}>
-                          <div style={{fontSize:7,color:T.accent,fontFamily:"Cinzel,serif",letterSpacing:".14em",marginBottom:2}}>⚔ COMMANDER {commanders.length>1?`#${ci+1}`:""}</div>
+                          {/* v7.6.5-fix: per-card label is format-aware for
+                              oathbreaker. Inferred from type_line: a
+                              planeswalker is the oathbreaker, an instant or
+                              sorcery is the signature spell. Anything else
+                              (or missing typeLine on a stub) just falls back
+                              to the generic command-zone label. */}
+                          {(()=>{
+                            if(format!=="oathbreaker"){
+                              return (
+                                <div style={{fontSize:7,color:T.accent,fontFamily:"Cinzel,serif",letterSpacing:".14em",marginBottom:2}}>
+                                  ⚔ COMMANDER {commanders.length>1?`#${ci+1}`:""}
+                                </div>
+                              );
+                            }
+                            const tl = (cmdr.typeLine || cmdr.type_line || "").toLowerCase();
+                            const isWalker = tl.includes("planeswalker");
+                            const isSpell  = tl.includes("instant") || tl.includes("sorcery");
+                            const role = isWalker ? "🛡 OATHBREAKER"
+                                       : isSpell  ? "✦ SIGNATURE SPELL"
+                                       : "🛡 COMMAND ZONE";
+                            const roleColor = isWalker ? "#fbbf24" : isSpell ? "#a78bfa" : T.accent;
+                            return (
+                              <div style={{fontSize:7,color:roleColor,fontFamily:"Cinzel,serif",letterSpacing:".14em",marginBottom:2}}>
+                                {role}
+                              </div>
+                            );
+                          })()}
                           <div style={{fontSize:12,color:T.text,fontFamily:"Cinzel,serif",marginBottom:3}}>{cmdr.name}</div>
                           {cmdr.manaCost&&<div style={{fontSize:9,color:"#a3a3a3",marginBottom:2}}>{cmdr.manaCost}</div>}
                           {cmdr.typeLine&&<div style={{fontSize:8,color: T.muted,fontStyle:"italic",marginBottom:3}}>{cmdr.typeLine}</div>}
@@ -10671,9 +10764,21 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                   </div>
                 ):(
                   <div style={{textAlign:"center",color:T.border,marginTop:30,fontFamily:"Cinzel, serif",fontSize:11,fontStyle:"italic",lineHeight:1.8}}>
-                    <div style={{fontSize:22,marginBottom:8}}>⚔</div>
-                    No commander set<br/>
-                    <span style={{fontSize:9,color:"#2a3a5a"}}>Search a card and click ⚔ to set as commander,<br/>or switch ADD TO: Cmdr and click +</span>
+                    <div style={{fontSize:22,marginBottom:8}}>{format==="oathbreaker"?"🛡":"⚔"}</div>
+                    {format==="oathbreaker" ? (
+                      <>
+                        No oathbreaker / signature spell set<br/>
+                        <span style={{fontSize:9,color:"#2a3a5a"}}>
+                          Search a planeswalker and click ⚔ — that's your oathbreaker.<br/>
+                          Then add an instant or sorcery as the signature spell (same color identity).
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        No commander set<br/>
+                        <span style={{fontSize:9,color:"#2a3a5a"}}>Search a card and click ⚔ to set as commander,<br/>or switch ADD TO: Cmdr and click +</span>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -11241,6 +11346,8 @@ function ProfileSettings({profile, authUser, onSave, onSignOut, onClose}){
 
 function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,onSignOut,onProfile}){
   const [deleteConfirm,setDeleteConfirm]=useState(null);
+  // v7.6.5-fix: Help dropdown state — "manual"|"rules"|"bug"|"feature"|null.
+  const [helpView,setHelpView]=useState(null);
   const canvasRef=useRef(null);
   const [deckOrder,setDeckOrder]=useState(()=>decks.map((_,i)=>i));
   const [draggingIdx,setDraggingIdx]=useState(null);
@@ -11382,9 +11489,24 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
             </div>
           </button>
         )}
+        {/* v7.6.5-fix: Patreon support button. Opens in a new tab; rel
+            noopener+noreferrer so the linked page can't reach back into our
+            window (window.opener) or read the referrer. ♥ is Unicode 1.1
+            (1993) — guaranteed to render on every platform. */}
+        <a href="https://www.patreon.com/cw/TCGPlaysim"
+           target="_blank" rel="noopener noreferrer"
+           title="Support TCG Playsim on Patreon"
+           style={{...btn("rgba(249,104,84,.10)","#f96854",{
+             fontFamily:"Cinzel, serif",padding:"8px 14px",
+             border:"1px solid rgba(249,104,84,.30)",textDecoration:"none",
+             display:"inline-flex",alignItems:"center",gap:6}),fontSize:11}}
+           onMouseOver={hov} onMouseOut={uhov}>♥ Patreon</a>
         <button onClick={onRooms}
           style={{...btn("rgba(167,139,250,.08)","#a78bfa",{fontFamily:"Cinzel, serif",padding:"8px 16px",border:"1px solid rgba(167,139,250,.2)"}),fontSize:11}}
           onMouseOver={hov} onMouseOut={uhov}>⇄ Multiplayer</button>
+        {/* v7.6.5-fix: Help dropdown — Manual / Rules / Bug / Feature.
+            One button to keep the header from spilling. */}
+        <HelpDropdown onPick={setHelpView} isModerator={!!profile?.is_moderator}/>
         <button onClick={onTheme}
           style={{...btn("rgba(168,85,247,.08)","#a78bfa",{fontFamily:"Cinzel, serif",padding:"8px 14px",border:"1px solid rgba(168,85,247,.2)"}),fontSize:11}}
           onMouseOver={hov} onMouseOut={uhov}>🎨 Theme</button>
@@ -11561,7 +11683,1209 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
           })}
         </div>
       </div>
+      {/* v7.6.5-fix: Help dropdown modals mounted at MainMenu root */}
+      {helpView==="manual"  && <ManualModal           onClose={()=>setHelpView(null)}/>}
+      {helpView==="rules"   && <RulesModal            onClose={()=>setHelpView(null)}/>}
+      {helpView==="bug"     && <BugReportModal        onClose={()=>setHelpView(null)} profile={profile}/>}
+      {helpView==="feature" && <FeatureRequestModal   onClose={()=>setHelpView(null)} profile={profile}/>}
+      {helpView==="report"  && <ReportUserModal       onClose={()=>setHelpView(null)} profile={profile}/>}
+      {helpView==="mod"     && <ModeratorPanel        onClose={()=>setHelpView(null)}/>}
+      {/* v7.6.5-fix: lobby chat sidebar — global chat for the main menu */}
+      <LobbyChat profile={profile}/>
     </div>
+  );
+}
+
+/* ─── v7.6.5 Help / Rules / Manual / Feedback modals ─────────────────────────
+   These four modals are surfaced via the HelpDropdown in the main-menu header.
+   Manual + Rules are static content. BugReportModal + FeatureRequestModal
+   collect user input and submit by composing a mailto: URL targeting
+   tcgplaysim@gmail.com — works on every system without backend setup. A copy-
+   to-clipboard button is also offered as a fallback for users without a
+   default mail client configured.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* Shared modal shell — keeps every help modal visually consistent and reduces
+   per-modal boilerplate. Any modal here can use it. */
+function HelpModalShell({title,subtitle,onClose,children,width=860}){
+  return(
+    <div className="fade-in" style={{position:"fixed",inset:0,background:"rgba(2,4,10,.92)",
+      display:"flex",alignItems:"center",justifyContent:"center",zIndex:10003,backdropFilter:"blur(6px)",padding:18}}>
+      <div className="slide-in" style={{
+        background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+        border:`1px solid rgba(${T.accentRgb},.2)`,borderRadius:12,
+        width:"100%",maxWidth:width,maxHeight:"90vh",display:"flex",flexDirection:"column",
+        boxShadow:"0 24px 80px rgba(0,0,0,.95)"}}>
+        <div style={{padding:"18px 22px 14px",borderBottom:`1px solid rgba(${T.accentRgb},.15)`,
+          display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexShrink:0}}>
+          <div>
+            <div style={{color:T.accent,fontFamily:"Cinzel Decorative,serif",fontSize:18,letterSpacing:".05em"}}>{title}</div>
+            {subtitle && <div style={{fontSize:11,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".06em",marginTop:3}}>{subtitle}</div>}
+          </div>
+          <button onClick={onClose} style={{...btn("transparent",T.muted,{fontSize:20,border:"none",padding:"2px 8px"})}}
+            onMouseOver={hov} onMouseOut={uhov}>✕</button>
+        </div>
+        <div style={{padding:"18px 26px 22px",overflowY:"auto",fontFamily:"Crimson Text, serif",fontSize:13,
+          color:"#d4c5a0",lineHeight:1.65}}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Section header inside a help modal. */
+function HM_H({children}){
+  return <div style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:13,letterSpacing:".12em",
+    textTransform:"uppercase",marginTop:18,marginBottom:8,
+    borderBottom:`1px solid rgba(${T.accentRgb},.15)`,paddingBottom:4}}>{children}</div>;
+}
+
+/* Sub-section header. */
+function HM_H2({children}){
+  return <div style={{color:"#e6d5a8",fontFamily:"Cinzel,serif",fontSize:11,letterSpacing:".08em",
+    marginTop:12,marginBottom:5,fontWeight:600}}>{children}</div>;
+}
+
+/* Small inline keyboard chip — used in the manual to match the hotkey help styling. */
+function HM_Kbd({children}){
+  return <span style={{background:`rgba(${T.accentRgb},.12)`,color:T.accent,fontFamily:"Cinzel,serif",
+    fontSize:10,padding:"1px 6px",borderRadius:4,border:`1px solid rgba(${T.accentRgb},.25)`,
+    whiteSpace:"nowrap"}}>{children}</span>;
+}
+
+/* ManualModal — long-form user manual sourced from the actual hotkey table
+   and the codebase's zone / context-menu logic. Used as both onboarding and
+   an SEO landing target for searches like "how to play X format". */
+function ManualModal({onClose}){
+  return(
+    <HelpModalShell title="📖 Manual" subtitle="A walkthrough of every screen, hotkey, and zone in TCG Playsim" onClose={onClose} width={920}>
+      <div style={{fontStyle:"italic",color:T.muted,marginBottom:14}}>
+        TCG Playsim is a free in-browser sandbox for trading card games — built for
+        Magic: The Gathering with formats Standard, Commander, Oathbreaker, Modern,
+        Legacy, Pioneer, Pauper, and the shared-deck format Dandân. There's no rules
+        engine forcing the game; you and your opponents move cards yourselves, the
+        same as you would on a kitchen table.
+      </div>
+
+      <HM_H>1. Getting started</HM_H>
+      <p>The first time you arrive you'll be asked to set a profile: an alias, an avatar
+      (emoji or image URL), and a default playmat. None of these are public until you
+      join a multiplayer room; you can change them anytime via the profile chip in the
+      top-right.</p>
+
+      <HM_H>2. Building a deck</HM_H>
+      <HM_H2>From scratch</HM_H2>
+      <p>Open <em>New Deck</em> from the main menu. The left side is a Scryfall search;
+      type a card name and matching cards appear instantly. Hit <HM_Kbd>+</HM_Kbd> to add a card,
+      <HM_Kbd>⚔</HM_Kbd> to mark it as commander (or oathbreaker / signature spell, depending on the
+      format you've selected). Right-click any card row for a print picker — you can
+      switch art and set without re-searching.</p>
+      <HM_H2>By batch import</HM_H2>
+      <p>Click <em>Batch</em>. Paste a decklist in any common format ("4x Lightning Bolt"
+      / "4 Lightning Bolt" / "Lightning Bolt x4"). The importer commits stub cards
+      instantly so the modal closes; Scryfall image data is patched in as it
+      arrives, so you can keep editing while artwork resolves in the background.</p>
+      <HM_H2>Sleeves &amp; playmat per deck</HM_H2>
+      <p>Each deck has its own <em>Sleeve image URL</em> and <em>Playmat image URL</em>.
+      Both override your profile defaults when that deck is in play. The sleeve image
+      shows on the back of every card in your library; the playmat fills your side
+      of the table.</p>
+      <HM_H2>Custom cards</HM_H2>
+      <p>The <em>🎨 Custom</em> button opens a forge for cards Scryfall doesn't have —
+      proxies, alters, joke cards. Define name, type, rules text, P/T, mana cost,
+      and an image URL. Custom cards behave identically to real ones in play.</p>
+
+      <HM_H>3. Formats</HM_H>
+      <p style={{marginBottom:6}}>The deckbuilder supports:</p>
+      <ul style={{paddingLeft:22,margin:"4px 0"}}>
+        <li><b>Standard / Modern / Legacy / Pioneer / Pauper</b> — 60-card minimum, 15-card sideboard, 20 starting life. No format-legality enforcement; you're trusted to build to spec.</li>
+        <li><b>Commander</b> — 100-card singleton, 1–2 commanders (partner allowed), 40 starting life. Commanders go in the command zone at game start; a +2 generic mana commander tax accumulates each time you cast one from there.</li>
+        <li><b>Oathbreaker</b> — 60-card singleton, an oathbreaker (planeswalker) and a signature spell (instant or sorcery, same color identity), 20 starting life. Both start in the command zone.</li>
+        <li><b>Dandân</b> — a shared-deck format. The host picks a variant; both players draw from the same 80-card library, with one shared graveyard. Hands and battlefields stay separate.</li>
+      </ul>
+
+      <HM_H>4. Starting a game</HM_H>
+      <HM_H2>Solo / hotseat</HM_H2>
+      <p>From the main menu, click any deck card and choose <em>Play</em>. Solo play
+      gives you a sandbox with one seat. Hotseat mode passes the device between
+      seated players each turn — useful for testing or playing across the couch.</p>
+      <HM_H2>Multiplayer rooms</HM_H2>
+      <p>Click <em>⇄ Multiplayer</em>. Pick a game mode and seat count, then either
+      create a room or join one from the list. The host's deck list is published to
+      joiners (so a casual play group can borrow a host's deck if they don't have
+      their own). Once everyone has a deck selected and the room is full, the game
+      auto-starts.</p>
+
+      <HM_H>5. Playing</HM_H>
+      <HM_H2>Phases</HM_H2>
+      <p>The phase wheel at the top tracks the current step. Press <HM_Kbd>N</HM_Kbd> to
+      advance one phase; <HM_Kbd>E</HM_Kbd> ends the turn (jumps directly to cleanup → next
+      player's untap).</p>
+      <HM_H2>Moving cards</HM_H2>
+      <p>Drag any card to any zone. Right-click for a context menu of every legal
+      destination plus zone-specific actions. Hand → battlefield is also <HM_Kbd>Space</HM_Kbd>
+      while hovering. Most movements are also bound to single hotkeys (full list in §7
+      below).</p>
+      <HM_H2>Tapping, counters, targeting</HM_H2>
+      <p>Click a card on the battlefield to tap/untap. <HM_Kbd>U</HM_Kbd> while hovering adds a
+      +1/+1 counter; the right-click menu has options for −1/−1, loyalty, charge, and
+      arbitrary custom counters. <HM_Kbd>O</HM_Kbd> marks a card as a target (visual arrow). <HM_Kbd>X</HM_Kbd>
+      untaps everything you control at once.</p>
+
+      <HM_H>6. Zones &amp; what hotkeys do in each</HM_H>
+      <p>Every hotkey is context-sensitive — it acts on whichever card your mouse is
+      over, in whichever zone that card sits. Quick reference:</p>
+      <ul style={{paddingLeft:22,margin:"4px 0"}}>
+        <li><b>Hand</b> — <HM_Kbd>Space</HM_Kbd> = play to battlefield, <HM_Kbd>D</HM_Kbd> = discard, <HM_Kbd>S</HM_Kbd> = exile, <HM_Kbd>T</HM_Kbd>/<HM_Kbd>.</HM_Kbd> = library top/bottom, <HM_Kbd>Y</HM_Kbd> = discard whole hand.</li>
+        <li><b>Battlefield</b> — <HM_Kbd>Space</HM_Kbd> = tap/untap, <HM_Kbd>R</HM_Kbd> = bounce to hand, <HM_Kbd>D</HM_Kbd> = graveyard, <HM_Kbd>S</HM_Kbd> = exile, <HM_Kbd>L</HM_Kbd> = flip / DFC, <HM_Kbd>K</HM_Kbd> = clone (token, vanishes on death), <HM_Kbd>O</HM_Kbd> = target, <HM_Kbd>I</HM_Kbd> = invert (180°), <HM_Kbd>U</HM_Kbd> = +1/+1 counter, <HM_Kbd>Z</HM_Kbd> = group-tap touching cards.</li>
+        <li><b>Graveyard / Exile</b> — <HM_Kbd>R</HM_Kbd> back to hand, <HM_Kbd>T</HM_Kbd> top of library, <HM_Kbd>Space</HM_Kbd> reanimate to battlefield. Click the pile to open a viewer.</li>
+        <li><b>Library (topdeck portrait)</b> — <HM_Kbd>C</HM_Kbd> draw, <HM_Kbd>Shift+C</HM_Kbd> draw 7, <HM_Kbd>V</HM_Kbd> shuffle, <HM_Kbd>G</HM_Kbd> open scry, <HM_Kbd>F</HM_Kbd> search the whole library, <HM_Kbd>Shift+M</HM_Kbd> mill into graveyard, <HM_Kbd>Ctrl+Shift+M</HM_Kbd> mill into exile. Right-click for "Reveal top card", "Play with topdeck revealed", "Look at top X", "Surveil X".</li>
+        <li><b>Command zone</b> — Right-click a commander/oathbreaker for "Cast (with tax)" / "→ Battlefield (no tax)" / "→ Hand" / library top/bottom. The commander-damage cells in the side bar tally lethal threat per opponent.</li>
+      </ul>
+
+      <HM_H>7. Hotkey reference</HM_H>
+      <HM_H2>Global</HM_H2>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 14px"}}>
+        {[
+          ["↑ / ↓","Life +1 / −1"],
+          ["X","Untap all in play"],
+          ["C","Draw a card"],
+          ["Shift+C","Draw 7"],
+          ["V","Shuffle library"],
+          ["Shift+V","Mill 1 → graveyard"],
+          ["Ctrl+Shift+V","Mill 1 → exile"],
+          ["M","Mulligan"],
+          ["Shift+M","Mill X… (prompt)"],
+          ["B","Focus chat input"],
+          ["N","Next phase"],
+          ["A / Q","Alert / No-response"],
+          ["W","Insert token or any card"],
+          ["E","End turn"],
+          ["Y","Discard whole hand"],
+          ["F","Search library"],
+          ["G","Scry / look at top N"],
+          ["` / Shift+`","Roll D6 / D20"],
+          ["Ctrl+A","Select all on battlefield"],
+          ["Esc","Clear selection / close modal"],
+          ["? or /","Open hotkey help"],
+        ].map(([k,l])=>(
+          <div key={k} style={{display:"flex",alignItems:"center",gap:8,padding:"2px 0"}}>
+            <HM_Kbd>{k}</HM_Kbd>
+            <span style={{fontSize:11.5}}>{l}</span>
+          </div>
+        ))}
+      </div>
+      <HM_H2 >Hover-card (your mouse must be over a card)</HM_H2>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 14px"}}>
+        {[
+          ["Space / _","Tap-untap (BF) / play (hand) / reanimate (grave)"],
+          ["Z","Group-tap touching cards"],
+          ["L","Flip / DFC alt face"],
+          ["D","Send to graveyard"],
+          ["S","Send to exile"],
+          ["P","Send to face-down exile"],
+          ["R","Send to hand"],
+          ["T","Send to library top"],
+          [".","Send to library bottom"],
+          ["K","Clone (vanishes on death)"],
+          ["H","Shake card"],
+          ["O","Target / mark source"],
+          ["I","Invert (180°)"],
+          ["U","Add +1/+1 counter"],
+        ].map(([k,l])=>(
+          <div key={k} style={{display:"flex",alignItems:"center",gap:8,padding:"2px 0"}}>
+            <HM_Kbd>{k}</HM_Kbd>
+            <span style={{fontSize:11.5}}>{l}</span>
+          </div>
+        ))}
+      </div>
+
+      <HM_H>8. Online play details</HM_H>
+      <ul style={{paddingLeft:22,margin:"4px 0"}}>
+        <li>Hands are private by default. Your opponent only sees the back of each card in your hand. The owner of a hand can grant another player one-time hand access via the in-game request menu.</li>
+        <li>Library access works the same way — searching another player's library requires them to grant access.</li>
+        <li>If your tab disconnects mid-game, the room will hold your seat for ~30 minutes. Re-open the same URL to resume; your full state (hand, library, life) is restored.</li>
+        <li>Chat is at the bottom of the screen. <HM_Kbd>B</HM_Kbd> focuses the input.</li>
+      </ul>
+
+      <HM_H>9. Where things live in the UI</HM_H>
+      <ul style={{paddingLeft:22,margin:"4px 0"}}>
+        <li><b>Top-left avatar</b> opens the profile editor — alias, avatar emoji or image URL, default playmat, weather effect, theme.</li>
+        <li><b>🎨 Theme</b> in the menu header is also reachable mid-game in the same place.</li>
+        <li><b>⌨ Hotkeys</b> can be re-opened anytime by pressing <HM_Kbd>?</HM_Kbd> or <HM_Kbd>/</HM_Kbd>.</li>
+        <li><b>Format-filter dropdown</b> in the deck list narrows the gallery by Standard / Commander / Oathbreaker / Modern / Legacy / Pioneer / Pauper / Dandân.</li>
+      </ul>
+
+      <div style={{marginTop:22,padding:"12px 14px",background:`rgba(${T.accentRgb},.04)`,
+        borderLeft:`3px solid ${T.accent}`,borderRadius:4,fontSize:12,color:T.muted}}>
+        Found a bug or wanting a feature? Use the <b>Report a bug</b> and <b>Suggest a feature</b>
+        buttons in the help menu — both submit straight to the maintainer.
+      </div>
+    </HelpModalShell>
+  );
+}
+
+/* RulesModal — code of conduct. Wholly original wording, structurally
+   different from any reference document. */
+function RulesModal({onClose}){
+  return(
+    <HelpModalShell title="📜 Code of Conduct" subtitle="The ground rules for playing on TCG Playsim" onClose={onClose} width={780}>
+      <p style={{marginBottom:12}}>
+        This platform exists so people can enjoy a card game together. Use of TCG
+        Playsim is conditional on the principles below. They may be revised without
+        notice. Not knowing them is not a defence. Violations can lead to a temporary
+        suspension or a permanent ban; severity is at moderator discretion.
+      </p>
+
+      <HM_H>1. Treat people decently</HM_H>
+      <ul style={{paddingLeft:20,margin:"4px 0"}}>
+        <li>No language that targets ethnicity, nationality, race, gender, religion, sexuality, or personal beliefs — directly, by allusion, or via known dogwhistles.</li>
+        <li>No threats of real-world harm to anyone, on or off the platform.</li>
+        <li>No harassment, stalking, or pile-ons. If someone asks to be left alone, leave them alone.</li>
+        <li>No berating or shaming other players over how they play, what they said, or who they are.</li>
+      </ul>
+
+      <HM_H>2. Keep it shareable</HM_H>
+      <ul style={{paddingLeft:20,margin:"4px 0"}}>
+        <li>Excessive profanity, sexually explicit content, gore, and graphic violence don't belong here — in chat, in custom card art, in playmat or sleeve URLs, or anywhere else visible to others.</li>
+        <li>Usernames that breach these standards will be changed by staff without notice.</li>
+      </ul>
+
+      <HM_H>3. Don't impersonate. Don't share accounts.</HM_H>
+      <ul style={{paddingLeft:20,margin:"4px 0"}}>
+        <li>Your account is yours — don't hand it to anyone, don't take someone else's, and don't pretend to be a person you aren't.</li>
+        <li>Don't post personal information — yours or anyone else's.</li>
+      </ul>
+
+      <HM_H>4. Play fair</HM_H>
+      <ul style={{paddingLeft:20,margin:"4px 0"}}>
+        <li>No third-party tools, macros, packet edits, scripts, or anything else that gives you an advantage the rules don't.</li>
+        <li>Don't link, share, or promote cheats.</li>
+        <li>If you find a bug, report it via the in-app form. Exploiting it for advantage is not allowed.</li>
+      </ul>
+
+      <HM_H>5. Don't spam</HM_H>
+      <ul style={{paddingLeft:20,margin:"4px 0"}}>
+        <li>That covers chat floods, repeated joins-and-leaves to grief games, and unsolicited promotion.</li>
+        <li>Self-promotion in chat needs to be relevant to the conversation — no cold drops.</li>
+        <li>Politics in chat: factual and brief, no link-dumps, no campaigning.</li>
+      </ul>
+
+      <HM_H>6. Illegal stuff is illegal</HM_H>
+      <ul style={{paddingLeft:20,margin:"4px 0"}}>
+        <li>Don't request, offer, or arrange anything illegal in your jurisdiction or ours.</li>
+        <li>Custom card art that contains hate symbols, sexual content involving minors, or stolen IP will be removed; the account that uploaded it will be banned.</li>
+      </ul>
+
+      <HM_H>7. Discord and platform are one space</HM_H>
+      <p>Behaviour on our community Discord server reflects on your account here, and
+      vice versa. A ban on one is a ban on both.</p>
+
+      <div style={{marginTop:18,padding:"12px 14px",background:`rgba(${T.accentRgb},.06)`,
+        borderLeft:`3px solid ${T.accent}`,borderRadius:4,fontSize:12,color:"#d4c5a0"}}>
+        These rules are not exhaustive. Staff reserve the right to act on conduct that
+        disrupts other people's play or the platform as a whole, even if a specific
+        clause hasn't been spelled out yet. The short version: <i>be fair, be civil,
+        keep the bugs in the bug-report form.</i>
+      </div>
+    </HelpModalShell>
+  );
+}
+
+/* Shared helper used by the two feedback forms. Composes a mailto: URL and
+   opens it in a new tab. The body is plain text; subject and body are
+   URI-component encoded so any character is safe. */
+function _buildMailto(to, subject, body){
+  const s = encodeURIComponent(subject);
+  const b = encodeURIComponent(body);
+  return `mailto:${to}?subject=${s}&body=${b}`;
+}
+
+/* Returns environment fingerprint for bug reports. Pure-side-effect read of
+   navigator + window — reveals only what the browser already exposes by
+   default in the User-Agent header. */
+function _envFingerprint(){
+  if(typeof navigator==="undefined") return "(unknown environment)";
+  const ua = navigator.userAgent || "";
+  const lang = navigator.language || "";
+  const tz = (typeof Intl!=="undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "") || "";
+  const vw = (typeof window!=="undefined") ? `${window.innerWidth}×${window.innerHeight}` : "";
+  return `User-Agent: ${ua}\nLanguage: ${lang}\nTimezone: ${tz}\nViewport: ${vw}`;
+}
+
+/* BugReportModal — multi-field bug-report form. Composes a mailto on
+   submit; also offers copy-to-clipboard for users without a default mail
+   client configured. Auto-fills environment fingerprint so the maintainer
+   doesn't have to ask "what browser are you on". */
+function BugReportModal({onClose,profile}){
+  const [title,setTitle] = useState("");
+  const [mode,setMode] = useState("");
+  const [steps,setSteps] = useState("");
+  const [expected,setExpected] = useState("");
+  const [actual,setActual] = useState("");
+  const [console_,setConsole] = useState("");
+  const [contact,setContact] = useState("");
+  const [copyOK,setCopyOK] = useState(false);
+  const [sentVia,setSentVia] = useState(""); // "mail"|"copy"|""
+
+  const subject = `[Bug] ${title || "(untitled)"}`;
+  const body = (
+`A bug report from TCG Playsim.
+
+──────── SUMMARY ────────
+${title || "(no title given)"}
+
+──────── GAME MODE / SCREEN ────────
+${mode || "(unspecified)"}
+
+──────── STEPS TO REPRODUCE ────────
+${steps || "(none provided)"}
+
+──────── EXPECTED BEHAVIOUR ────────
+${expected || "(none provided)"}
+
+──────── ACTUAL BEHAVIOUR ────────
+${actual || "(none provided)"}
+
+──────── CONSOLE OUTPUT ────────
+${console_ || "(none provided)"}
+
+──────── CONTACT (optional) ────────
+${contact || profile?.alias || "(anonymous)"}
+
+──────── ENVIRONMENT (auto) ────────
+${_envFingerprint()}
+Reported at: ${new Date().toISOString()}`
+  );
+
+  const sendViaMail = ()=>{
+    window.location.href = _buildMailto("tcgplaysim@gmail.com", subject, body);
+    setSentVia("mail");
+  };
+  const sendViaCopy = async ()=>{
+    try{
+      const blob = `To: tcgplaysim@gmail.com\nSubject: ${subject}\n\n${body}`;
+      await navigator.clipboard.writeText(blob);
+      setCopyOK(true);
+      setSentVia("copy");
+      setTimeout(()=>setCopyOK(false), 2400);
+    }catch(e){
+      alert("Couldn't copy — please copy the form contents manually and email tcgplaysim@gmail.com.");
+    }
+  };
+  const inp = {...iS, marginTop:0, fontSize:12, padding:"7px 10px", width:"100%", boxSizing:"border-box", fontFamily:"Crimson Text, serif"};
+  const lab = {fontSize:10,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",marginBottom:5,display:"block"};
+
+  return(
+    <HelpModalShell title="🐛 Report a bug" subtitle="The more detail, the faster it can be fixed" onClose={onClose} width={760}>
+      <div style={{fontSize:11,color: T.muted,marginBottom:14,fontStyle:"italic"}}>
+        Submitting opens your default email client with everything pre-filled, addressed
+        to <b>tcgplaysim@gmail.com</b>. Or use <b>Copy to clipboard</b> and paste into
+        any email client of your choice.
+      </div>
+
+      <label style={lab}>Short title</label>
+      <input value={title} onChange={e=>setTitle(e.target.value)} style={inp}
+        placeholder="e.g. Hand vanishes after rejoining a Dandân room"/>
+
+      <label style={{...lab,marginTop:14}}>Game mode / screen</label>
+      <select value={mode} onChange={e=>setMode(e.target.value)} style={{...inp,cursor:"pointer"}}>
+        <option value="">— pick one —</option>
+        <option value="Main menu / deckbuilder">Main menu / deckbuilder</option>
+        <option value="Multiplayer lobby">Multiplayer lobby</option>
+        <option value="Solo / hotseat game">Solo / hotseat game</option>
+        <option value="Online — Standard">Online — Standard</option>
+        <option value="Online — Commander">Online — Commander</option>
+        <option value="Online — Oathbreaker">Online — Oathbreaker</option>
+        <option value="Online — Dandân">Online — Dandân</option>
+        <option value="Online — other">Online — other format</option>
+        <option value="Profile / theme picker">Profile / theme picker</option>
+        <option value="Other">Other</option>
+      </select>
+
+      <label style={{...lab,marginTop:14}}>Steps to reproduce</label>
+      <textarea value={steps} onChange={e=>setSteps(e.target.value)} style={{...inp,minHeight:64,resize:"vertical"}}
+        placeholder={"1. Go to multiplayer\n2. Create Dandân room\n3. …"}/>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginTop:14}}>
+        <div>
+          <label style={lab}>What you expected</label>
+          <textarea value={expected} onChange={e=>setExpected(e.target.value)} style={{...inp,minHeight:54,resize:"vertical"}}/>
+        </div>
+        <div>
+          <label style={lab}>What actually happened</label>
+          <textarea value={actual} onChange={e=>setActual(e.target.value)} style={{...inp,minHeight:54,resize:"vertical"}}/>
+        </div>
+      </div>
+
+      <label style={{...lab,marginTop:14}}>Console output (optional)</label>
+      <div style={{fontSize:10,color: T.muted,marginBottom:5,fontStyle:"italic"}}>
+        Open DevTools (F12 / Cmd-Opt-I) → Console tab. Copy any red errors and paste here.
+      </div>
+      <textarea value={console_} onChange={e=>setConsole(e.target.value)}
+        style={{...inp,minHeight:54,resize:"vertical",fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace",fontSize:11}}
+        placeholder="Uncaught TypeError: …"/>
+
+      <label style={{...lab,marginTop:14}}>Contact (optional)</label>
+      <input value={contact} onChange={e=>setContact(e.target.value)} style={inp}
+        placeholder={profile?.alias ? `defaults to your alias: ${profile.alias}` : "name, email, or Discord handle"}/>
+
+      <div style={{display:"flex",gap:10,marginTop:20,alignItems:"center",flexWrap:"wrap"}}>
+        <button onClick={sendViaMail}
+          style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{padding:"9px 18px",fontFamily:"Cinzel,serif",fontWeight:700,fontSize:12})}}
+          onMouseOver={hov} onMouseOut={uhov}>📧 Open in email</button>
+        <button onClick={sendViaCopy}
+          style={{...btn(`${T.panel}cc`,T.text,{padding:"9px 14px",border:`1px solid ${T.border}50`,fontSize:12,fontFamily:"Cinzel,serif"})}}
+          onMouseOver={hov} onMouseOut={uhov}>{copyOK ? "✓ Copied" : "📋 Copy to clipboard"}</button>
+        {sentVia==="mail" && (
+          <span style={{fontSize:11,color:"#34d399",fontStyle:"italic"}}>
+            ✓ Email client should have opened — hit send.
+          </span>
+        )}
+        {sentVia==="copy" && copyOK && (
+          <span style={{fontSize:11,color:"#34d399",fontStyle:"italic"}}>
+            ✓ Copied. Paste into your email client and send to tcgplaysim@gmail.com.
+          </span>
+        )}
+      </div>
+    </HelpModalShell>
+  );
+}
+
+/* FeatureRequestModal — same pattern as the bug report, simpler set of
+   fields. Where / What / Why / contact. */
+function FeatureRequestModal({onClose,profile}){
+  const [where,setWhere] = useState("");
+  const [what,setWhat] = useState("");
+  const [why,setWhy] = useState("");
+  const [contact,setContact] = useState("");
+  const [copyOK,setCopyOK] = useState(false);
+  const [sentVia,setSentVia] = useState("");
+
+  const subject = `[Feature] ${what || "(untitled)"}`;
+  const body = (
+`A feature request from TCG Playsim.
+
+──────── WHERE ────────
+${where || "(unspecified)"}
+
+──────── WHAT ────────
+${what || "(none provided)"}
+
+──────── WHY ────────
+${why || "(none provided)"}
+
+──────── CONTACT (optional) ────────
+${contact || profile?.alias || "(anonymous)"}
+
+Submitted at: ${new Date().toISOString()}`
+  );
+
+  const sendViaMail = ()=>{
+    window.location.href = _buildMailto("tcgplaysim@gmail.com", subject, body);
+    setSentVia("mail");
+  };
+  const sendViaCopy = async ()=>{
+    try{
+      const blob = `To: tcgplaysim@gmail.com\nSubject: ${subject}\n\n${body}`;
+      await navigator.clipboard.writeText(blob);
+      setCopyOK(true);
+      setSentVia("copy");
+      setTimeout(()=>setCopyOK(false), 2400);
+    }catch(e){
+      alert("Couldn't copy — please copy the form contents manually and email tcgplaysim@gmail.com.");
+    }
+  };
+  const inp = {...iS, marginTop:0, fontSize:12, padding:"7px 10px", width:"100%", boxSizing:"border-box", fontFamily:"Crimson Text, serif"};
+  const lab = {fontSize:10,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",marginBottom:5,display:"block"};
+
+  return(
+    <HelpModalShell title="💡 Suggest a feature" subtitle="Tell me what's missing or what you'd change" onClose={onClose} width={680}>
+      <div style={{fontSize:11,color: T.muted,marginBottom:14,fontStyle:"italic"}}>
+        Submitting opens your default email client with everything pre-filled, addressed
+        to <b>tcgplaysim@gmail.com</b>. Or use <b>Copy to clipboard</b> and paste into
+        any email client of your choice.
+      </div>
+
+      <label style={lab}>Where in the app?</label>
+      <input value={where} onChange={e=>setWhere(e.target.value)} style={inp}
+        placeholder="e.g. Deckbuilder, the cmdr zone tab"/>
+
+      <label style={{...lab,marginTop:14}}>What should change?</label>
+      <input value={what} onChange={e=>setWhat(e.target.value)} style={inp}
+        placeholder="e.g. Allow setting partner commander color identity"/>
+
+      <label style={{...lab,marginTop:14}}>Why does it matter?</label>
+      <textarea value={why} onChange={e=>setWhy(e.target.value)} style={{...inp,minHeight:90,resize:"vertical"}}
+        placeholder="What problem does this solve? Who benefits?"/>
+
+      <label style={{...lab,marginTop:14}}>Contact (optional)</label>
+      <input value={contact} onChange={e=>setContact(e.target.value)} style={inp}
+        placeholder={profile?.alias ? `defaults to your alias: ${profile.alias}` : "name, email, or Discord handle"}/>
+
+      <div style={{display:"flex",gap:10,marginTop:20,alignItems:"center",flexWrap:"wrap"}}>
+        <button onClick={sendViaMail}
+          style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,{padding:"9px 18px",fontFamily:"Cinzel,serif",fontWeight:700,fontSize:12})}}
+          onMouseOver={hov} onMouseOut={uhov}>📧 Open in email</button>
+        <button onClick={sendViaCopy}
+          style={{...btn(`${T.panel}cc`,T.text,{padding:"9px 14px",border:`1px solid ${T.border}50`,fontSize:12,fontFamily:"Cinzel,serif"})}}
+          onMouseOver={hov} onMouseOut={uhov}>{copyOK ? "✓ Copied" : "📋 Copy to clipboard"}</button>
+        {sentVia==="mail" && (
+          <span style={{fontSize:11,color:"#34d399",fontStyle:"italic"}}>
+            ✓ Email client should have opened — hit send.
+          </span>
+        )}
+        {sentVia==="copy" && copyOK && (
+          <span style={{fontSize:11,color:"#34d399",fontStyle:"italic"}}>
+            ✓ Copied. Paste into your email client and send to tcgplaysim@gmail.com.
+          </span>
+        )}
+      </div>
+    </HelpModalShell>
+  );
+}
+
+/* HelpDropdown — small overflow menu in the main-menu header. One button
+   "ℹ More" → a popover with four entries. Click-outside closes the popover.
+   v7.6.5: also shows "Report a user" for everyone, and "Moderator panel"
+   only for moderators. */
+function HelpDropdown({onPick, isModerator = false}){
+  const [open,setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(()=>{
+    if(!open) return;
+    const onDoc = (e)=>{
+      if(ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    const onEsc = (e)=>{ if(e.key==="Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onEsc);
+    return ()=>{
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onEsc);
+    };
+  },[open]);
+  const items = [
+    {id:"manual",  icon:"📖", label:"Manual",            sub:"How to play"},
+    {id:"rules",   icon:"📜", label:"Code of Conduct",   sub:"Platform rules"},
+    {id:"bug",     icon:"🐛", label:"Report a bug",      sub:"Send to maintainer"},
+    {id:"feature", icon:"💡", label:"Suggest a feature", sub:"Send to maintainer"},
+    {id:"report",  icon:"🚩", label:"Report a user",     sub:"For code-of-conduct violations"},
+    ...(isModerator ? [{id:"mod", icon:"🛡", label:"Moderator panel", sub:"Review queue + users"}] : []),
+  ];
+  const pick = (id)=>{ setOpen(false); onPick(id); };
+  return(
+    <div ref={ref} style={{position:"relative"}}>
+      <button onClick={()=>setOpen(o=>!o)}
+        style={{...btn("rgba(96,165,250,.08)","#60a5fa",{fontFamily:"Cinzel,serif",padding:"8px 14px",border:"1px solid rgba(96,165,250,.2)"}),fontSize:11}}
+        onMouseOver={hov} onMouseOut={uhov} title="Manual, rules, feedback">ℹ Help ▾</button>
+      {open && (
+        <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,zIndex:1000,
+          minWidth:240,background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+          border:`1px solid rgba(${T.accentRgb},.25)`,borderRadius:8,padding:6,
+          boxShadow:"0 12px 40px rgba(0,0,0,.7)"}}>
+          {items.map(it=>(
+            <button key={it.id} onClick={()=>pick(it.id)}
+              style={{display:"flex",alignItems:"center",gap:10,width:"100%",
+                background:"transparent",border:"none",padding:"8px 10px",borderRadius:6,
+                cursor:"pointer",textAlign:"left",transition:"background .12s"}}
+              onMouseOver={e=>e.currentTarget.style.background=`rgba(${T.accentRgb},.08)`}
+              onMouseOut={e=>e.currentTarget.style.background="transparent"}>
+              <span style={{fontSize:18}}>{it.icon}</span>
+              <span>
+                <div style={{color:T.text,fontFamily:"Cinzel,serif",fontSize:12}}>{it.label}</div>
+                <div style={{color: T.muted,fontSize:10,fontStyle:"italic"}}>{it.sub}</div>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── v7.6.5 LobbyChat — global chat sidebar on the main menu ────────────────
+   Authenticated users can post a 1–500 char message; everyone sees the last
+   ~80 messages, newest at the bottom. Realtime via Supabase channel. Every
+   submission is run through the automod filter:
+     • verdict='block' → message is dropped, automod_block logged, strike++
+     • verdict='flag'  → message goes through, automod_flag logged
+     • verdict='ok'    → posted normally
+   When the strike counter crosses STRIKE_THRESHOLD the user's media (playmat
+   + sleeve URLs) is revoked via the revoke_media RPC.
+   ─────────────────────────────────────────────────────────────────────────── */
+function LobbyChat({ profile, onModerationEvent }){
+  const [messages,setMessages] = useState([]);
+  const [input,setInput] = useState("");
+  const [collapsed,setCollapsed] = useState(false);
+  const [busy,setBusy] = useState(false);
+  const [warning,setWarning] = useState("");      // shown when automod blocks
+  const [strikes,setStrikes] = useState(profile?.strikes || 0);
+  const [revoked,setRevoked] = useState(!!profile?.media_revoked);
+  const scrollRef = useRef(null);
+
+  // Initial fetch + realtime subscription
+  useEffect(()=>{
+    let cancelled = false;
+    Mod.fetchLobbyMessages(80).then(({data})=>{
+      if(!cancelled) setMessages(data);
+    });
+    const ch = Mod.subscribeLobbyMessages((row)=>{
+      setMessages(prev => {
+        if(prev.some(m => m.id === row.id)) return prev;
+        return [...prev, row].slice(-200);
+      });
+    });
+    return ()=>{
+      cancelled = true;
+      try { ch?.unsubscribe(); } catch {}
+    };
+  },[]);
+
+  // Auto-scroll to newest
+  useEffect(()=>{
+    if(scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  },[messages.length, collapsed]);
+
+  const handleSend = async ()=>{
+    const text = input.trim();
+    if(!text || busy) return;
+    setWarning("");
+    setBusy(true);
+    try{
+      const verdict = await automodInspect(text);
+      if(verdict.verdict === "block"){
+        // Drop the message; log it; increment strikes; maybe revoke media.
+        await Mod.logModeration({
+          kind: "automod_block",
+          surface: "lobby_chat",
+          offenderId: profile?.user_id || null,
+          offenderAlias: profile?.alias || null,
+          payload: { original_text: text, matched: verdict.matched },
+        });
+        if(profile?.user_id){
+          const { data } = await Mod.incrementStrike(profile.user_id);
+          const total = data?.strikes || strikes + 1;
+          setStrikes(total);
+          if(total >= STRIKE_THRESHOLD && !revoked){
+            await Mod.revokeMedia(profile.user_id);
+            await Mod.logModeration({
+              kind: "media_revoke",
+              surface: "lobby_chat",
+              offenderId: profile.user_id,
+              offenderAlias: profile.alias,
+              payload: { reason: "auto_strike_threshold", strikes: total },
+            });
+            setRevoked(true);
+          }
+        }
+        setWarning("Your message was blocked by the content filter. Repeated violations will revoke your custom playmat and sleeve permissions.");
+        setInput("");
+        onModerationEvent?.({ kind:"block", text });
+        return;
+      }
+      if(verdict.verdict === "flag"){
+        await Mod.logModeration({
+          kind: "automod_flag",
+          surface: "lobby_chat",
+          offenderId: profile?.user_id || null,
+          offenderAlias: profile?.alias || null,
+          payload: { original_text: text, matched: verdict.matched },
+        });
+      }
+      // Post the message.
+      const { error } = await Mod.postLobbyMessage({
+        alias: profile?.alias,
+        avatar: profile?.avatar,
+        text,
+      });
+      if(error){
+        setWarning("Couldn't send — please sign in to use lobby chat.");
+      } else {
+        setInput("");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onKey = (e)=>{
+    if(e.key === "Enter" && !e.shiftKey){
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  if(collapsed){
+    return(
+      <div style={{position:"fixed",right:0,top:140,zIndex:50}}>
+        <button onClick={()=>setCollapsed(false)}
+          style={{...btn(`${T.panel}f0`,T.accent,{
+            border:`1px solid rgba(${T.accentRgb},.3)`,borderLeft:`1px solid rgba(${T.accentRgb},.3)`,
+            borderRadius:"6px 0 0 6px",padding:"10px 8px",writingMode:"vertical-rl",
+            textOrientation:"mixed",letterSpacing:".15em",fontFamily:"Cinzel,serif",fontSize:11})}}
+          onMouseOver={hov} onMouseOut={uhov}>💬 LOBBY</button>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{
+      position:"fixed", right:0, top:80, bottom:14, width:280, zIndex:50,
+      background:`linear-gradient(180deg,${T.panel}f0,${T.bg}f0)`,
+      border:`1px solid rgba(${T.accentRgb},.2)`, borderRight:"none",
+      borderRadius:"10px 0 0 10px", display:"flex", flexDirection:"column",
+      boxShadow:"-8px 0 30px rgba(0,0,0,.5)",
+    }}>
+      <div style={{padding:"10px 12px",borderBottom:`1px solid rgba(${T.accentRgb},.15)`,
+        display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div>
+          <div style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:12,letterSpacing:".1em"}}>💬 Lobby Chat</div>
+          <div style={{color:T.muted,fontSize:9,fontFamily:"Cinzel,serif",letterSpacing:".1em",marginTop:2}}>
+            {revoked ? "⚠ Media privileges revoked" : `${messages.length} messages`}
+          </div>
+        </div>
+        <button onClick={()=>setCollapsed(true)} title="Collapse"
+          style={{...btn("transparent",T.muted,{fontSize:14,border:"none",padding:"2px 6px"})}}
+          onMouseOver={hov} onMouseOut={uhov}>›</button>
+      </div>
+
+      <div ref={scrollRef} style={{flex:1,overflowY:"auto",padding:"8px 10px",fontSize:12,lineHeight:1.4}}>
+        {messages.length===0 ? (
+          <div style={{color:T.muted,fontSize:11,fontStyle:"italic",textAlign:"center",marginTop:30}}>
+            No messages yet. Be the first.
+          </div>
+        ) : messages.map(m=>(
+          <div key={m.id} style={{marginBottom:8,padding:"6px 8px",
+            background:`rgba(${T.accentRgb},.04)`,borderRadius:6}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:2}}>
+              <span style={{fontSize:13}}>{m.avatar||"🧙"}</span>
+              <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:10,letterSpacing:".05em"}}>{m.alias||"Anonymous"}</span>
+              <span style={{color:T.muted,fontSize:8,marginLeft:"auto"}}>
+                {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
+              </span>
+            </div>
+            <div style={{color:"#d4c5a0",fontFamily:"Crimson Text,serif",fontSize:12,wordBreak:"break-word"}}>{m.text}</div>
+          </div>
+        ))}
+      </div>
+
+      {warning && (
+        <div style={{margin:"0 10px 6px",padding:"7px 9px",fontSize:10.5,
+          background:"rgba(248,113,113,.08)",border:"1px solid rgba(248,113,113,.3)",
+          borderRadius:5,color:"#fca5a5",lineHeight:1.4}}>
+          {warning}
+        </div>
+      )}
+
+      <div style={{padding:"8px 10px",borderTop:`1px solid rgba(${T.accentRgb},.15)`}}>
+        {profile ? (
+          <>
+            <textarea value={input} onChange={e=>setInput(e.target.value.slice(0,500))}
+              onKeyDown={onKey}
+              placeholder="Say something to the lobby…"
+              style={{...iS,marginTop:0,fontSize:12,minHeight:42,resize:"none",fontFamily:"Crimson Text, serif",
+                width:"100%",boxSizing:"border-box"}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:5,fontSize:9,color:T.muted}}>
+              <span>{input.length}/500 · Enter to send</span>
+              <button onClick={handleSend} disabled={busy||!input.trim()}
+                style={{...btn(`rgba(${T.accentRgb},.15)`,T.accent,{fontSize:11,padding:"4px 12px",
+                  border:`1px solid rgba(${T.accentRgb},.3)`,opacity:(busy||!input.trim())?.4:1})}}
+                onMouseOver={hov} onMouseOut={uhov}>Send</button>
+            </div>
+          </>
+        ) : (
+          <div style={{fontSize:11,color:T.muted,fontStyle:"italic",textAlign:"center",padding:"6px 0"}}>
+            Sign in to chat.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── v7.6.5 ReportUserModal ────────────────────────────────────────────────
+   Lets a player report another player. Captures an optional screenshot of
+   the current viewport using html2canvas (loaded on demand from CDN). The
+   screenshot is downloaded as a PNG (browser security prevents auto-
+   attaching to mailto:); the user is told to attach it manually. Report is
+   simultaneously logged to moderation_log so a moderator sees it without
+   relying on email reaching the maintainer.
+   ─────────────────────────────────────────────────────────────────────────── */
+function ReportUserModal({onClose, profile}){
+  const [targetAlias,setTargetAlias] = useState("");
+  const [reason,setReason] = useState("");
+  const [details,setDetails] = useState("");
+  const [includeShot,setIncludeShot] = useState(true);
+  const [busy,setBusy] = useState(false);
+  const [done,setDone] = useState(false);
+  const [error,setError] = useState("");
+
+  // Lazy-load html2canvas only when needed.
+  const captureScreen = async ()=>{
+    if(typeof window === "undefined") return null;
+    if(!window.html2canvas){
+      await new Promise((res,rej)=>{
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+        s.onload = res; s.onerror = ()=>rej(new Error("html2canvas load failed"));
+        document.head.appendChild(s);
+      });
+    }
+    try{
+      const canvas = await window.html2canvas(document.body, {
+        useCORS: true, allowTaint: false, scale: 0.75, logging: false,
+      });
+      return canvas.toDataURL("image/png");
+    } catch(e){
+      console.warn("[report] screenshot capture failed:",e);
+      return null;
+    }
+  };
+
+  const submit = async ()=>{
+    if(!reason.trim() && !targetAlias.trim()) {
+      setError("Please give the offender's alias and a reason.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try{
+      let shot = null;
+      if(includeShot){
+        shot = await captureScreen();
+      }
+      // Log to moderation_log so a moderator sees it independent of email.
+      const { error: logErr } = await Mod.logModeration({
+        kind: "report_user",
+        surface: "in_game_chat",
+        offenderId: null,                 // alias only — moderator resolves to user_id
+        offenderAlias: targetAlias.trim(),
+        reporterId: profile?.user_id || null,
+        reporterAlias: profile?.alias || null,
+        payload: {
+          reason: reason.trim(),
+          details: details.trim(),
+          // Screenshots can be large; we don't shove the whole data URL into
+          // the JSON column. Instead we store a flag noting the user should
+          // attach it to their email. The mod panel surfaces this so the
+          // moderator can request the file.
+          screenshot_attached: !!shot,
+        },
+      });
+      if(logErr){
+        setError("Couldn't submit — please sign in to report users.");
+        setBusy(false);
+        return;
+      }
+      // Trigger the screenshot download so the user can attach it manually.
+      if(shot){
+        const a = document.createElement("a");
+        a.href = shot;
+        a.download = `report-${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      // Open prefilled email — the user attaches the downloaded PNG manually.
+      const subject = `[Report] ${targetAlias.trim() || "user"} — ${reason.trim() || "(no reason)"}`;
+      const body =
+`A user report from TCG Playsim.
+
+──────── ALIAS REPORTED ────────
+${targetAlias.trim() || "(not provided)"}
+
+──────── REASON ────────
+${reason.trim() || "(none provided)"}
+
+──────── DETAILS ────────
+${details.trim() || "(none provided)"}
+
+──────── REPORTER ────────
+${profile?.alias || "(anonymous)"}
+
+──────── SCREENSHOT ────────
+${shot ? "Saved to your Downloads folder — please attach it before sending."
+       : "(no screenshot)"}
+
+Submitted at: ${new Date().toISOString()}`;
+      window.location.href = `mailto:tcgplaysim@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      setDone(true);
+    } catch(e){
+      setError("Submission failed: " + (e?.message||e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inp = {...iS, marginTop:0, fontSize:12, padding:"7px 10px", width:"100%", boxSizing:"border-box", fontFamily:"Crimson Text, serif"};
+  const lab = {fontSize:10,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",marginBottom:5,display:"block"};
+
+  return(
+    <HelpModalShell title="🚩 Report a user" subtitle="Tell us about behaviour that breached the code of conduct" onClose={onClose} width={620}>
+      {done ? (
+        <div style={{padding:"20px 0",textAlign:"center"}}>
+          <div style={{fontSize:36,marginBottom:10}}>✓</div>
+          <div style={{color:"#34d399",fontFamily:"Cinzel,serif",fontSize:14,marginBottom:10}}>Report submitted.</div>
+          <div style={{fontSize:12,color:T.muted,fontStyle:"italic",lineHeight:1.5}}>
+            A moderator will review it. {includeShot && "Your screenshot was saved to your Downloads folder — please attach it to the email that just opened."}
+          </div>
+          <button onClick={onClose}
+            style={{...btn(`${T.panel}cc`,T.text,{padding:"8px 18px",marginTop:18,fontFamily:"Cinzel,serif",fontSize:12,border:`1px solid ${T.border}50`})}}
+            onMouseOver={hov} onMouseOut={uhov}>Close</button>
+        </div>
+      ) : (
+        <>
+          <div style={{fontSize:11,color:T.muted,marginBottom:14,fontStyle:"italic"}}>
+            Reports go straight to a moderator review queue. False reports
+            wastefully cost moderator time — please only file when something
+            actually breached the code of conduct.
+          </div>
+
+          <label style={lab}>Offender's alias</label>
+          <input value={targetAlias} onChange={e=>setTargetAlias(e.target.value)} style={inp}
+            placeholder="The exact name shown in chat or on the playmat"/>
+
+          <label style={{...lab,marginTop:14}}>Reason</label>
+          <select value={reason} onChange={e=>setReason(e.target.value)} style={{...inp,cursor:"pointer"}}>
+            <option value="">— pick one —</option>
+            <option value="Hate speech / discrimination">Hate speech / discrimination</option>
+            <option value="Harassment / threats">Harassment / threats</option>
+            <option value="Inappropriate playmat / sleeve image">Inappropriate playmat / sleeve image</option>
+            <option value="Inappropriate alias">Inappropriate alias</option>
+            <option value="Inappropriate custom card">Inappropriate custom card</option>
+            <option value="Cheating / exploit abuse">Cheating / exploit abuse</option>
+            <option value="Spam / advertising">Spam / advertising</option>
+            <option value="Impersonation">Impersonation</option>
+            <option value="Other">Other</option>
+          </select>
+
+          <label style={{...lab,marginTop:14}}>Details</label>
+          <textarea value={details} onChange={e=>setDetails(e.target.value)} style={{...inp,minHeight:74,resize:"vertical"}}
+            placeholder="What did they say or do? When?"/>
+
+          <label style={{display:"flex",alignItems:"center",gap:8,marginTop:14,fontSize:12,color:T.text,cursor:"pointer"}}>
+            <input type="checkbox" checked={includeShot} onChange={e=>setIncludeShot(e.target.checked)}/>
+            Include a screenshot of the current screen
+          </label>
+          <div style={{fontSize:10,color:T.muted,fontStyle:"italic",marginTop:4,paddingLeft:24}}>
+            Your browser can't auto-attach files to emails. The screenshot will be saved to your Downloads folder; attach it manually before sending.
+          </div>
+
+          {error && (
+            <div style={{marginTop:14,padding:"8px 10px",fontSize:11,
+              background:"rgba(248,113,113,.08)",border:"1px solid rgba(248,113,113,.3)",
+              borderRadius:5,color:"#fca5a5"}}>{error}</div>
+          )}
+
+          <div style={{display:"flex",gap:10,marginTop:18,alignItems:"center"}}>
+            <button onClick={submit} disabled={busy}
+              style={{...btn(`linear-gradient(135deg,${T.accent},#8a6040)`,T.bg,
+                {padding:"9px 18px",fontFamily:"Cinzel,serif",fontWeight:700,fontSize:12,opacity:busy?.6:1})}}
+              onMouseOver={hov} onMouseOut={uhov}>{busy ? "Submitting…" : "🚩 Submit report"}</button>
+            <button onClick={onClose}
+              style={{...btn("transparent",T.muted,{padding:"9px 14px",fontSize:11,border:`1px solid ${T.border}50`})}}
+              onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+          </div>
+        </>
+      )}
+    </HelpModalShell>
+  );
+}
+
+/* ─── v7.6.5 ModeratorPanel ─────────────────────────────────────────────────
+   Visible only to users with profiles.is_moderator = true. Three tabs:
+     • Queue:  unreviewed moderation_log entries
+     • Users:  every profile, with strike count, media-revoked flag, alias
+               history accessible per row
+     • All:    full moderation_log for context
+   ─────────────────────────────────────────────────────────────────────────── */
+function ModeratorPanel({onClose}){
+  const [tab,setTab] = useState("queue");
+  const [queue,setQueue] = useState([]);
+  const [allLog,setAllLog] = useState([]);
+  const [users,setUsers] = useState([]);
+  const [busy,setBusy] = useState(true);
+  const [historyFor,setHistoryFor] = useState(null);  // user_id whose alias history is open
+  const [history,setHistory] = useState([]);
+  const [reviewNote,setReviewNote] = useState({});
+
+  const refresh = useCallback(async ()=>{
+    setBusy(true);
+    const [q, all, u] = await Promise.all([
+      Mod.fetchModerationLog({ limit:300, unreviewedOnly:true }),
+      Mod.fetchModerationLog({ limit:500 }),
+      Mod.fetchAllProfilesForMod({ limit:1000 }),
+    ]);
+    setQueue(q.data);
+    setAllLog(all.data);
+    setUsers(u.data);
+    setBusy(false);
+  },[]);
+
+  useEffect(()=>{ refresh(); },[refresh]);
+
+  const markReviewed = async (id)=>{
+    await Mod.markModerationReviewed(id, reviewNote[id] || null);
+    refresh();
+  };
+
+  const showHistory = async (userId)=>{
+    setHistoryFor(userId);
+    const { data } = await Mod.fetchUsernameHistory(userId);
+    setHistory(data);
+  };
+
+  const restore = async (userId)=>{
+    if(!confirm("Restore media privileges and reset strike count for this user?")) return;
+    await Mod.restoreMedia(userId);
+    refresh();
+  };
+
+  const Tab = ({id,label,count}) => (
+    <button onClick={()=>setTab(id)}
+      style={{...btn(tab===id?`rgba(${T.accentRgb},.15)`:"transparent",
+        tab===id?T.accent:T.muted,
+        {fontFamily:"Cinzel,serif",fontSize:11,padding:"6px 14px",
+         border:`1px solid ${tab===id?`rgba(${T.accentRgb},.3)`:`${T.border}30`}`})}}
+      onMouseOver={hov} onMouseOut={uhov}>
+      {label} {count!=null && <span style={{marginLeft:6,fontSize:9,opacity:.7}}>{count}</span>}
+    </button>
+  );
+
+  const LogRow = ({row,actionable}) => (
+    <div style={{padding:"10px 12px",margin:"6px 0",
+      background:`rgba(${T.accentRgb},.04)`,
+      border:`1px solid rgba(${T.accentRgb},.15)`,borderRadius:6}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,fontSize:10,color:T.muted,fontFamily:"Cinzel,serif",marginBottom:5}}>
+        <span style={{color:row.kind==="automod_block"?"#f87171":row.kind==="report_user"?"#fbbf24":row.kind==="media_revoke"?"#f87171":"#a78bfa",fontWeight:700,letterSpacing:".05em"}}>
+          {row.kind.toUpperCase()}
+        </span>
+        <span>{row.surface||"—"}</span>
+        <span style={{marginLeft:"auto"}}>{new Date(row.created_at).toLocaleString()}</span>
+      </div>
+      {row.offender_alias && (
+        <div style={{fontSize:11,color:"#d4c5a0",marginBottom:3}}>
+          <b>Offender:</b> {row.offender_alias} {row.offender_id && <span style={{fontSize:9,color:T.muted}}>({row.offender_id.slice(0,8)})</span>}
+        </div>
+      )}
+      {row.reporter_alias && (
+        <div style={{fontSize:11,color:"#d4c5a0",marginBottom:3}}>
+          <b>Reporter:</b> {row.reporter_alias}
+        </div>
+      )}
+      {row.payload && Object.keys(row.payload||{}).length > 0 && (
+        <pre style={{fontSize:10,color:"#a8a8a8",margin:"4px 0",padding:6,background:"rgba(0,0,0,.3)",
+          borderRadius:4,whiteSpace:"pre-wrap",wordBreak:"break-word",fontFamily:"ui-monospace,monospace"}}>
+          {JSON.stringify(row.payload,null,2)}
+        </pre>
+      )}
+      {row.reviewed && (
+        <div style={{fontSize:10,color:"#34d399",fontStyle:"italic",marginTop:4}}>
+          ✓ Reviewed{row.reviewer_note ? ` — ${row.reviewer_note}`:""}
+        </div>
+      )}
+      {actionable && !row.reviewed && (
+        <div style={{display:"flex",gap:8,marginTop:8}}>
+          <input value={reviewNote[row.id]||""} onChange={e=>setReviewNote(p=>({...p,[row.id]:e.target.value}))}
+            placeholder="Optional note"
+            style={{...iS,marginTop:0,fontSize:10,padding:"4px 8px",flex:1}}/>
+          <button onClick={()=>markReviewed(row.id)}
+            style={{...btn(`rgba(${T.accentRgb},.15)`,T.accent,{fontSize:10,padding:"4px 10px",border:`1px solid rgba(${T.accentRgb},.3)`})}}
+            onMouseOver={hov} onMouseOut={uhov}>✓ Mark reviewed</button>
+        </div>
+      )}
+    </div>
+  );
+
+  return(
+    <HelpModalShell title="🛡 Moderator Panel" subtitle={busy ? "Loading…" : `${queue.length} unreviewed · ${users.length} users · ${allLog.length} log entries`} onClose={onClose} width={1000}>
+      <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+        <Tab id="queue" label="Queue"  count={queue.length}/>
+        <Tab id="users" label="Users"  count={users.length}/>
+        <Tab id="all"   label="All log" count={allLog.length}/>
+      </div>
+
+      {tab === "queue" && (
+        <div>
+          {queue.length === 0 ? (
+            <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontStyle:"italic"}}>
+              ✓ Queue is empty.
+            </div>
+          ) : queue.map(row => <LogRow key={row.id} row={row} actionable/>)}
+        </div>
+      )}
+
+      {tab === "users" && (
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"24px 1.5fr 1fr 60px 80px 1fr",gap:8,
+            fontSize:9,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".08em",
+            textTransform:"uppercase",padding:"6px 8px",borderBottom:`1px solid rgba(${T.accentRgb},.15)`}}>
+            <span></span><span>Alias</span><span>Playmat</span><span>Strikes</span><span>Status</span><span>Actions</span>
+          </div>
+          {users.map(u => {
+            const playmat = u.gamemat_custom || "—";
+            return (
+              <div key={u.user_id} style={{display:"grid",gridTemplateColumns:"24px 1.5fr 1fr 60px 80px 1fr",
+                gap:8,padding:"8px",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.04)",fontSize:11}}>
+                <span style={{fontSize:16}}>{u.avatar||"🧙"}</span>
+                <span style={{color:T.text,fontFamily:"Cinzel,serif"}}>{u.alias}{u.is_moderator && <span style={{marginLeft:6,fontSize:8,color:"#a78bfa"}}>MOD</span>}</span>
+                <span style={{color:T.muted,fontSize:10,wordBreak:"break-all"}} title={playmat}>
+                  {playmat === "—" ? "—" : (playmat.length > 28 ? playmat.slice(0,28)+"…" : playmat)}
+                </span>
+                <span style={{color:u.strikes>=STRIKE_THRESHOLD?"#f87171":u.strikes>0?"#fbbf24":T.muted,
+                  textAlign:"center"}}>{u.strikes||0}</span>
+                <span>{u.media_revoked ? <span style={{color:"#f87171",fontSize:9}}>REVOKED</span> : <span style={{color:"#34d399",fontSize:9}}>OK</span>}</span>
+                <span style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  <button onClick={()=>showHistory(u.user_id)}
+                    style={{...btn("transparent",T.accent,{fontSize:9,padding:"3px 7px",border:`1px solid rgba(${T.accentRgb},.25)`})}}
+                    onMouseOver={hov} onMouseOut={uhov}>history</button>
+                  {u.media_revoked && (
+                    <button onClick={()=>restore(u.user_id)}
+                      style={{...btn("transparent","#34d399",{fontSize:9,padding:"3px 7px",border:"1px solid rgba(52,211,153,.3)"})}}
+                      onMouseOver={hov} onMouseOut={uhov}>restore</button>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {tab === "all" && (
+        <div>
+          {allLog.length === 0 ? (
+            <div style={{padding:"40px 0",textAlign:"center",color:T.muted,fontStyle:"italic"}}>
+              No log entries yet.
+            </div>
+          ) : allLog.map(row => <LogRow key={row.id} row={row} actionable={!row.reviewed}/>)}
+        </div>
+      )}
+
+      {historyFor && (
+        <div onClick={()=>setHistoryFor(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:10005,
+          display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div onClick={e=>e.stopPropagation()} style={{
+            background:`linear-gradient(160deg,${T.panel},${T.bg})`,
+            border:`1px solid rgba(${T.accentRgb},.3)`,borderRadius:10,padding:20,
+            width:420,maxHeight:"70vh",overflowY:"auto"}}>
+            <div style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:13,marginBottom:10}}>Username history</div>
+            {history.length === 0 ? (
+              <div style={{color:T.muted,fontStyle:"italic",fontSize:11}}>No prior aliases recorded.</div>
+            ) : history.map((h,i)=>(
+              <div key={i} style={{padding:"6px 0",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",justifyContent:"space-between",fontSize:11}}>
+                <span style={{color:T.text}}>{h.alias}</span>
+                <span style={{color:T.muted,fontSize:9}}>{new Date(h.changed_at).toLocaleString()}</span>
+              </div>
+            ))}
+            <button onClick={()=>setHistoryFor(null)}
+              style={{...btn("transparent",T.muted,{marginTop:14,padding:"5px 12px",fontSize:11,border:`1px solid ${T.border}40`})}}
+              onMouseOver={hov} onMouseOut={uhov}>Close</button>
+          </div>
+        </div>
+      )}
+    </HelpModalShell>
   );
 }
 

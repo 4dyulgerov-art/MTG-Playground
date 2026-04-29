@@ -10,12 +10,93 @@
     <link rel="manifest" href="/manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#050a12" />
-    <meta name="description" content="TCG Playsim — free browser-based trading-card-game playtester. 2–4 players online. playsim.live" />
-    <title>TCG Playsim</title>
+
+    <!-- ── PRIMARY SEO ───────────────────────────────────────────────── -->
+    <title>TCG Playsim — Free Online MTG Playtester & Deckbuilder</title>
+    <meta name="description" content="Free browser-based Magic: The Gathering playtester and deckbuilder. Play Standard, Commander, Oathbreaker, Modern, Legacy, Pauper, and Dandân online with up to 4 players. No download." />
+    <meta name="keywords" content="MTG playtester, magic the gathering online, commander playtester, oathbreaker playtester, dandan format, browser MTG, free MTG simulator, MTG deckbuilder, online card game simulator, scryfall deckbuilder, mtg sandbox" />
+    <meta name="author" content="TCG Playsim" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="googlebot" content="index,follow" />
+    <link rel="canonical" href="https://playsim.live/" />
+
+    <!-- ── OPEN GRAPH (Facebook, Discord, iMessage previews) ─────────── -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="TCG Playsim" />
+    <meta property="og:title" content="TCG Playsim — Free Online MTG Playtester & Deckbuilder" />
+    <meta property="og:description" content="Play and test Magic: The Gathering decks in your browser. Standard, Commander, Oathbreaker, Modern, Legacy, Pauper, and Dandân. Up to 4 players online, no download." />
+    <meta property="og:url" content="https://playsim.live/" />
+    <meta property="og:image" content="https://playsim.live/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TCG Playsim — browser MTG playtester for Standard, Commander, Oathbreaker, and more" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- ── TWITTER / X CARD ──────────────────────────────────────────── -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TCG Playsim — Free Online MTG Playtester" />
+    <meta name="twitter:description" content="Free browser-based MTG playtester. Standard, Commander, Oathbreaker, Modern, Legacy, Pauper, Dandân. 2–4 players. No download." />
+    <meta name="twitter:image" content="https://playsim.live/og-image.png" />
+    <meta name="twitter:image:alt" content="TCG Playsim — browser MTG playtester for Standard, Commander, Oathbreaker, and more" />
+
+    <!-- ── STRUCTURED DATA (Google rich results) ─────────────────────── -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebApplication",
+          "@id": "https://playsim.live/#webapp",
+          "name": "TCG Playsim",
+          "alternateName": ["Playsim", "TCG Playsim Live"],
+          "url": "https://playsim.live/",
+          "description": "Free browser-based Magic: The Gathering playtester and deckbuilder. Play Standard, Commander, Oathbreaker, Modern, Legacy, Pauper, and Dandân online with up to 4 players.",
+          "applicationCategory": "GameApplication",
+          "applicationSubCategory": "Card Game",
+          "operatingSystem": "Any",
+          "browserRequirements": "Requires JavaScript. Requires HTML5.",
+          "isAccessibleForFree": true,
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+          },
+          "featureList": [
+            "Browser-based MTG playtester",
+            "2 to 4 player online rooms",
+            "Standard, Commander, Oathbreaker, Modern, Legacy, Pioneer, Pauper, Dandân formats",
+            "Scryfall-powered card search",
+            "Custom card forge",
+            "Per-deck sleeves and playmats",
+            "Hotkey-driven gameplay",
+            "Realtime multiplayer over Supabase"
+          ],
+          "screenshot": "https://playsim.live/og-image.png"
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://playsim.live/#website",
+          "url": "https://playsim.live/",
+          "name": "TCG Playsim",
+          "description": "Free online Magic: The Gathering playtester for browser.",
+          "publisher": { "@id": "https://playsim.live/#org" },
+          "inLanguage": "en"
+        },
+        {
+          "@type": "Organization",
+          "@id": "https://playsim.live/#org",
+          "name": "TCG Playsim",
+          "url": "https://playsim.live/",
+          "logo": "https://playsim.live/favicon-512.png",
+          "email": "tcgplaysim@gmail.com"
+        }
+      ]
+    }
+    </script>
+
     <style>
       html, body, #root { height: 100%; margin: 0; background: #050a12; }
       body { font-family: "Crimson Text", Georgia, serif; color: #e8e2d0; overscroll-behavior: none; }
-      /* Initial skeleton while JS loads */
       .boot-skeleton {
         position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
         flex-direction: column; gap: 12px; background: #050a12; color: #c8a870;
@@ -23,15 +104,27 @@
       }
       .boot-skeleton .mark { font-size: 32px; opacity: .9; animation: floaty 2s ease-in-out infinite; }
       @keyframes floaty { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
+      /* SEO: hidden h1 — Google reads it, users don't see it. */
+      .seo-h1 { position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden; }
     </style>
   </head>
   <body>
+    <h1 class="seo-h1">TCG Playsim — Free Online MTG Playtester &amp; Deckbuilder</h1>
     <div id="root">
       <div class="boot-skeleton">
         <div class="mark">⚔</div>
         <div>TCG PLAYSIM</div>
         <div style="font-size:10px;opacity:.5">playsim.live — entering the multiverse…</div>
       </div>
+      <noscript>
+        <div style="max-width:720px;margin:80px auto;padding:24px;color:#d4c5a0;font-family:Georgia,serif;line-height:1.6;">
+          <h2 style="color:#c8a870">TCG Playsim requires JavaScript</h2>
+          <p>TCG Playsim is a free browser-based playtester for Magic: The Gathering and other trading card games. To use it, please enable JavaScript in your browser.</p>
+          <p>Supported formats: Standard, Commander, Oathbreaker, Modern, Legacy, Pioneer, Pauper, and the shared-deck Dandân format.</p>
+          <p>Play with 2 to 4 players online, no download required. Build decks with Scryfall-powered search, customize sleeves and playmats per deck, and use hotkey-driven gameplay for fast play.</p>
+          <p>Contact: <a href="mailto:tcgplaysim@gmail.com" style="color:#c8a870">tcgplaysim@gmail.com</a></p>
+        </div>
+      </noscript>
     </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
