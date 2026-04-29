@@ -13,7 +13,7 @@ import { supabase } from "./supabase";
 export async function fetchLobbyMessages(limit = 80) {
   const { data, error } = await supabase
     .from("lobby_messages")
-    .select("id, user_id, alias, avatar, text, created_at")
+    .select("id, user_id, alias, avatar, text, created_at, edited_at")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) return { data: [], error };
@@ -38,20 +38,47 @@ export async function postLobbyMessage({ alias, avatar, text }) {
   return { data, error };
 }
 
+// v7.6.5.1: edit your own message. Sets edited_at = now() so the UI can
+// show "(edited)" with the user's local-timezone formatted time.
+export async function updateLobbyMessage(id, newText) {
+  const text = String(newText || "").slice(0, 500);
+  if (!text.trim()) return { data: null, error: new Error("empty_text") };
+  const { data, error } = await supabase
+    .from("lobby_messages")
+    .update({ text, edited_at: new Date().toISOString() })
+    .eq("id", id)
+    .select()
+    .single();
+  return { data, error };
+}
+
 export async function deleteLobbyMessage(id) {
   const { error } = await supabase.from("lobby_messages").delete().eq("id", id);
   return { error };
 }
 
-// Realtime subscription. Returns the channel; call channel.unsubscribe() to
-// stop. onInsert(row) is called with each new message.
-export function subscribeLobbyMessages(onInsert) {
+// v7.6.5.1: subscribe to all changes (INSERT/UPDATE/DELETE) on lobby_messages.
+// Returns the channel; call channel.unsubscribe() to stop.
+//   onInsert(row)        — new message
+//   onUpdate(row, oldRow) — edited message (text and/or edited_at changed)
+//   onDelete(oldRow)      — deleted message
+export function subscribeLobbyMessages(onInsert, onUpdate, onDelete) {
   const channel = supabase
     .channel("lobby_messages")
     .on(
       "postgres_changes",
       { event: "INSERT", schema: "public", table: "lobby_messages" },
-      (payload) => { try { onInsert(payload.new); } catch {} }
+      (payload) => { try { onInsert?.(payload.new); } catch {} }
+    )
+    .on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "lobby_messages" },
+      (payload) => { try { onUpdate?.(payload.new, payload.old); } catch {} }
+    )
+    .on(
+      "postgres_changes",
+      { event: "DELETE", schema: "public", table: "lobby_messages" },
+      (payload) => { try { onDelete?.(payload.old); } catch {} }
     )
     .subscribe();
   return channel;

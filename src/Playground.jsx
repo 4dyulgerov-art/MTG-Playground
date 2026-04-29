@@ -2007,8 +2007,8 @@ const initPlayer=(deck,profile,life=20)=>{
   // v7.6.4: sleeve priority — deck.sleeveUri > profile.sleeveUri > null.
   // The deck object passed in is the source of truth for the in-game cardback,
   // so we mutate it (in this seat's local copy) to the resolved value.
-  // v7.6.5-fix: if profile.media_revoked is set, suppress custom sleeve too.
-  const _sleeveAllowed = !profile?.media_revoked;
+  // v7.6.5-fix: if profile.mediaRevoked is set, suppress custom sleeve too.
+  const _sleeveAllowed = !profile?.mediaRevoked;
   const resolvedDeck = deck ? {
     ...deck,
     sleeveUri: _sleeveAllowed ? (deck.sleeveUri || profile?.sleeveUri || null) : null,
@@ -2020,7 +2020,7 @@ const initPlayer=(deck,profile,life=20)=>{
     // moderator, suppress any custom playmat URL — the user's own UI keeps
     // the URL set (so they can see it themselves once restored), but the
     // network-broadcast / shared view falls back to the default.
-    if(profile?.media_revoked) return base;
+    if(profile?.mediaRevoked) return base;
     // v7.6.1: if the deck has its own playmat, use it (but don't overwrite profile object).
     // CSS fix: wrap the URL in `url(...) center/cover no-repeat` — the raw URL alone
     // is not valid for the CSS `background` shorthand and rendered as black.
@@ -11348,6 +11348,17 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
   const [deleteConfirm,setDeleteConfirm]=useState(null);
   // v7.6.5-fix: Help dropdown state — "manual"|"rules"|"bug"|"feature"|null.
   const [helpView,setHelpView]=useState(null);
+  // v7.6.5.1: lobby chat collapsed state lifted up so the gallery can
+  // reserve right-side space when chat is open. Persisted to localStorage
+  // so the user's preference survives reloads.
+  const [chatCollapsed,setChatCollapsed] = useState(()=>{
+    try{ return localStorage.getItem("mtg.lobbyChat.collapsed") === "1"; }
+    catch{ return false; }
+  });
+  useEffect(()=>{
+    try{ localStorage.setItem("mtg.lobbyChat.collapsed", chatCollapsed ? "1" : "0"); }catch{}
+  },[chatCollapsed]);
+  const chatReservedPx = chatCollapsed ? 36 : 312;
   const canvasRef=useRef(null);
   const [deckOrder,setDeckOrder]=useState(()=>decks.map((_,i)=>i));
   const [draggingIdx,setDraggingIdx]=useState(null);
@@ -11506,7 +11517,7 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
           onMouseOver={hov} onMouseOut={uhov}>⇄ Multiplayer</button>
         {/* v7.6.5-fix: Help dropdown — Manual / Rules / Bug / Feature.
             One button to keep the header from spilling. */}
-        <HelpDropdown onPick={setHelpView} isModerator={!!profile?.is_moderator}/>
+        <HelpDropdown onPick={setHelpView} isModerator={!!profile?.isModerator}/>
         <button onClick={onTheme}
           style={{...btn("rgba(168,85,247,.08)","#a78bfa",{fontFamily:"Cinzel, serif",padding:"8px 14px",border:"1px solid rgba(168,85,247,.2)"}),fontSize:11}}
           onMouseOver={hov} onMouseOut={uhov}>🎨 Theme</button>
@@ -11519,7 +11530,13 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
       </div>
 
       {/* Gallery */}
-      <div style={{flex:1,overflowY:"auto",padding:"24px",position:"relative",zIndex:1}}>
+      <div style={{flex:1,overflowY:"auto",padding:"24px",
+        // v7.6.5.1: reserve right-side space for the lobby chat sidebar
+        // so deck tiles aren't covered. transitions smoothly when chat
+        // is collapsed/expanded.
+        paddingRight: 24 + chatReservedPx,
+        transition:"padding-right .25s ease",
+        position:"relative",zIndex:1}}>
         {/* v7.6.4: minimal search + format filter — slim search, format
             in a dropdown so it doesn't dominate the gallery. Dandân omitted
             on purpose — Dandân uses premade variants, you don't build them. */}
@@ -11690,8 +11707,9 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
       {helpView==="feature" && <FeatureRequestModal   onClose={()=>setHelpView(null)} profile={profile}/>}
       {helpView==="report"  && <ReportUserModal       onClose={()=>setHelpView(null)} profile={profile}/>}
       {helpView==="mod"     && <ModeratorPanel        onClose={()=>setHelpView(null)}/>}
-      {/* v7.6.5-fix: lobby chat sidebar — global chat for the main menu */}
-      <LobbyChat profile={profile}/>
+      {/* v7.6.5-fix: lobby chat sidebar — global chat for the main menu
+          v7.6.5.1: collapsed state lifted up so gallery can reserve space */}
+      <LobbyChat profile={profile} collapsed={chatCollapsed} onCollapsedChange={setChatCollapsed}/>
     </div>
   );
 }
@@ -12306,47 +12324,85 @@ function HelpDropdown({onPick, isModerator = false}){
 }
 
 /* ─── v7.6.5 LobbyChat — global chat sidebar on the main menu ────────────────
-   Authenticated users can post a 1–500 char message; everyone sees the last
-   ~80 messages, newest at the bottom. Realtime via Supabase channel. Every
-   submission is run through the automod filter:
-     • verdict='block' → message is dropped, automod_block logged, strike++
-     • verdict='flag'  → message goes through, automod_flag logged
-     • verdict='ok'    → posted normally
-   When the strike counter crosses STRIKE_THRESHOLD the user's media (playmat
-   + sleeve URLs) is revoked via the revoke_media RPC.
+   v7.6.5.1: bug fixes — own messages now appear immediately (no longer wait
+   for realtime echo, which depended on the table being in the realtime
+   publication); edit + delete UI for own messages; full date+time tooltip
+   in the user's local timezone; collapsed state lifted up so the gallery
+   can reserve right-side space when the chat is open.
    ─────────────────────────────────────────────────────────────────────────── */
-function LobbyChat({ profile, onModerationEvent }){
+
+/* Timestamp formatter — returns short label + full ISO label for tooltip.
+   Today: "14:30". Yesterday: "Yesterday 14:30". Older: "Apr 28, 14:30".
+   Always in the viewer's local timezone via toLocaleString. */
+function _fmtTime(iso){
+  if(!iso) return { short:"", full:"" };
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now); yesterday.setDate(now.getDate()-1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const time = d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
+  let short;
+  if(sameDay) short = time;
+  else if(isYesterday) short = `Yesterday ${time}`;
+  else if(sameYear) short = d.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " " + time;
+  else short = d.toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"}) + " " + time;
+  const full = d.toLocaleString(undefined, {
+    weekday:"short", year:"numeric", month:"short", day:"numeric",
+    hour:"2-digit", minute:"2-digit", second:"2-digit",
+    timeZoneName:"short",
+  });
+  return { short, full };
+}
+
+function LobbyChat({ profile, collapsed, onCollapsedChange }){
   const [messages,setMessages] = useState([]);
   const [input,setInput] = useState("");
-  const [collapsed,setCollapsed] = useState(false);
   const [busy,setBusy] = useState(false);
-  const [warning,setWarning] = useState("");      // shown when automod blocks
+  const [warning,setWarning] = useState("");
   const [strikes,setStrikes] = useState(profile?.strikes || 0);
-  const [revoked,setRevoked] = useState(!!profile?.media_revoked);
+  const [revoked,setRevoked] = useState(!!profile?.mediaRevoked);
+  const [editingId,setEditingId] = useState(null);
+  const [editText,setEditText] = useState("");
   const scrollRef = useRef(null);
 
-  // Initial fetch + realtime subscription
+  // Initial fetch + realtime subscription (handles INSERT/UPDATE/DELETE).
   useEffect(()=>{
     let cancelled = false;
     Mod.fetchLobbyMessages(80).then(({data})=>{
       if(!cancelled) setMessages(data);
     });
-    const ch = Mod.subscribeLobbyMessages((row)=>{
-      setMessages(prev => {
-        if(prev.some(m => m.id === row.id)) return prev;
-        return [...prev, row].slice(-200);
-      });
-    });
+    const ch = Mod.subscribeLobbyMessages(
+      // INSERT: append if not already present (dedups own messages we
+      // already added optimistically below).
+      (row)=>{
+        setMessages(prev => prev.some(m => m.id === row.id) ? prev : [...prev, row].slice(-200));
+      },
+      // UPDATE: replace the row (handles edits from any client, including
+      // moderator edits of someone else's message).
+      (row)=>{
+        setMessages(prev => prev.map(m => m.id === row.id ? { ...m, ...row } : m));
+      },
+      // DELETE: remove the row.
+      (oldRow)=>{
+        setMessages(prev => prev.filter(m => m.id !== oldRow.id));
+      },
+    );
     return ()=>{
       cancelled = true;
       try { ch?.unsubscribe(); } catch {}
     };
   },[]);
 
-  // Auto-scroll to newest
+  // Auto-scroll to newest whenever message count changes (or chat opens).
   useEffect(()=>{
-    if(scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if(scrollRef.current && !collapsed) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   },[messages.length, collapsed]);
+
+  const myUserId = profile?.userId;
+  const isMine = (m) => myUserId && m.user_id === myUserId;
+  const isMod = !!profile?.isModerator;
 
   const handleSend = async ()=>{
     const text = input.trim();
@@ -12356,25 +12412,21 @@ function LobbyChat({ profile, onModerationEvent }){
     try{
       const verdict = await automodInspect(text);
       if(verdict.verdict === "block"){
-        // Drop the message; log it; increment strikes; maybe revoke media.
         await Mod.logModeration({
-          kind: "automod_block",
-          surface: "lobby_chat",
-          offenderId: profile?.user_id || null,
+          kind: "automod_block", surface: "lobby_chat",
+          offenderId: profile?.userId || null,
           offenderAlias: profile?.alias || null,
           payload: { original_text: text, matched: verdict.matched },
         });
-        if(profile?.user_id){
-          const { data } = await Mod.incrementStrike(profile.user_id);
+        if(profile?.userId){
+          const { data } = await Mod.incrementStrike(profile.userId);
           const total = data?.strikes || strikes + 1;
           setStrikes(total);
           if(total >= STRIKE_THRESHOLD && !revoked){
-            await Mod.revokeMedia(profile.user_id);
+            await Mod.revokeMedia(profile.userId);
             await Mod.logModeration({
-              kind: "media_revoke",
-              surface: "lobby_chat",
-              offenderId: profile.user_id,
-              offenderAlias: profile.alias,
+              kind: "media_revoke", surface: "lobby_chat",
+              offenderId: profile.userId, offenderAlias: profile.alias,
               payload: { reason: "auto_strike_threshold", strikes: total },
             });
             setRevoked(true);
@@ -12382,32 +12434,76 @@ function LobbyChat({ profile, onModerationEvent }){
         }
         setWarning("Your message was blocked by the content filter. Repeated violations will revoke your custom playmat and sleeve permissions.");
         setInput("");
-        onModerationEvent?.({ kind:"block", text });
         return;
       }
       if(verdict.verdict === "flag"){
         await Mod.logModeration({
-          kind: "automod_flag",
-          surface: "lobby_chat",
-          offenderId: profile?.user_id || null,
+          kind: "automod_flag", surface: "lobby_chat",
+          offenderId: profile?.userId || null,
           offenderAlias: profile?.alias || null,
           payload: { original_text: text, matched: verdict.matched },
         });
       }
-      // Post the message.
-      const { error } = await Mod.postLobbyMessage({
-        alias: profile?.alias,
-        avatar: profile?.avatar,
-        text,
+      // Post — and immediately add the returned row to local state so the
+      // user sees their own message instantly, regardless of whether the
+      // realtime subscription is configured. The realtime echo (if it
+      // arrives) is deduped by id in the INSERT handler above.
+      const { data: posted, error } = await Mod.postLobbyMessage({
+        alias: profile?.alias, avatar: profile?.avatar, text,
       });
       if(error){
-        setWarning("Couldn't send — please sign in to use lobby chat.");
+        setWarning("Couldn't send — " + (error.message === "not_authenticated" ? "please sign in to use lobby chat." : error.message));
       } else {
+        if(posted) setMessages(prev => prev.some(m=>m.id===posted.id) ? prev : [...prev, posted].slice(-200));
         setInput("");
       }
     } finally {
       setBusy(false);
     }
+  };
+
+  const startEdit = (m) => {
+    setEditingId(m.id);
+    setEditText(m.text);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditText("");
+  };
+  const saveEdit = async () => {
+    const newText = editText.trim();
+    if(!newText){ cancelEdit(); return; }
+    if(newText === messages.find(m=>m.id===editingId)?.text){ cancelEdit(); return; }
+    // Run the edit through automod too — same policy as fresh posts.
+    const verdict = await automodInspect(newText);
+    if(verdict.verdict === "block"){
+      setWarning("Your edit was blocked by the content filter.");
+      return;
+    }
+    if(verdict.verdict === "flag"){
+      Mod.logModeration({
+        kind: "automod_flag", surface: "lobby_chat",
+        offenderId: profile?.userId || null,
+        offenderAlias: profile?.alias || null,
+        payload: { original_text: newText, matched: verdict.matched, edit_of: editingId },
+      }).catch(()=>{});
+    }
+    const { data, error } = await Mod.updateLobbyMessage(editingId, newText);
+    if(error){
+      setWarning("Couldn't save edit: " + error.message);
+      return;
+    }
+    if(data) setMessages(prev => prev.map(m => m.id === data.id ? { ...m, ...data } : m));
+    cancelEdit();
+  };
+  const handleDelete = async (m) => {
+    if(!confirm("Delete this message? This can't be undone.")) return;
+    const { error } = await Mod.deleteLobbyMessage(m.id);
+    if(error){
+      setWarning("Couldn't delete: " + error.message);
+      return;
+    }
+    setMessages(prev => prev.filter(x => x.id !== m.id));
   };
 
   const onKey = (e)=>{
@@ -12416,11 +12512,20 @@ function LobbyChat({ profile, onModerationEvent }){
       handleSend();
     }
   };
+  const onEditKey = (e)=>{
+    if(e.key === "Enter" && !e.shiftKey){
+      e.preventDefault();
+      saveEdit();
+    } else if(e.key === "Escape"){
+      e.preventDefault();
+      cancelEdit();
+    }
+  };
 
   if(collapsed){
     return(
       <div style={{position:"fixed",right:0,top:140,zIndex:50}}>
-        <button onClick={()=>setCollapsed(false)}
+        <button onClick={()=>onCollapsedChange?.(false)}
           style={{...btn(`${T.panel}f0`,T.accent,{
             border:`1px solid rgba(${T.accentRgb},.3)`,borderLeft:`1px solid rgba(${T.accentRgb},.3)`,
             borderRadius:"6px 0 0 6px",padding:"10px 8px",writingMode:"vertical-rl",
@@ -12432,7 +12537,7 @@ function LobbyChat({ profile, onModerationEvent }){
 
   return(
     <div style={{
-      position:"fixed", right:0, top:80, bottom:14, width:280, zIndex:50,
+      position:"fixed", right:0, top:80, bottom:14, width:300, zIndex:50,
       background:`linear-gradient(180deg,${T.panel}f0,${T.bg}f0)`,
       border:`1px solid rgba(${T.accentRgb},.2)`, borderRight:"none",
       borderRadius:"10px 0 0 10px", display:"flex", flexDirection:"column",
@@ -12446,7 +12551,7 @@ function LobbyChat({ profile, onModerationEvent }){
             {revoked ? "⚠ Media privileges revoked" : `${messages.length} messages`}
           </div>
         </div>
-        <button onClick={()=>setCollapsed(true)} title="Collapse"
+        <button onClick={()=>onCollapsedChange?.(true)} title="Collapse"
           style={{...btn("transparent",T.muted,{fontSize:14,border:"none",padding:"2px 6px"})}}
           onMouseOver={hov} onMouseOut={uhov}>›</button>
       </div>
@@ -12456,19 +12561,64 @@ function LobbyChat({ profile, onModerationEvent }){
           <div style={{color:T.muted,fontSize:11,fontStyle:"italic",textAlign:"center",marginTop:30}}>
             No messages yet. Be the first.
           </div>
-        ) : messages.map(m=>(
-          <div key={m.id} style={{marginBottom:8,padding:"6px 8px",
-            background:`rgba(${T.accentRgb},.04)`,borderRadius:6}}>
-            <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:2}}>
-              <span style={{fontSize:13}}>{m.avatar||"🧙"}</span>
-              <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:10,letterSpacing:".05em"}}>{m.alias||"Anonymous"}</span>
-              <span style={{color:T.muted,fontSize:8,marginLeft:"auto"}}>
-                {new Date(m.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
-              </span>
+        ) : messages.map(m=>{
+          const mine = isMine(m);
+          const canEdit = mine || isMod;
+          const ts = _fmtTime(m.created_at);
+          const ets = m.edited_at ? _fmtTime(m.edited_at) : null;
+          const editing = editingId === m.id;
+          return (
+            <div key={m.id} style={{marginBottom:8,padding:"6px 8px",
+              background:mine?`rgba(${T.accentRgb},.09)`:`rgba(${T.accentRgb},.04)`,
+              border:mine?`1px solid rgba(${T.accentRgb},.18)`:"1px solid transparent",
+              borderRadius:6,position:"relative"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:6,marginBottom:2}}>
+                <span style={{fontSize:13}}>{m.avatar||"🧙"}</span>
+                <span style={{color:T.accent,fontFamily:"Cinzel,serif",fontSize:10,letterSpacing:".05em"}}>{m.alias||"Anonymous"}</span>
+                <span title={ts.full} style={{color:T.muted,fontSize:8,marginLeft:"auto",cursor:"help"}}>
+                  {ts.short}
+                </span>
+              </div>
+              {editing ? (
+                <>
+                  <textarea value={editText} onChange={e=>setEditText(e.target.value.slice(0,500))}
+                    onKeyDown={onEditKey} autoFocus
+                    style={{...iS,marginTop:0,fontSize:12,minHeight:42,resize:"none",
+                      fontFamily:"Crimson Text, serif",width:"100%",boxSizing:"border-box"}}/>
+                  <div style={{display:"flex",gap:6,marginTop:5,justifyContent:"flex-end"}}>
+                    <button onClick={cancelEdit}
+                      style={{...btn("transparent",T.muted,{fontSize:9,padding:"3px 8px",border:`1px solid ${T.border}40`})}}
+                      onMouseOver={hov} onMouseOut={uhov}>Cancel</button>
+                    <button onClick={saveEdit}
+                      style={{...btn(`rgba(${T.accentRgb},.15)`,T.accent,{fontSize:9,padding:"3px 8px",border:`1px solid rgba(${T.accentRgb},.3)`})}}
+                      onMouseOver={hov} onMouseOut={uhov}>Save</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{color:"#d4c5a0",fontFamily:"Crimson Text,serif",fontSize:12,wordBreak:"break-word"}}>{m.text}</div>
+                  {ets && (
+                    <div title={`Edited ${ets.full}`} style={{color:T.muted,fontSize:8,fontStyle:"italic",marginTop:2,cursor:"help"}}>
+                      (edited {ets.short})
+                    </div>
+                  )}
+                  {canEdit && (
+                    <div style={{position:"absolute",top:4,right:4,display:"flex",gap:2,opacity:.4,transition:"opacity .15s"}}
+                      onMouseOver={e=>e.currentTarget.style.opacity=1}
+                      onMouseOut={e=>e.currentTarget.style.opacity=.4}>
+                      {mine && (
+                        <button onClick={()=>startEdit(m)} title="Edit"
+                          style={{background:"transparent",border:"none",color:T.muted,cursor:"pointer",fontSize:11,padding:"2px 4px"}}>✏</button>
+                      )}
+                      <button onClick={()=>handleDelete(m)} title={mine?"Delete":"Delete (moderator)"}
+                        style={{background:"transparent",border:"none",color:mine?T.muted:"#f87171",cursor:"pointer",fontSize:11,padding:"2px 4px"}}>✕</button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
-            <div style={{color:"#d4c5a0",fontFamily:"Crimson Text,serif",fontSize:12,wordBreak:"break-word"}}>{m.text}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {warning && (
@@ -12476,6 +12626,7 @@ function LobbyChat({ profile, onModerationEvent }){
           background:"rgba(248,113,113,.08)",border:"1px solid rgba(248,113,113,.3)",
           borderRadius:5,color:"#fca5a5",lineHeight:1.4}}>
           {warning}
+          <button onClick={()=>setWarning("")} style={{background:"transparent",border:"none",color:"#fca5a5",float:"right",cursor:"pointer",fontSize:11,padding:0}}>✕</button>
         </div>
       )}
 
@@ -12492,7 +12643,7 @@ function LobbyChat({ profile, onModerationEvent }){
               <button onClick={handleSend} disabled={busy||!input.trim()}
                 style={{...btn(`rgba(${T.accentRgb},.15)`,T.accent,{fontSize:11,padding:"4px 12px",
                   border:`1px solid rgba(${T.accentRgb},.3)`,opacity:(busy||!input.trim())?.4:1})}}
-                onMouseOver={hov} onMouseOut={uhov}>Send</button>
+                onMouseOver={hov} onMouseOut={uhov}>{busy ? "…" : "Send"}</button>
             </div>
           </>
         ) : (
@@ -12562,7 +12713,7 @@ function ReportUserModal({onClose, profile}){
         surface: "in_game_chat",
         offenderId: null,                 // alias only — moderator resolves to user_id
         offenderAlias: targetAlias.trim(),
-        reporterId: profile?.user_id || null,
+        reporterId: profile?.userId || null,
         reporterAlias: profile?.alias || null,
         payload: {
           reason: reason.trim(),

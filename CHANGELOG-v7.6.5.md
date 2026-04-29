@@ -507,3 +507,64 @@ Links to: `https://www.patreon.com/cw/TCGPlaysim`.
 ### Files touched (Pass 7)
 
 - `src/Playground.jsx` — `MainMenu` header.
+
+---
+
+## v7.6.5.1 — Lobby chat fixes + sitemap fix
+
+Hotfix patch addressing four issues found on first deploy:
+
+### 1. Decks hidden behind chat sidebar — FIXED
+
+`LobbyChat` is `position: fixed` so it doesn't push the gallery; the gallery just extended underneath it. Lifted the `collapsed` state up to `MainMenu` and added matching right-padding to the gallery container — `36px` when collapsed (just enough to clear the vertical "💬 LOBBY" tab) or `312px` when open. Smooth 250ms transition. Collapsed state is persisted to localStorage so the user's preference survives reloads.
+
+### 2. Posted messages not appearing — FIXED
+
+Two bugs combined:
+
+**(a)** Realtime publication was not enabled on `lobby_messages`. By default, new Supabase tables don't broadcast `INSERT`/`UPDATE`/`DELETE` events to subscribed clients. The new patch (`schema-patch-v7.6.5.1-lobby-chat.sql`) adds the table to the `supabase_realtime` publication.
+
+**(b)** My code was waiting for the realtime echo of my own `INSERT` to update local state — which is brittle even when realtime works (network glitches, slow channel, etc.). Now the message is added to local state immediately on successful insert, with the realtime handler deduplicating by id when (or if) it arrives. Either path produces a correct UI.
+
+Also fixed: the profile shape uses camelCase (`userId`, `isModerator`, `mediaRevoked`, `strikes`), not snake_case, to match the rest of the v6/v7 code. My v7.6.5 code mistakenly used snake_case in places — corrected throughout, and `rowToProfile` in `lib/profiles.js` now exposes the new moderation fields.
+
+### 3. Edit + delete + edit-timestamps — IMPLEMENTED
+
+New schema column: `lobby_messages.edited_at timestamptz` (null for unedited messages). New RLS policy `lobby_messages_update_own` lets a user edit their own message; moderators can edit any message.
+
+UI per-message changes:
+- Hovering a message you authored shows an `✏` edit and `✕` delete button in the top-right corner (40% opacity, full opacity on row hover so it's not visually noisy).
+- Moderators see a red `✕` delete button on every message.
+- Click `✏` → message text becomes an inline textarea with Save / Cancel. `Enter` saves, `Esc` cancels. Edits run through automod with the same block-or-flag rules as fresh posts. On save, `edited_at` is set to `now()`; the row updates everywhere via realtime.
+- Click `✕` → confirm dialog → row deleted; realtime UPDATE→DELETE event removes it from every other connected client.
+
+Display:
+- Each message has a small grey timestamp in the top-right (e.g. `14:30`).
+- Hovering the timestamp shows a tooltip with the full date+time+timezone in the **viewer's local timezone** (e.g. `"Wed Apr 29, 2026, 14:30:18 CEST"`). Cursor changes to `help` to advertise the tooltip.
+- Edited messages show `(edited 14:32)` underneath in italic. Hovering that shows a `Edited Wed Apr 29, 2026, 14:32:05 CEST` tooltip.
+- Today's messages show `HH:MM`. Yesterday: `Yesterday HH:MM`. This year: `MMM DD HH:MM`. Older: full date.
+- Your own messages get a slightly highlighted background + accent border so you can identify them at a glance.
+
+### 4. Sitemap "Couldn't fetch" — FIXED
+
+Vercel's SPA rewrite rule `{ "source": "/(.*)", "destination": "/" }` was catching `/sitemap.xml` and `/robots.txt` and serving `index.html` instead. Google saw HTML in response to a sitemap request and gave up.
+
+`vercel.json` now uses a negative-lookahead source pattern that excludes paths containing a `.` (so any file with an extension serves directly from `public/`):
+```
+"source": "/((?!sitemap\\.xml|robots\\.txt|favicon\\.|apple-touch-icon|manifest\\.json|og-image\\.|assets/|.*\\..*).*)"
+```
+
+Plus explicit `Content-Type: application/xml` on `/sitemap.xml` and `text/plain` on `/robots.txt`, with a 1h cache. After deploy, re-submit the sitemap in Google Search Console — within 24h it should switch from "Couldn't fetch" to "Success".
+
+### Files touched (v7.6.5.1)
+
+- `vercel.json` — rewrite + headers fix.
+- `supabase/schema-patch-v7.6.5.1-lobby-chat.sql` — new migration.
+- `src/lib/profiles.js` — added `isModerator`, `mediaRevoked`, `strikes` to `rowToProfile`.
+- `src/lib/moderation.js` — added `updateLobbyMessage`, extended `subscribeLobbyMessages` with UPDATE/DELETE handlers, included `edited_at` in fetch select.
+- `src/Playground.jsx` — LobbyChat rewritten (immediate state add, edit/delete UI, timezone-aware timestamps, lifted collapsed state); MainMenu reserves right-side space; snake_case → camelCase profile field sweep; `applyDeck` uses `profile.mediaRevoked`.
+
+### Required user action after deploy
+
+1. **Run the new migration** `supabase/schema-patch-v7.6.5.1-lobby-chat.sql` in Supabase SQL editor.
+2. **Resubmit the sitemap** in Google Search Console once Vercel deploy completes.

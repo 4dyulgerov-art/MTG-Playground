@@ -13,6 +13,10 @@ function rowToProfile(row) {
     themeId: row.theme_id || 'arcane',
     sleeveColor: row.sleeve_color || '#c8a870',
     settings: row.settings || {},
+    // v7.6.5: moderation fields
+    isModerator: !!row.is_moderator,
+    mediaRevoked: !!row.media_revoked,
+    strikes: row.strikes || 0,
   };
 }
 
