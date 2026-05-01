@@ -988,3 +988,61 @@ select lower(alias), count(*) from public.profiles
 
 If duplicates exist, decide manually (rename one, or merge accounts). The trigger is enforcing on new writes regardless.
 
+
+---
+
+## v7.6.5.6 — Joiner follows host's gamemode
+
+When joining someone else's room, the joiner's local `gamemode` state was driving the deck filter. So if the host was running Commander but the joiner's local state was the default "standard", the joiner saw "No standard decks" instead of their commander decks.
+
+### What changed
+
+- New derived `effectiveGamemode` const inside `RoomLobby`: for joiners it's `waitingMeta.gamemode` (host's choice), for the host or pre-room state it's the local `gamemode`. Both deck filters and the stale-deck-clear effect now read this.
+- The Game Mode panel for joiners is now **read-only** — they see the host's mode as a single pill (gold for normal formats, purple for Dandân) with a "set by host" / "read-only" annotation, no clickable buttons. Hosts still see the full picker.
+- The Dandân variant picker is also read-only for joiners — they see the host's variant as a pill, with the description below.
+- `joinRoom` now calls `setGamemode(meta.gamemode)` for ALL formats (was: Dandân only). Belt-and-braces effect also syncs `gamemode` + `dandanVariantId` from `waitingMeta` whenever it updates, covering rejoin + page-refresh scenarios.
+- Empty-state messages reword themselves for joiners: "This room is running commander. You don't have any commander decks in your library — try borrowing a host deck (toggle above)."
+- Renamed the local `effectiveGamemode` inside the polling effect → `launchGamemode` so it doesn't shadow the new component-level const.
+
+### Files touched
+- `src/Playground.jsx` only
+
+
+---
+
+## v7.6.5.7 — DFC fixes (token-search + L hotkey + transform unification)
+
+### Bugs
+
+**DFCs inserted via Token Search → Insert Card lost their double-faced behavior.**
+`insertCard` (in TokenSearch) was inlining a small subset of the Scryfall fields and dropping `card_faces`, `faces[]`, `altImageUri`, and `isDoubleFaced`. The resulting card looked single-faced everywhere — no green flip button on the battlefield, no DFC behavior in the menu, L hotkey treated it as non-DFC. Now routes through `buildDeckEntry()` (the same builder the deck pipeline uses), which correctly populates all DFC fields including the back-face URL fallback derivation (`/front/` → `/back/`).
+
+**L hotkey didn't transform DFCs and animation was missing.**
+The L hotkey was duplicating logic with the central listener. It also did its own `upd(...)` directly, bypassing the listener's improvements over time. Now the hotkey just dispatches the events and lets the central listener do the work.
+
+**Two conflicting "Transform" entries in the right-click menu.**
+The context menu showed both "Transform (Face Down)" and "Transform (Back→Front)" simultaneously on DFCs, both labelled (L). Now exactly ONE Transform entry per card — DFCs get the back-face transform, non-DFCs get the face-down/face-up flip. Both dispatch the same events as the green button + L hotkey.
+
+### What Transform now does (specified, documented, single source of truth)
+
+| Card type | Action | Visual |
+|---|---|---|
+| Single-faced | Toggle face-down ↔ face-up — back of card shows the deck's `sleeveUri` or default sleeve | 350ms rotateY flip animation |
+| Double-faced (DFC) | Swap front ↔ back face image from Scryfall (`card_faces[1].image_uris.normal`, with `/front/` → `/back/` derivation fallback) | 350ms rotateY flip animation |
+
+### Single source of truth (event-driven)
+
+Three triggers, one path:
+1. Green ↕ button on DFCs (bottom-right of card on battlefield)
+2. L hotkey while hovering a card
+3. "Transform" entry in right-click context menu
+
+All three dispatch:
+- `mtg-flip-card` — state event (consumed by parent's central listener: SFX + state update + log line, broadcasts via normal upd path)
+- `mtg-flip-card-anim` — animation event (consumed by every CardImg whose iid matches: triggers 350ms `flipping` state which runs the rotateY animation)
+
+This means the L hotkey now produces the same visual as the green button (it didn't before — it changed state but skipped the animation because animation lived only in CardImg's local handleFlip).
+
+### Files touched
+- `src/Playground.jsx` only
+

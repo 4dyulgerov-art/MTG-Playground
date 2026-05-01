@@ -3638,12 +3638,31 @@ function CardImg({card,tapped,faceDown,selected,size="md",onClick,onCtx,onHover,
   const isDFC=isDFCCard(card);
   const currentFaceName=card?.altFace?(card?.faces?.[1]?.name||card?.name):(card?.faces?.[0]?.name||card?.name);
 
+  // v7.6.5.6: listen for flip events targeting THIS card's iid and run the
+  // 350ms rotateY animation. This makes the L hotkey, the right-click menu
+  // entry, AND the green ↕ button all produce the same visual — they all
+  // dispatch mtg-flip-card with this iid, and we react to that single event.
+  useEffect(()=>{
+    if(!card?.iid) return;
+    const onFlip=(e)=>{
+      if(e.detail?.iid!==card.iid) return;
+      setFlipping(true);
+      const t=setTimeout(()=>setFlipping(false),400);
+      // (the timeout is best-effort cleanup on rapid re-fires)
+      return ()=>clearTimeout(t);
+    };
+    window.addEventListener("mtg-flip-card-anim",onFlip);
+    return()=>window.removeEventListener("mtg-flip-card-anim",onFlip);
+  },[card?.iid]);
+
   const handleFlip=(e)=>{
     e.stopPropagation();e.preventDefault();
-    setFlipping(true);
-    setTimeout(()=>setFlipping(false),400);
-    // Dispatch flip to parent via onCtx path won't work — use a custom event
+    // v7.6.5.6: dispatch ONLY — the parent's mtg-flip-card listener does the
+    // state update and SFX, and the mtg-flip-card-anim broadcast (below)
+    // triggers the rotateY animation on this and any peer card. Single
+    // source of truth, identical animation for hotkey + button.
     window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}));
+    window.dispatchEvent(new CustomEvent("mtg-flip-card-anim",{detail:{iid:card.iid}}));
   };
 
   return(
@@ -4083,17 +4102,13 @@ function TokenSearch({onCreate,onClose}){
   const loadMore=()=>{ if(nextUrl) doSearch(nextUrl); };
 
   const insertCard=(card,asToken)=>{
-    const img=card.image_uris?.normal||card.card_faces?.[0]?.image_uris?.normal||null;
-    onCreate({
-      name:card.name,imageUri:img,
-      typeLine:card.type_line||"",oracleText:card.oracle_text||card.card_faces?.[0]?.oracle_text||"",
-      power:card.power||card.card_faces?.[0]?.power||"*",
-      toughness:card.toughness||card.card_faces?.[0]?.toughness||"*",
-      colors:card.colors||card.card_faces?.[0]?.colors||[],
-      manaCost:card.mana_cost||card.card_faces?.[0]?.mana_cost||"",
-      isToken:asToken,
-      scryfallId:card.id,
-    });
+    // v7.6.5.6: route through buildDeckEntry so DFC fields (faces[],
+    // altImageUri, isDoubleFaced) are populated correctly. Was inlining a
+    // subset of fields which dropped card_faces entirely — meaning DFCs
+    // inserted via Token Search lost their flip button and L hotkey
+    // because isDFCCard() returned false on the resulting object.
+    const built=buildDeckEntry(card,{isToken:asToken});
+    onCreate(built);
     onClose();
   };
 
@@ -4619,13 +4634,29 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   // match the new format, clear the selection. The deck list is filtered by
   // gamemode now — keeping a stale selDeckId would silently sit on a deck
   // the user can't see in the list. Skipped for Dandân (variant takes over).
+  // v7.6.5.6: use effectiveGamemode so joiners auto-clear when the host's
+  // gamemode is different from what their stale selection assumed.
   useEffect(()=>{
-    if(gamemode==="dandan" || !selDeckId) return;
+    if(effectiveGamemode==="dandan" || !selDeckId) return;
     const sel = decks.find(d=>d.id===selDeckId);
-    if(sel && (sel.format||"standard")!==gamemode){
+    if(sel && (sel.format||"standard")!==effectiveGamemode){
       setSelDeckId("");
     }
-  },[gamemode, decks, selDeckId]);
+  },[effectiveGamemode, decks, selDeckId]);
+
+  // v7.6.5.6: belt-and-braces gamemode sync. Whenever waitingMeta changes
+  // and we're a joined guest, mirror its gamemode + dandanVariantId into our
+  // local state. Covers page-refresh-into-room, late-arriving meta, and any
+  // race where the explicit join flow didn't fire setGamemode.
+  useEffect(()=>{
+    if(!isJoinedGuest || !waitingMeta) return;
+    if(waitingMeta.gamemode && waitingMeta.gamemode !== gamemode){
+      setGamemode(waitingMeta.gamemode);
+    }
+    if(waitingMeta.dandanVariantId && waitingMeta.dandanVariantId !== dandanVariantId){
+      setDandanVariantId(waitingMeta.dandanVariantId);
+    }
+  },[isJoinedGuest, waitingMeta, gamemode, dandanVariantId]);
   // v7.4: when joining another host's room, we can pick our deck from our
   // own library OR from the host's library (the host publishes their decks
   // alongside their player row).
@@ -4636,6 +4667,13 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   // which React renders as the text "0" in `{isJoinedGuest && <jsx>}` chains.
   // That was the phantom white "0" appearing in Your Deck after Create Room.
   const isJoinedGuest = !!(myRoomId && mySeat>0);
+
+  // v7.6.5.6: joiners follow the HOST's gamemode, not their local state. If
+  // the host's running Commander, the joiner needs to pick a Commander deck —
+  // their own gamemode dropdown is irrelevant. The deck filter, the visible
+  // format name, and the stale-deck clearing effect all read from this.
+  // Falls back to local `gamemode` for the host / pre-room state.
+  const effectiveGamemode = (isJoinedGuest && waitingMeta?.gamemode) ? waitingMeta.gamemode : gamemode;
 
   const loadRooms=async()=>{
     try{const keys=await storage.list("room_",true);
@@ -4757,6 +4795,17 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           // flipped because the joiner never picked Dandân in their own UI).
           setGamemode("dandan");
           setDandanVariantId(dvId);
+        } else if (meta.gamemode) {
+          // v7.6.5.6: for ALL non-Dandân formats too, sync local gamemode to
+          // the host's. The joiner's local default ("standard") was making the
+          // deck list filter to standard decks even when the host was running
+          // commander — they got "no standard decks" when they had plenty of
+          // commander decks. Now they see the right list immediately.
+          setGamemode(meta.gamemode);
+        }
+        // v7.6.4: if Dandân (continued), kick off Scryfall resolution NOW.
+        if(meta.gamemode==="dandan"){
+          const dvId = meta.dandanVariantId || DANDAN_VARIANTS[0].variantId;
           // v7.6.5-fix: kick off Scryfall resolution NOW so the joiner's
           // _dandanResolvedCache is populated before the room fills and
           // startGame runs. Without this, the joiner's dMine.cards stay as
@@ -4829,14 +4878,16 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           // v7.6.5-fix: trust meta.gamemode over local state. The host writes
           // it; every peer reads from it. Local `gamemode` may lag for late
           // joiners until setGamemode propagates through React.
-          const effectiveGamemode = meta.gamemode || gamemode;
+          // v7.6.5.6: renamed from `effectiveGamemode` to avoid shadowing the
+          // component-level const of the same name (which serves the lobby UI).
+          const launchGamemode = meta.gamemode || gamemode;
           // v7.6.5-fix: for Dandân, AWAIT Scryfall resolution of the chosen
           // variant before fanning out to startGame. Otherwise dMine.cards
           // are still _pending stubs (no imageUri) and every drawn card +
           // every F-search tile renders as the cardback. The host pre-warms
           // via useEffect when picking the variant; the joiner pre-warms in
           // joinRoom; this `await` is the final guarantee for any race.
-          if(effectiveGamemode==="dandan"){
+          if(launchGamemode==="dandan"){
             const dvId = meta.dandanVariantId || DANDAN_VARIANTS[0].variantId;
             try{ await resolveDandanVariant(dvId); }catch(e){ console.warn("[dandan resolve before launch]",e); }
           }
@@ -4852,7 +4903,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             maxPlayers: meta.maxPlayers,
             meta,
             isOnline:true,
-            gamemode: effectiveGamemode,
+            gamemode: launchGamemode,
           });
         }
       }catch{}
@@ -4897,15 +4948,16 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
           )}
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
             {(() => {
-              // v7.6.5.5: filter decks by current gamemode. A deck without
-              // an explicit format defaults to "standard". Empty result is
-              // surfaced below as a helpful message instead of a phantom blank.
+              // v7.6.5.5/.6: filter decks by EFFECTIVE gamemode. For joiners
+              // that's the host's mode (waitingMeta.gamemode); for the host
+              // it's their local selection. Deck without explicit format
+              // defaults to "standard". Empty result is surfaced below.
               const all = (deckSource==="host"?hostDecks:decks);
-              const filtered = all.filter(d => (d.format||"standard")===gamemode);
+              const filtered = all.filter(d => (d.format||"standard")===effectiveGamemode);
               if (filtered.length === 0 && all.length > 0) {
                 return (
                   <span style={{fontSize:9,color:T.muted,fontStyle:"italic",fontFamily:"Crimson Text,serif",lineHeight:1.6,display:"block",padding:"4px 0"}}>
-                    No <b style={{color:T.accent,fontStyle:"normal"}}>{gamemode}</b> decks {deckSource==="host"?"published by host":"in your library"}. Pick a different mode, or build one in the Deckbuilder.
+                    No <b style={{color:T.accent,fontStyle:"normal"}}>{effectiveGamemode}</b> decks {deckSource==="host"?"published by host":"in your library"}{isJoinedGuest?` — this room is running ${effectiveGamemode}`:""}. {isJoinedGuest?"Build one in the Deckbuilder, or borrow a host deck (toggle above).":"Pick a different mode, or build one in the Deckbuilder."}
                   </span>
                 );
               }
@@ -4943,40 +4995,75 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
 
         {/* Gamemode selector */}
         <div style={{marginBottom:16,background:`${T.bg}cc`,border:`1px solid ${T.border}30`,borderRadius:8,padding:12}}>
-          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>Game Mode</div>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-            {GAMEMODES.map(gm=>(
-              <button key={gm.id} onClick={()=>setGamemode(gm.id)}
-                style={{...btn(gm.id===gamemode?(gm.special?"rgba(168,85,247,.15)":`${T.accent}1a`):`${T.panel}99`,
-                  gm.id===gamemode?(gm.special?"#a855f7":T.accent):T.muted,
-                  {border:`1px solid ${gm.id===gamemode?(gm.special?"rgba(168,85,247,.4)":`rgba(${T.accentRgb},.3)`):`${T.border}30`}`,fontSize:10,
-                   boxShadow:gm.id===gamemode&&gm.special?"0 0 12px rgba(168,85,247,.3)":"none"})}}
-                onMouseOver={hov} onMouseOut={uhov}>{gm.icon} {gm.label}</button>
-            ))}
+          <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel, serif",letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>
+            Game Mode {isJoinedGuest && <span style={{color:T.accent,marginLeft:6,opacity:.8}}>· set by host</span>}
           </div>
-          {gamemode==="dandan"&&(
+          {/* v7.6.5.6: joiners can't change the gamemode — the host's choice
+              drives everything (deck filter, life totals, command zone, etc.).
+              Show only the host's selected mode as a read-only badge. */}
+          {isJoinedGuest ? (() => {
+            const gm = GAMEMODES.find(g=>g.id===effectiveGamemode) || GAMEMODES[0];
+            const accent = gm.special ? "#a855f7" : T.accent;
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",
+                background:`${accent}10`, border:`1px solid ${accent}40`, borderRadius:6,
+                fontFamily:"Cinzel,serif", color:accent, fontSize:13, letterSpacing:".06em"}}>
+                <span style={{fontSize:18}}>{gm.icon}</span>
+                <span style={{flex:1}}>{gm.label}</span>
+                <span style={{fontSize:9,color:T.muted,fontStyle:"italic",letterSpacing:".05em"}}>read-only</span>
+              </div>
+            );
+          })() : (
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {GAMEMODES.map(gm=>(
+                <button key={gm.id} onClick={()=>setGamemode(gm.id)}
+                  style={{...btn(gm.id===gamemode?(gm.special?"rgba(168,85,247,.15)":`${T.accent}1a`):`${T.panel}99`,
+                    gm.id===gamemode?(gm.special?"#a855f7":T.accent):T.muted,
+                    {border:`1px solid ${gm.id===gamemode?(gm.special?"rgba(168,85,247,.4)":`rgba(${T.accentRgb},.3)`):`${T.border}30`}`,fontSize:10,
+                     boxShadow:gm.id===gamemode&&gm.special?"0 0 12px rgba(168,85,247,.3)":"none"})}}
+                  onMouseOver={hov} onMouseOut={uhov}>{gm.icon} {gm.label}</button>
+              ))}
+            </div>
+          )}
+          {effectiveGamemode==="dandan"&&(
             <div style={{marginTop:10,padding:10,background:"rgba(168,85,247,.06)",border:"1px solid rgba(168,85,247,.25)",borderRadius:6,fontFamily:"Crimson Text,serif"}}>
               <div style={{fontSize:11,color:"#c084fc",fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:6}}>🐟 DANDÂN — SHARED DECK FORMAT</div>
               <div style={{fontSize:10,color:"#c0a0e0",lineHeight:1.55,marginBottom:8}}>
                 Both players share <b>one 80-card library and one graveyard</b> (rendered in the center). Hands, battlefields, exile, and life totals stay separate. Win by reducing opponent to 0 life or making them deck out. The host picks the variant — joiners don't choose a deck.
               </div>
-              <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",marginBottom:5}}>Choose a Variant (host)</div>
-              <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-                {DANDAN_VARIANTS.map(v=>{
-                  const sel = (dandanVariantId||DANDAN_VARIANTS[0].variantId)===v.variantId;
-                  return(
-                    <button key={v.variantId} onClick={()=>setDandanVariantId(v.variantId)}
-                      title={v.description}
-                      style={{...btn(sel?"rgba(168,85,247,.2)":`${T.panel}99`,sel?"#c084fc":T.text,
-                        {fontSize:9,padding:"4px 8px",border:`1px solid ${sel?"rgba(168,85,247,.5)":`${T.border}30`}`,borderRadius:4})}}
-                      onMouseOver={hov} onMouseOut={uhov}>
-                      {v.name.replace(/^🐟 /,"")}
-                    </button>
-                  );
-                })}
+              {/* v7.6.5.6: joiners see the host-chosen variant as read-only */}
+              <div style={{fontSize:9,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".1em",textTransform:"uppercase",marginBottom:5}}>
+                {isJoinedGuest ? "Variant (set by host)" : "Choose a Variant (host)"}
               </div>
+              {isJoinedGuest ? (() => {
+                const dvId = waitingMeta?.dandanVariantId || DANDAN_VARIANTS[0].variantId;
+                const v = DANDAN_VARIANTS.find(x=>x.variantId===dvId) || DANDAN_VARIANTS[0];
+                return (
+                  <div style={{padding:"6px 10px",background:"rgba(168,85,247,.15)",border:"1px solid rgba(168,85,247,.4)",borderRadius:4,fontSize:11,color:"#c084fc",fontFamily:"Cinzel,serif"}}>
+                    {v.name.replace(/^🐟 /,"")}
+                  </div>
+                );
+              })() : (
+                <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                  {DANDAN_VARIANTS.map(v=>{
+                    const sel = (dandanVariantId||DANDAN_VARIANTS[0].variantId)===v.variantId;
+                    return(
+                      <button key={v.variantId} onClick={()=>setDandanVariantId(v.variantId)}
+                        title={v.description}
+                        style={{...btn(sel?"rgba(168,85,247,.2)":`${T.panel}99`,sel?"#c084fc":T.text,
+                          {fontSize:9,padding:"4px 8px",border:`1px solid ${sel?"rgba(168,85,247,.5)":`${T.border}30`}`,borderRadius:4})}}
+                        onMouseOver={hov} onMouseOut={uhov}>
+                        {v.name.replace(/^🐟 /,"")}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {(() => {
-                const v = DANDAN_VARIANTS.find(x=>x.variantId===(dandanVariantId||DANDAN_VARIANTS[0].variantId)) || DANDAN_VARIANTS[0];
+                const dvId = isJoinedGuest
+                  ? (waitingMeta?.dandanVariantId || DANDAN_VARIANTS[0].variantId)
+                  : (dandanVariantId||DANDAN_VARIANTS[0].variantId);
+                const v = DANDAN_VARIANTS.find(x=>x.variantId===dvId) || DANDAN_VARIANTS[0];
                 return (
                   <div style={{marginTop:8,padding:"6px 8px",background:"rgba(0,0,0,.25)",borderRadius:4,fontSize:10,color:"#a8a0c0",lineHeight:1.5,fontStyle:"italic"}}>
                     <b style={{color:"#c084fc",fontStyle:"normal"}}>{v.name.replace(/^🐟 /,"")}</b> — {v.description}
@@ -4985,7 +5072,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
               })()}
             </div>
           )}
-          {gamemode==="commander"&&<div style={{marginTop:6,fontSize:10,color:T.accent,fontFamily:"Crimson Text,serif"}}>⚔ 40 life · Commander damage · Command zone</div>}
+          {effectiveGamemode==="commander"&&<div style={{marginTop:6,fontSize:10,color:T.accent,fontFamily:"Crimson Text,serif"}}>⚔ 40 life · Commander damage · Command zone</div>}
         </div>
 
         {myRoomId?(()=>{
@@ -5182,14 +5269,19 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                     </div>
                   );
                 }
-                const filtered = all.filter(d => (d.format||"standard")===gamemode);
+                const filtered = all.filter(d => (d.format||"standard")===effectiveGamemode);
                 if (filtered.length === 0) {
                   return (
                     <div style={{color:T.muted,fontSize:11,textAlign:"center",
                       padding:16,fontStyle:"italic",
                       border:`1px dashed ${T.border}`,borderRadius:6,lineHeight:1.5}}>
-                      No <b style={{color:T.accent,fontStyle:"normal"}}>{gamemode}</b> decks {deckSource==="host"?"published by host":"in your library"}.<br/>
-                      <span style={{fontSize:10}}>Pick a different mode in the Game Mode panel above, or build a {gamemode} deck in the Deckbuilder.</span>
+                      {isJoinedGuest ? (
+                        <>This room is running <b style={{color:T.accent,fontStyle:"normal"}}>{effectiveGamemode}</b>.<br/>
+                        <span style={{fontSize:10}}>You don't have any {effectiveGamemode} decks {deckSource==="host"?"on the host's published list":"in your library"}. {deckSource==="mine" && hostDecks.length>0 ? "Try borrowing a host deck (toggle above)." : "Build one in the Deckbuilder, or leave the room."}</span></>
+                      ) : (
+                        <>No <b style={{color:T.accent,fontStyle:"normal"}}>{effectiveGamemode}</b> decks {deckSource==="host"?"published by host":"in your library"}.<br/>
+                        <span style={{fontSize:10}}>Pick a different mode in the Game Mode panel above, or build a {effectiveGamemode} deck in the Deckbuilder.</span></>
+                      )}
                     </div>
                   );
                 }
@@ -8168,22 +8260,41 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
     };
   },[upd]);
 
-  // Listen for flip events dispatched by the CardImg flip button
+  // Listen for flip events dispatched by the CardImg flip button OR the L hotkey.
+  // v7.6.5.6: this is the SINGLE flip handler. Routes DFC cards to face-swap
+  // (Scryfall back image), and non-DFC cards to a faceDown toggle (shows the
+  // user's sleeve / card back). Both paths play the SFX and broadcast to
+  // opponents through normal upd → broadcastIfOnline.
   useEffect(()=>{
     const handler=(e)=>{
       const {iid}=e.detail;
       SFX.playAction("flip");
-      // Find card name for log entry
       let cardName = null;
+      let wasDFC = false;
+      let nowFaceDown = null;
       upd(p=>{
         const findIn = arr => arr.find(c=>c.iid===iid);
         const found = findIn(p.battlefield) || findIn(p.hand);
-        if (found) cardName = found.name;
+        if (!found) return p;
+        cardName = found.name;
+        wasDFC = isDFCCard(found);
+        const transform = (c)=>{
+          if(c.iid!==iid) return c;
+          if(isDFCCard(c)) return flipCardFace(c);
+          // Non-DFC: toggle faceDown so the sleeve shows
+          nowFaceDown = !c.faceDown;
+          return {...c, faceDown: !c.faceDown};
+        };
         return {
           ...p,
-          battlefield:p.battlefield.map(c=>c.iid===iid?flipCardFace(c):c),
-          hand:p.hand.map(c=>c.iid===iid?flipCardFace(c):c),
-          log: cardName ? [`T${turn}:↔ Flipped ${cardName}`,...p.log].slice(0,80) : p.log,
+          battlefield:p.battlefield.map(transform),
+          hand:p.hand.map(transform),
+          log: cardName ? [
+            wasDFC
+              ? `T${turn}:↕ Transformed ${cardName}`
+              : `T${turn}:↔ ${nowFaceDown?"Flipped face-down":"Flipped face-up"} ${cardName}`,
+            ...p.log
+          ].slice(0,80) : p.log,
         };
       });
     };
@@ -9067,11 +9178,31 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
           cards.forEach(c=>copyCard(c,true));
         },color:"#818cf8"});
       }
-      items.push({icon:"↔",label:card.faceDown?"Show Front (L)":"Transform (Face Down) (L)",action:()=>{
-        upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,faceDown:!c.faceDown}:c)}));
-        addLog(`↔ ${card.faceDown?"Revealed front of":"Turned face-down:"} ${card.name}`);
-      }});
-      if(isDFCCard(card))items.push({icon:"↕",label:card.altFace?"◀ Transform (Back→Front) (L)":"▶ Transform (Front→Back) (L)",action:()=>window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}))});
+      // v7.6.5.6: ONE Transform entry per card. Both paths dispatch the
+      // same mtg-flip-card + mtg-flip-card-anim events the green button
+      // and L hotkey use, so visuals are identical and behavior is
+      // consistent — DFC swaps to the back-face image (Scryfall),
+      // non-DFC toggles face-down to show the sleeve / card back.
+      if(isDFCCard(card)){
+        items.push({
+          icon:"↕",
+          label:card.altFace ? "◀ Transform (Back→Front) (L)" : "▶ Transform (Front→Back) (L)",
+          action:()=>{
+            window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}));
+            window.dispatchEvent(new CustomEvent("mtg-flip-card-anim",{detail:{iid:card.iid}}));
+          },
+          color:"#34d399",
+        });
+      } else {
+        items.push({
+          icon:"↔",
+          label:card.faceDown ? "Flip face-up (L)" : "Flip face-down (L)",
+          action:()=>{
+            window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}));
+            window.dispatchEvent(new CustomEvent("mtg-flip-card-anim",{detail:{iid:card.iid}}));
+          },
+        });
+      }
       if(card.isToken)items.push({icon:"✗",label:"Remove Token",action:()=>{upd(p=>({...p,battlefield:p.battlefield.filter(c=>c.iid!==card.iid)})); addLog(`✗ Removed token: ${card.name}`);},color:"#f87171"});
       items.push("---");
       items.push({icon:"🎯",label:`${card.targeted?"Untarget":"Target"} (O)`,action:()=>{upd(p=>({...p,battlefield:p.battlefield.map(c=>c.iid===card.iid?{...c,targeted:!c.targeted}:c)})); addLog(`🎯 ${card.targeted?"Untargeted":"Targeted"}: ${card.name}`);}});
@@ -9495,18 +9626,14 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         return;
       }
       // J — face down / face up
-      // L — flip card (DFC: alt face; non-DFC: toggle face-down showing sleeve)
+      // L — flip card (DFC: swap faces; non-DFC: toggle face-down to sleeve)
+      //     v7.6.5.6: Dispatches BOTH events: mtg-flip-card (state + SFX,
+      //     handled by central listener) and mtg-flip-card-anim (350ms
+      //     rotateY animation, handled by CardImg). Identical to clicking
+      //     the green ↕ button.
       if(k==="l"){
-        SFX.playAction("flip");
-        // Trigger visual flip animation via custom event
         window.dispatchEvent(new CustomEvent("mtg-flip-card",{detail:{iid:card.iid}}));
-        upd(p=>({...p,battlefield:p.battlefield.map(c=>{
-          if(c.iid!==card.iid)return c;
-          if(isDFCCard(c)) return flipCardFace(c);
-          // Non-DFC: toggle faceDown (shows sleeve/card back)
-          return{...c,faceDown:!c.faceDown};
-        })}));
-        addLog(`↔ Flipped ${card.name}${isDFCCard(card)?" (DFC face)":(card.faceDown?" (face up)":" (face down)")}`);
+        window.dispatchEvent(new CustomEvent("mtg-flip-card-anim",{detail:{iid:card.iid}}));
         return;
       }
       // D — send to graveyard
