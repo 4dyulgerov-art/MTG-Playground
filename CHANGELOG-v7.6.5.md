@@ -1046,3 +1046,27 @@ This means the L hotkey now produces the same visual as the green button (it did
 ### Files touched
 - `src/Playground.jsx` only
 
+
+---
+
+## v7.6.5.7-hotfix — TDZ crash on Multiplayer + stale table refs
+
+### Crash
+
+**Clicking Multiplayer crashed the page** with `ReferenceError: can't access lexical declaration 'z' before initialization`. The minified `z` was `effectiveGamemode`. I declared it AFTER two useEffects that referenced it in their dependency arrays — and React evaluates the deps array immediately at render time, hitting the TDZ.
+
+Fix: moved `isJoinedGuest` and `effectiveGamemode` declarations ABOVE the useEffects that reference them. Component body order now matches data-flow order: state → derived values → effects.
+
+### Stale table references (silent 400/404 spam)
+
+The dev console was logging two failing requests every 60s on every signed-in client:
+
+- `PATCH user_profiles?id=eq.<uuid>` — 404. The correct table is `profiles` keyed by `user_id`. Fixed in App.jsx presence heartbeat and Playground.jsx PresenceCounter.
+- `HEAD room_players?...&updated_at=gte.<timestamp>` — 400. The `room_players` table has no `updated_at` column, only `joined_at`. Fixed.
+
+Neither was the crash — just noisy and broken (presence counter never worked).
+
+### Files touched
+- `src/Playground.jsx` — declaration order, PresenceCounter table names + columns
+- `src/App.jsx` — heartbeat table name + key column
+

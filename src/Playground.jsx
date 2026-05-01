@@ -4623,6 +4623,28 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
   // v7.6.4: Dandân variant the host has chosen. Only meaningful when
   // gamemode==='dandan'. Joiner reads this from room meta.
   const [dandanVariantId,setDandanVariantId]=useState(DANDAN_VARIANTS[0].variantId);
+  // v7.4: when joining another host's room, we can pick our deck from our
+  // own library OR from the host's library (the host publishes their decks
+  // alongside their player row).
+  const [deckSource,setDeckSource]=useState("mine"); // "mine" | "host"
+  const [hostDecks,setHostDecks]=useState([]); // host's published deck library
+  // v7.6.5.5: explicit Boolean. Was `myRoomId && mySeat && mySeat > 0` —
+  // when host (mySeat===0), the expression evaluates to the number `0`,
+  // which React renders as the text "0" in `{isJoinedGuest && <jsx>}` chains.
+  // That was the phantom white "0" appearing in Your Deck after Create Room.
+  const isJoinedGuest = !!(myRoomId && mySeat>0);
+
+  // v7.6.5.6: joiners follow the HOST's gamemode, not their local state. If
+  // the host's running Commander, the joiner needs to pick a Commander deck —
+  // their own gamemode dropdown is irrelevant. The deck filter, the visible
+  // format name, and the stale-deck clearing effect all read from this.
+  // Falls back to local `gamemode` for the host / pre-room state.
+  // v7.6.5.7: declared BEFORE the useEffects that depend on it — otherwise
+  // React reads the deps array (containing `effectiveGamemode`) at render
+  // time when the const is still in the temporal dead zone, blowing up
+  // with "can't access lexical declaration before initialization".
+  const effectiveGamemode = (isJoinedGuest && waitingMeta?.gamemode) ? waitingMeta.gamemode : gamemode;
+
   // v7.6.4: kick off resolution of the chosen variant in the background so
   // by the time the room fills the deck is fully populated.
   useEffect(()=>{
@@ -4657,23 +4679,6 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
       setDandanVariantId(waitingMeta.dandanVariantId);
     }
   },[isJoinedGuest, waitingMeta, gamemode, dandanVariantId]);
-  // v7.4: when joining another host's room, we can pick our deck from our
-  // own library OR from the host's library (the host publishes their decks
-  // alongside their player row).
-  const [deckSource,setDeckSource]=useState("mine"); // "mine" | "host"
-  const [hostDecks,setHostDecks]=useState([]); // host's published deck library
-  // v7.6.5.5: explicit Boolean. Was `myRoomId && mySeat && mySeat > 0` —
-  // when host (mySeat===0), the expression evaluates to the number `0`,
-  // which React renders as the text "0" in `{isJoinedGuest && <jsx>}` chains.
-  // That was the phantom white "0" appearing in Your Deck after Create Room.
-  const isJoinedGuest = !!(myRoomId && mySeat>0);
-
-  // v7.6.5.6: joiners follow the HOST's gamemode, not their local state. If
-  // the host's running Commander, the joiner needs to pick a Commander deck —
-  // their own gamemode dropdown is irrelevant. The deck filter, the visible
-  // format name, and the stale-deck clearing effect all read from this.
-  // Falls back to local `gamemode` for the host / pre-room state.
-  const effectiveGamemode = (isJoinedGuest && waitingMeta?.gamemode) ? waitingMeta.gamemode : gamemode;
 
   const loadRooms=async()=>{
     try{const keys=await storage.list("room_",true);
@@ -11793,6 +11798,8 @@ function PresenceCounter({T}){
         // (App.jsx subscribes every visitor to `playsim:lobby` regardless of
         // login state). If the channel hasn't reported yet, fall back to the
         // user_profiles updated-in-last-10min query, then to total profiles.
+        // v7.6.5.7: was hitting nonexistent `user_profiles` table; correct
+        // name is `profiles` keyed by `user_id`.
         let onlineCount = 0;
         const sitePresence = (typeof window !== 'undefined') ? window.__MTG_V7__?.sitePresenceCount : null;
         if (typeof sitePresence === 'number' && sitePresence > 0) {
@@ -11802,23 +11809,25 @@ function PresenceCounter({T}){
           const tenMinAgo = new Date(Date.now() - 10*60*1000).toISOString();
           try {
             const { count, error } = await supabase
-              .from('user_profiles')
-              .select('id', { count: 'exact', head: true })
+              .from('profiles')
+              .select('user_id', { count: 'exact', head: true })
               .gte('updated_at', tenMinAgo);
             if (error) throw error;
             onlineCount = count || 0;
           } catch (e1) {
             try {
               const { count } = await supabase
-                .from('user_profiles')
-                .select('id', { count: 'exact', head: true });
+                .from('profiles')
+                .select('user_id', { count: 'exact', head: true });
               onlineCount = count || 0;
             } catch {}
           }
         }
         // "In game" — anyone currently sitting in a room_players row. We try
-        // updated_at gating but fall back to total row count (since rooms
+        // joined_at gating but fall back to total row count (since rooms
         // delete their rows on leave/cleanup, total == active).
+        // v7.6.5.7: was using `updated_at` which doesn't exist on
+        // room_players (only `joined_at` does), causing 400s on every tick.
         let inGameCount = 0;
         try {
           const { supabase } = await import('./lib/supabase');
@@ -11826,7 +11835,7 @@ function PresenceCounter({T}){
           const { count, error } = await supabase
             .from('room_players')
             .select('user_id', { count: 'exact', head: true })
-            .gte('updated_at', tenMinAgo);
+            .gte('joined_at', tenMinAgo);
           if (error) throw error;
           inGameCount = count || 0;
         } catch (e1) {

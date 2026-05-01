@@ -130,10 +130,13 @@ export default function App() {
   }, []);
 
   // v7.6.5: presence heartbeat. Every 60s while signed in, touch
-  // user_profiles.updated_at so the PresenceCounter can see "active in
+  // profiles.updated_at so the PresenceCounter can see "active in
   // last 10 minutes" as a proxy for "online". If the column doesn't
   // exist on the deployed schema, abort the heartbeat after the first
   // failure — don't loop spamming the network.
+  // v7.6.5.7: was hitting `user_profiles?id=eq.<uuid>` which doesn't
+  // exist (correct table is `profiles`, keyed by `user_id`). 404'd
+  // every 60s on every signed-in client.
   useEffect(() => {
     if (!user?.id) return;
     let cancelled = false;
@@ -143,14 +146,12 @@ export default function App() {
       if (cancelled || columnMissing) return;
       try {
         const { supabase } = await import('./lib/supabase');
-        const { error } = await supabase.from('user_profiles')
+        const { error } = await supabase.from('profiles')
           .update({ updated_at: new Date().toISOString() })
-          .eq('id', user.id);
+          .eq('user_id', user.id);
         if (error && /updated_at/i.test(error.message || '')) {
           columnMissing = true;
           if (interval) { clearInterval(interval); interval = null; }
-          // Don't warn — schema is just missing the column. Presence
-          // counter will simply stay at 0 in that case.
         }
       } catch {}
     };
