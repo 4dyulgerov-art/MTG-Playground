@@ -1780,6 +1780,11 @@ const T = {
   muted:    '#6a7a8a',
   headerBg: 'linear-gradient(180deg,#080f1c,#050a12)',
   panelTex: '',
+  // v7.6.5.8: dedicated input background. Was hard-coded rgba(5,10,18,.8)
+  // everywhere, which on light themes (Parchment Day) produced near-black
+  // input boxes on a cream background — unreadable contrast. Each theme
+  // now supplies its own input bg.
+  inputBg:  'rgba(5,10,18,.8)',
 };
 
 /* ─── Weather Effects ─────────────────────────────────────────────── */
@@ -1831,6 +1836,23 @@ const extractFaces=(card)=>{
 // Detect if a card object (raw Scryfall or stored deck card) is double-faced
 const isDFCCard=(c)=>{
   if(!c) return false;
+  // v7.6.5.8: exclude Adventure cards and Room cards. They use card_faces in
+  // Scryfall data but represent split-on-front layouts rather than true two-
+  // sided cards. They should flip to the deck sleeve (or default cardback)
+  // like any single-faced card, not to a Scryfall back image.
+  // Detection priority:
+  //   1. Scryfall `layout` field — explicit and authoritative when present
+  //      ("adventure" | "room" | "split" | "flip" | …).
+  //   2. type_line keywords — for our stored deck cards which may not retain
+  //      `layout` after buildDeckEntry (we don't currently persist it).
+  const layout=(c.layout||"").toLowerCase();
+  if(layout==="adventure" || layout==="room" || layout==="split" || layout==="flip"){
+    return false;
+  }
+  const tl=((c.typeLine||c.type_line||"")+"").toLowerCase();
+  if(tl.includes("adventure") || tl.includes("room")){
+    return false;
+  }
   // Only cards explicitly marked as DFC by Scryfall (has real card_faces or isDoubleFaced flag)
   // altImageUri alone (custom sleeve/art) does NOT make a card DFC
   return !!(c.isDoubleFaced || c.card_faces?.length>=2 || c.faces?.length>=2);
@@ -1864,6 +1886,9 @@ const buildDeckEntry=(card, extra={})=>{
     altImageUri:backImg,
     faces,
     isDoubleFaced:dfc,
+    // v7.6.5.8: persist layout so isDFCCard() can authoritatively
+    // distinguish split / adventure / room / flip from real DFCs.
+    layout:card.layout||null,
     manaCost:card.mana_cost||card.card_faces?.[0]?.mana_cost||card.manaCost||"",
     typeLine:card.type_line||card.card_faces?.[0]?.type_line||card.typeLine||"",
     oracleText:card.oracle_text||card.card_faces?.[0]?.oracle_text||card.oracleText||"",
@@ -2379,13 +2404,16 @@ const btn=(bg,color="white",ex={})=>({
 });
 // v7.6.4: input style — theme-aware via Object property accessors so colors
 // update at render-read time instead of being baked at module-load time.
+// v7.6.5.8: also resolve `background` dynamically so light themes get a
+// readable input bg instead of the hard-coded near-black glass.
 const _iSDynamic = (prop) => {
-  if (prop === "border") return `1px solid ${T.border}`;
-  if (prop === "color")  return T.text;
+  if (prop === "border")     return `1px solid ${T.border}`;
+  if (prop === "color")      return T.text;
+  if (prop === "background") return T.inputBg;
   return undefined;
 };
 const iS = new Proxy({
-  display:"block",width:"100%",padding:"7px 10px",background:"rgba(5,10,18,.8)",
+  display:"block",width:"100%",padding:"7px 10px",
   borderRadius:5,fontSize:12,
   fontFamily:"Crimson Text, serif",marginTop:3,transition:"border-color .15s,box-shadow .15s",
 }, {
@@ -2395,12 +2423,12 @@ const iS = new Proxy({
     return target[prop];
   },
   // For the spread operator { ...iS } to work: we need ownKeys to include
-  // border and color so they're enumerated.
+  // border, color, and background so they're enumerated.
   ownKeys(target){
-    return [...Object.keys(target), "border", "color"];
+    return [...Object.keys(target), "border", "color", "background"];
   },
   getOwnPropertyDescriptor(target, prop){
-    if (prop === "border" || prop === "color") {
+    if (prop === "border" || prop === "color" || prop === "background") {
       return { enumerable: true, configurable: true, writable: false, value: _iSDynamic(prop) };
     }
     return Object.getOwnPropertyDescriptor(target, prop);
@@ -5259,14 +5287,16 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
             {/* Deck list — same click handler as main picker (writes to player_row) */}
             {/* v7.6.5.5: filter by gamemode (matching deck format), with
                 helpful empty-state messages for the three failure cases:
-                no decks at all / no host decks published / no decks of this format. */}
-            <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
+                no decks at all / no host decks published / no decks of this format.
+                v7.6.5.8: render as deck-thumb tiles matching the main menu, not
+                plain text buttons — gives joiners the same visual feedback. */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
               {(() => {
                 const all = (deckSource==="host"?hostDecks:decks);
                 if (all.length === 0) {
                   return (
                     <div style={{color: T.muted,fontSize:11,textAlign:"center",
-                      padding:16,fontStyle:"italic",
+                      padding:16,fontStyle:"italic",gridColumn:"1 / -1",
                       border:`1px dashed ${T.border}`,borderRadius:6}}>
                       {deckSource==="host"
                         ? "Host hasn't published any decks yet — switch to your library or wait."
@@ -5278,7 +5308,7 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                 if (filtered.length === 0) {
                   return (
                     <div style={{color:T.muted,fontSize:11,textAlign:"center",
-                      padding:16,fontStyle:"italic",
+                      padding:16,fontStyle:"italic",gridColumn:"1 / -1",
                       border:`1px dashed ${T.border}`,borderRadius:6,lineHeight:1.5}}>
                       {isJoinedGuest ? (
                         <>This room is running <b style={{color:T.accent,fontStyle:"normal"}}>{effectiveGamemode}</b>.<br/>
@@ -5290,36 +5320,114 @@ function RoomLobby({profile,decks,onJoinGame,onBack}){
                     </div>
                   );
                 }
-                return filtered.map(d=>(
-                  <button key={`popup-${deckSource}-${d.id}`} onClick={async()=>{
-                    setSelDeckId(d.id);
-                    if(deckSource==="host" && myRoomId && mySeat!=null){
-                      try{
-                        const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
-                        const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
-                        obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
-                        await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
-                      }catch{}
-                    } else if(myRoomId && mySeat!=null){
-                      try{
-                        const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
-                        const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
-                        obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
-                        await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
-                      }catch{}
-                    }
-                  }}
-                    style={{...btn(`${T.bg}b0`,T.text,
-                      {border:`1px solid ${T.border}`,fontSize:12,padding:"10px 12px",
-                       textAlign:"left",fontFamily:"Cinzel, serif",transition:"all .15s"})}}
-                    onMouseOver={e=>{e.currentTarget.style.borderColor=T.accent;e.currentTarget.style.background=`${T.accent}12`;}}
-                    onMouseOut ={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.background=`${T.bg}b0`;}}>
-                    <span style={{color:T.accent,marginRight:8}}>✦</span>
-                    {d.name}
-                    {deckSource==="host" && <span style={{color:"#a855f7",marginLeft:6,fontSize:10}}>(borrowed)</span>}
-                    {Array.isArray(d.mainboard) && <span style={{color: T.muted,marginLeft:8,fontSize:10}}>· {d.mainboard.length} cards</span>}
-                  </button>
-                ));
+                return filtered.map(d=>{
+                  // v7.6.5.8: derive thumbnails like the main-menu deck list
+                  // does — multi-commander grid when there's more than one,
+                  // otherwise the first card with imageUri. Falls back to
+                  // a sigil tile if none of the cards have art yet.
+                  const cmdrs = (d.commanders && d.commanders.length)
+                    ? d.commanders
+                    : (d.commander ? [d.commander] : []);
+                  const thumbs = cmdrs.map(c=>c.imageUri).filter(Boolean).slice(0,4);
+                  if(!thumbs.length){
+                    const fb = (d.cards||[]).find(c=>c.imageUri)?.imageUri;
+                    if(fb) thumbs.push(fb);
+                  }
+                  const N = thumbs.length;
+                  const grid = N <= 1 ? {cols:1,rows:1}
+                             : N === 2 ? {cols:2,rows:1}
+                             : N === 3 ? {cols:3,rows:1}
+                             : {cols:2,rows:2};
+                  const total = (d.cards||[]).reduce((s,c)=>s+(c.count||c.quantity||1),0);
+                  const fmtAccent = d.format==="commander"?T.accent
+                                  : d.format==="oathbreaker"?"#fbbf24"
+                                  : d.format==="modern"?"#60a5fa"
+                                  : d.format==="legacy"?"#a78bfa"
+                                  : "#4ade80";
+                  return (
+                    <div key={`popup-${deckSource}-${d.id}`}
+                      onClick={async()=>{
+                        setSelDeckId(d.id);
+                        if(deckSource==="host" && myRoomId && mySeat!=null){
+                          try{
+                            const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                            const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                            obj.deck=d; obj.deckId=d.id; obj.deckSource="host";
+                            await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                          }catch{}
+                        } else if(myRoomId && mySeat!=null){
+                          try{
+                            const cur=await storage.get(`room_${myRoomId}_player_${mySeat}`,true);
+                            const obj=cur?JSON.parse(cur.value):{profile,deckId:d.id};
+                            obj.deck=d; obj.deckId=d.id; obj.deckSource="mine";
+                            await storage.set(`room_${myRoomId}_player_${mySeat}`,JSON.stringify(obj),true);
+                          }catch{}
+                        }
+                      }}
+                      style={{
+                        position:"relative", height:120, borderRadius:8, overflow:"hidden",
+                        border:`1px solid rgba(${T.accentRgb},.12)`,
+                        cursor:"pointer", transition:"border-color .15s, transform .15s, box-shadow .15s",
+                        boxShadow:"0 3px 10px rgba(0,0,0,.6)",
+                      }}
+                      onMouseOver={e=>{
+                        e.currentTarget.style.borderColor=`${fmtAccent}80`;
+                        e.currentTarget.style.transform="translateY(-1px)";
+                        e.currentTarget.style.boxShadow=`0 8px 22px rgba(0,0,0,.7), 0 0 18px ${fmtAccent}20`;
+                      }}
+                      onMouseOut={e=>{
+                        e.currentTarget.style.borderColor=`rgba(${T.accentRgb},.12)`;
+                        e.currentTarget.style.transform="none";
+                        e.currentTarget.style.boxShadow="0 3px 10px rgba(0,0,0,.6)";
+                      }}>
+                      {/* Art region */}
+                      <div style={{position:"absolute", inset:0,
+                        display:"grid",
+                        gridTemplateColumns:`repeat(${grid.cols},1fr)`,
+                        gridTemplateRows:`repeat(${grid.rows},1fr)`,
+                        gap: N > 1 ? 1 : 0,
+                        background: thumbs.length === 0 ? "linear-gradient(135deg,#0a1628,#0d1f3c)" : "transparent"}}>
+                        {thumbs.length>0 ? thumbs.map((url,idx)=>(
+                          <div key={idx} style={{position:"relative", overflow:"hidden"}}>
+                            <img src={url} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",
+                              objectFit:"cover", objectPosition:"top center"}}/>
+                          </div>
+                        )) : (
+                          <div style={{display:"flex", alignItems:"center", justifyContent:"center", fontSize:36, color:`${T.accent}60`}}>⚔</div>
+                        )}
+                      </div>
+                      {/* Bottom gradient + label */}
+                      <div style={{position:"absolute",left:0,right:0,bottom:0,height:"60%",
+                        background:"linear-gradient(transparent, rgba(4,8,18,.85) 45%, rgba(4,8,18,.97))",
+                        pointerEvents:"none"}}/>
+                      {/* Format badge */}
+                      {d.format && (
+                        <div style={{position:"absolute", top:6, right:6,
+                          background:"rgba(5,10,18,.85)", fontSize:8, color:fmtAccent,
+                          fontFamily:"Cinzel, serif", padding:"2px 7px", borderRadius:4,
+                          letterSpacing:".1em", border:`1px solid ${fmtAccent}40`,
+                          backdropFilter:"blur(4px)"}}>{d.format.toUpperCase()}</div>
+                      )}
+                      {deckSource==="host" && (
+                        <div style={{position:"absolute", top:6, left:6,
+                          background:"rgba(168,85,247,.85)", fontSize:7, color:"#fff",
+                          fontFamily:"Cinzel, serif", padding:"1px 6px", borderRadius:3,
+                          letterSpacing:".1em"}}>BORROWED</div>
+                      )}
+                      <div style={{position:"absolute",left:0,right:0,bottom:0,padding:"8px 11px"}}>
+                        <div style={{fontFamily:"Cinzel, serif", color:T.accent, fontSize:13,
+                          overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap",
+                          textShadow:"0 1px 5px rgba(0,0,0,.95)", letterSpacing:".02em"}}>
+                          {(d.commanders?.length||d.commander)?"⚔ ":""}{d.name}
+                        </div>
+                        <div style={{fontSize:9, color:"#9bb0c8", fontFamily:"Cinzel, serif",
+                          textShadow:"0 1px 4px rgba(0,0,0,.9)", marginTop:1}}>
+                          {total} cards{(d.commanders?.length>1)?` · ${d.commanders.length} cmdrs`:d.commander?` · ${d.commander.name}`:""}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
               })()}
             </div>
 
@@ -7506,9 +7614,11 @@ function BoardSide({
                           onCtx={e=>handleCtx(e,card,"command")}
                           onHover={setHovered} onHoverEnd={()=>setHovered(null)}
                           onClick={e=>{e.stopPropagation();setHovered(card);}}/>
-                        {/* Away/blocked overlay — commander has left the command zone */}
+                        {/* Away/blocked overlay — commander has left the command zone.
+                            v7.6.5.8: dimmed to 20% per user request. The icon + label
+                            still convey state; we don't need to obscure the art. */}
                         {isAway&&(
-                          <div style={{position:"absolute",inset:0,borderRadius:6,background:"rgba(0,0,0,.55)",
+                          <div style={{position:"absolute",inset:0,borderRadius:6,background:"rgba(0,0,0,.20)",
                             display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
                             <span style={{fontSize:card.status==="dead"?26:card.status==="exiled"?22:18}}>
                               {card.status==="dead"?"☠":card.status==="exiled"?"✦":"⚔"}
@@ -7599,7 +7709,18 @@ function BoardSide({
                   if(isRevealed && setHovered) setHovered(top);
                 }}
                 onMouseLeave={()=>{ if(setHovered) setHovered(null); }}
-                onContextMenu={e=>{e.preventDefault();if(player.library[0]){const c=(player.revealTop||player.revealTopOnce===player.library[0]?.iid)?player.library[0]:{...player.library[0],name:"Top of Deck",imageUri:null,card_faces:null,image_uris:null};handleCtx(e,c,"library");}}}
+                onContextMenu={e=>{
+                  e.preventDefault();
+                  if(!player.library[0]) return;
+                  // v7.6.5.8: pass the REAL top card to handleCtx — was passing
+                  // a stripped placeholder ({name:"Top of Deck", imageUri:null,
+                  // card_faces:null}), which broke move-to-X actions because
+                  // they ended up moving the placeholder instead of the actual
+                  // card. The library context menu's zone-move actions now use
+                  // topdeckTo() which always reads from player.library[0]
+                  // anyway, so passing the real card is safe and consistent.
+                  handleCtx(e, player.library[0], "library");
+                }}
                 onMouseDown={e=>{
                   if(e.button!==0||!player.library[0])return;
                   e.preventDefault();
@@ -8687,6 +8808,76 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
 
   const mill=useCallback((n)=>millToZone(n,"graveyard"),[millToZone]);
   const millExile=useCallback((n)=>millToZone(n,"exile"),[millToZone]);
+
+  // v7.6.5.8: topdeckTo — animate the TOP card of library to a destination
+  // zone. Uses the same fly-to-target visual as millToZone (snapshot the
+  // image, then upd() pops the real card from the front and pushes to dest).
+  // This replaces the broken right-click → mv path which was passing a
+  // stripped placeholder ({name:"Top of Deck", imageUri:null}) into moveCard.
+  const topdeckTo=useCallback((toZone, pos="bottom")=>{
+    if(!player.library.length) return;
+    const realCard=player.library[0];
+    const cardImg=getImg(realCard)||CARD_BACK;
+    const libPos=libRef.current?.getBoundingClientRect();
+
+    let targetRef, glow, sfxAction;
+    if(toZone==="battlefield"){ targetRef=bfRef; glow="rgba(74,222,128,.8)"; sfxAction="toBattlefield"; }
+    else if(toZone==="graveyard"){ targetRef=graveRef; glow="rgba(168,85,247,.8)"; sfxAction="toGrave"; }
+    else if(toZone==="exile"){ targetRef=exileRef; glow="rgba(96,165,250,.8)"; sfxAction="toExile"; }
+    else if(toZone==="hand"){ targetRef=null; glow="rgba(200,168,112,.8)"; sfxAction="draw"; }
+    else if(toZone==="library"){ targetRef=libRef; glow="rgba(200,168,112,.6)"; sfxAction="shuffle"; }
+    else { targetRef=null; glow="rgba(200,168,112,.6)"; sfxAction="toBattlefield"; }
+
+    SFX.playAction(sfxAction);
+
+    if(libPos && targetRef?.current && toZone!=="library"){
+      const targetPos=targetRef.current.getBoundingClientRect();
+      const sleeve=player.deck?.sleeveUri||CARD_BACK;
+      const anim={
+        id:uid(),
+        img:cardImg,
+        backImg:sleeve,
+        fromX:libPos.left + libPos.width/2 - CW/2,
+        fromY:libPos.top + libPos.height/2 - CH/2,
+        toX:targetPos.left + targetPos.width/2 - CW/2,
+        toY:targetPos.top + targetPos.height/2 - CH/2,
+        startRot:90,
+        endRot:0,
+        rot:0,
+        glow,
+        delay:0,
+        dur:420,
+      };
+      setFlyingCards(fc=>[...fc,anim]);
+      setTimeout(()=>setFlyingCards(fc=>fc.filter(c=>c.id!==anim.id)),560);
+    }
+
+    upd(p=>{
+      if(!p.library.length) return p;
+      const [card,...rest]=p.library;
+      const labelMap={battlefield:"▶",graveyard:"☠",exile:"✦",hand:"↩",library:"↓"};
+      const verbMap={battlefield:"battlefield",graveyard:"graveyard",exile:"exile",hand:"hand",library:`library ${pos}`};
+      const icon=labelMap[toZone]||"↪";
+      const verb=verbMap[toZone]||toZone;
+      let next={...p, library:rest};
+      if(toZone==="battlefield"){
+        // Reuse autoPos from existing battlefield placement
+        const placed={...mkCard({...card,isCommander:!!card.isCommander,status:null},"battlefield"),...autoPos(p.battlefield,card)};
+        next.battlefield=[...p.battlefield, placed];
+      } else if(toZone==="graveyard"){
+        next.graveyard=[...p.graveyard,{...card,zone:"graveyard",tapped:false,counters:{},altFace:false}];
+      } else if(toZone==="exile"){
+        next.exile=[...p.exile,{...card,zone:"exile",tapped:false,counters:{},altFace:false}];
+      } else if(toZone==="hand"){
+        next.hand=[...p.hand,{...card,zone:"hand",tapped:false}];
+      } else if(toZone==="library"){
+        // Move top to bottom of library — preserve full card shape
+        next.library=pos==="top" ? [card,...rest] : [...rest,{...card,zone:"library"}];
+      }
+      next.log=[`T${turn}:${icon} Top of library → ${verb} (${card.name})`,...p.log].slice(0,80);
+      return next;
+    });
+  },[player.library, player.deck, player.battlefield, upd, turn]);
   const [millCount,setMillCount]=useState(1);
   const [millTarget,setMillTarget]=useState("graveyard"); // "graveyard"|"exile"
   const handToLib=()=>upd(p=>({...p,library:shuffleArr([...p.library,...p.hand.map(c=>({...c,zone:"library"}))]),hand:[],log:[`T${turn}:Hand → library`,...p.log].slice(0,80)}));
@@ -9314,6 +9505,11 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
       // v7.6.5-fix: dropped redundant "Draw This Card" — when right-clicking
       // the topdeck portrait it did the same thing as "Draw a card (C)" but
       // without the hotkey label, cluttering the menu.
+      // v7.6.5.8: zone moves go through topdeckTo() instead of mv() so the
+      // REAL top card is moved (not the masked placeholder we showed in the
+      // image), with the same fly-to-target animation as Mill X. Mv() was
+      // dropping the card down to {name:"Top of Deck", imageUri:null} which
+      // produced text-only placeholders in the destination zone.
       items.push({icon:"🎴",label:"Draw a card (C)",action:()=>draw(1)});
       items.push({icon:"🎴",label:"Draw 7 cards (Shift+C)",action:()=>draw(7)});
       items.push({icon:"🎴",label:"Draw X…",action:()=>{
@@ -9325,12 +9521,11 @@ function GameBoard({playerIdx,player,opponent,allOpps=[],phase,turn,stack,gamemo
         });
       }});
       items.push("---");
-      items.push({icon:"▶",label:"→ Battlefield",action:mv("battlefield")});
-      items.push({icon:"☠",label:"→ Graveyard",action:mv("graveyard"),color:"#a78bfa"});
-      items.push({icon:"⚡",label:"→ Exile",action:mv("exile"),color:"#60a5fa"});
+      items.push({icon:"▶",label:"→ Battlefield",action:()=>topdeckTo("battlefield")});
+      items.push({icon:"☠",label:"→ Graveyard",action:()=>topdeckTo("graveyard"),color:"#a78bfa"});
+      items.push({icon:"⚡",label:"→ Exile",action:()=>topdeckTo("exile"),color:"#60a5fa"});
       items.push("---");
-      items.push({icon:"↑",label:"Move to Top",action:mv("library","top")});
-      items.push({icon:"↓",label:"Move to Bottom",action:mv("library","bottom")});
+      items.push({icon:"↓",label:"Move to Bottom",action:()=>topdeckTo("library","bottom")});
       items.push("---");
       items.push({icon:"🔀",label:"Shuffle (V)",action:()=>shuffle()});
       items.push("---");
@@ -10827,6 +11022,118 @@ async function sfCollection(names, onProgress){
   return out;
 }
 
+/* v7.6.5.8 — deckResolver singleton.
+   Survives DeckBuilder unmount: the previous design ran the resolution
+   inside the BatchImporter's onClick handler, then dispatched a
+   `mtg-deck-patch` event the active DeckBuilder caught. If the user
+   left the deckbuilder mid-resolve, the in-flight resolution still
+   completed but had no listener — patches were lost. Re-entering the
+   deckbuilder didn't retry because the stubs persisted but nothing
+   re-enqueued them.
+
+   This singleton:
+   - Holds a pending queue of {scryfallId, name, zone} entries
+   - Runs batches of 75 against /cards/collection on a single timer
+   - Dispatches `mtg-deck-patch` events as each batch resolves so any
+     listening DeckBuilder receives patches (live or after re-mount)
+   - Caches resolved results so re-enqueueing a name is free
+   - On DeckBuilder mount, the builder scans its deck for _pending
+     cards and re-enqueues anything not already cached. If the resolver
+     was idle (page just loaded with a saved deck containing stubs), it
+     picks up where it left off.
+*/
+const deckResolver = (() => {
+  // Map<lowercased name, resolved Scryfall card>
+  const cache = new Map();
+  // Set<lowercased name> — enqueued + not-yet-resolved
+  const pending = new Set();
+  // Map<lowercased name, [{stubId, zone}...]> — stubs awaiting this name
+  const subscribers = new Map();
+  let processing = false;
+  let processTimer = null;
+
+  const flushBatch = async () => {
+    if (!pending.size) { processing = false; return; }
+    processing = true;
+    const batch = Array.from(pending).slice(0, 75);
+    // Optimistic — assume names will resolve. We only un-pend after a response.
+    try {
+      const lookup = await sfCollection(batch);
+      const patches = [];
+      for (const lower of batch) {
+        const card = lookup.get(lower);
+        if (card) {
+          const built = buildDeckEntry(card);
+          cache.set(lower, built);
+          // Patch each subscriber stub
+          const subs = subscribers.get(lower) || [];
+          for (const sub of subs) {
+            patches.push({ stubId: sub.stubId, zone: sub.zone, resolved: built });
+          }
+          subscribers.delete(lower);
+        }
+        // Un-pend regardless — failed names won't be retried automatically
+        // (caller must re-enqueue). Avoids infinite loops on typos.
+        pending.delete(lower);
+      }
+      if (patches.length && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("mtg-deck-patch", { detail: { patches } }));
+      }
+    } catch (e) {
+      // On total failure, leave the names in pending and back off harder
+      console.warn("[deckResolver] batch failed", e);
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    // Schedule next batch if more pending
+    if (pending.size) {
+      processTimer = setTimeout(flushBatch, 80);
+    } else {
+      processing = false;
+    }
+  };
+
+  const kick = () => {
+    if (processing || processTimer) return;
+    processTimer = setTimeout(() => { processTimer = null; flushBatch(); }, 0);
+  };
+
+  return {
+    /** Enqueue a stub for resolution. Idempotent — duplicates are merged.
+        Returns immediately. Resolution arrives via the `mtg-deck-patch`
+        event with detail.patches=[{stubId, zone, resolved}]. */
+    enqueue(stubId, name, zone) {
+      if (!name) return;
+      const lower = String(name).toLowerCase();
+      // If already cached, dispatch synchronously next tick so subscriber
+      // doesn't have to special-case.
+      if (cache.has(lower)) {
+        const built = cache.get(lower);
+        if (typeof window !== "undefined") {
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent("mtg-deck-patch", {
+              detail: { patches: [{ stubId, zone, resolved: built }] }
+            }));
+          }, 0);
+        }
+        return;
+      }
+      // Track subscriber — multiple stubs (different zones / quantities)
+      // may want the same name.
+      if (!subscribers.has(lower)) subscribers.set(lower, []);
+      subscribers.get(lower).push({ stubId, zone });
+      pending.add(lower);
+      kick();
+    },
+    /** Bulk version. Same contract per item. */
+    enqueueMany(items) {
+      for (const it of items || []) this.enqueue(it.stubId, it.name, it.zone);
+    },
+    /** Diagnostic — current pending count. */
+    pendingCount() { return pending.size; },
+    cacheSize() { return cache.size; },
+  };
+})();
+
 /* Batch import modal */
 function BatchImporter({onImport, onClose}){
   const [text, setText] = useState("");
@@ -10899,6 +11206,11 @@ function BatchImporter({onImport, onClose}){
   // Scryfall metadata in the background and dispatch a window event that
   // the deckbuilder listens for to patch in real card data as it arrives.
   // No blocking spinner. No 0.5s wait. Paste → done.
+  // v7.6.5.8: hand off to module-level deckResolver instead of running an
+  // inline async block. The resolver survives DeckBuilder unmount and is
+  // idempotent — re-entering the deckbuilder with stubs still pending will
+  // re-enqueue and pick up where we left off. Cache means the same name
+  // resolves instantly on subsequent imports.
   const handleInstantImport = () => {
     const parsed = preview || parseDecklist(text);
     const allEntries = [
@@ -10931,32 +11243,12 @@ function BatchImporter({onImport, onClose}){
     // Commit stubs immediately. Modal closes, user can use the deckbuilder.
     onImport(results);
 
-    // Background: resolve real Scryfall data and dispatch a 'mtg-deck-patch'
-    // event with the resolved cards. The deckbuilder listens and merges.
-    (async () => {
-      try {
-        const lookup = await sfCollection(allEntries.map(e=>e.name));
-        // Build resolved entries keyed by the stub's scryfallId so the
-        // deckbuilder can find and replace.
-        const patches = [];
-        for(const {name, quantity, zone} of allEntries){
-          const card = lookup.get(name.toLowerCase());
-          if(card){
-            const resolved = {...buildDeckEntry(card), quantity};
-            patches.push({
-              stubId: `pending:${name.toLowerCase()}`,
-              zone,
-              resolved,
-            });
-          }
-        }
-        if(typeof window !== 'undefined'){
-          window.dispatchEvent(new CustomEvent('mtg-deck-patch', { detail: { patches } }));
-        }
-      } catch (e) {
-        console.warn('[instant import] background fetch failed', e);
-      }
-    })();
+    // Hand off to the resolver. Each entry's stubId === its scryfallId.
+    deckResolver.enqueueMany(allEntries.map(e => ({
+      stubId: `pending:${e.name.toLowerCase()}`,
+      name: e.name,
+      zone: e.zone,
+    })));
   };
 
   const retryFailed = async () => {
@@ -11157,6 +11449,9 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
   // 'mtg-deck-patch' events with resolved Scryfall data after the user has
   // already received stub entries. Merge resolved data in by matching on
   // the stub's scryfallId (`pending:<lowercased-name>`).
+  // v7.6.5.8: also fires from the deckResolver singleton when in-flight
+  // resolutions complete after the deckbuilder remounts. The `mount-scan`
+  // useEffect below re-enqueues any stubs left over from a previous session.
   useEffect(()=>{
     const onPatch = (ev) => {
       const patches = ev?.detail?.patches;
@@ -11184,6 +11479,29 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
     window.addEventListener('mtg-deck-patch', onPatch);
     return () => window.removeEventListener('mtg-deck-patch', onPatch);
   },[]);
+
+  // v7.6.5.8: on mount, scan the loaded deck for any _pending stubs and
+  // re-enqueue them with the resolver. Covers the "left the deckbuilder
+  // mid-import / closed and reopened" scenario where the resolver may
+  // have died with the old component, or the cards were saved to disk
+  // mid-resolve and we're now reloading a partially-resolved deck.
+  // The resolver dedupes — anything already in flight is a no-op.
+  useEffect(()=>{
+    const collect = (list, zone) => (list||[])
+      .filter(c => c._pending && c.name && c.scryfallId?.startsWith("pending:"))
+      .map(c => ({ stubId: c.scryfallId, name: c.name, zone }));
+    const items = [
+      ...collect(cards, "main"),
+      ...collect(sideboard, "side"),
+      ...collect(tokenList, "token"),
+    ];
+    if (items.length) {
+      deckResolver.enqueueMany(items);
+    }
+  // Run only when cards/sideboard/tokenList identity changes after a save+reload —
+  // not on every keystroke. The resolver dedupes anyway, so worst case it's a no-op.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[deck?.id]);
 
   // Fixed Scryfall search — use /cards/search with proper error handling
   useEffect(()=>{
@@ -11287,15 +11605,47 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
   // Apply a specific printing's image to the selected card
   const applyPrinting=(printing)=>{
     if(!selectedCard) return;
-    const img=printing.image_uris?.normal||printing.card_faces?.[0]?.image_uris?.normal||null;
-    if(!img) return;
+    // v7.6.5.8: for DFCs, update BOTH faces. Previously only imageUri (front)
+    // was patched, so a card that was full-art on the front kept its
+    // OLD non-full-art back-face URL — when you transformed it, the back
+    // looked like a different printing entirely.
+    const frontImg = printing.image_uris?.normal
+      || printing.card_faces?.[0]?.image_uris?.normal
+      || null;
+    if(!frontImg) return;
+    const isDFC = isDFCCard(printing) || isDFCCard(selectedCard);
+    const backImg = isDFC ? (
+         printing.card_faces?.[1]?.image_uris?.normal
+      || (frontImg.includes("/front/") ? frontImg.replace("/front/","/back/") : null)
+    ) : null;
+    const newFaces = isDFC ? extractFaces(printing) : null;
+
+    const patch = c => {
+      if (c.scryfallId !== selectedCard.scryfallId) return c;
+      const next = { ...c, imageUri: frontImg };
+      if (isDFC) {
+        if (backImg)  next.altImageUri = backImg;
+        if (newFaces) next.faces = newFaces;
+        next.isDoubleFaced = true;
+      }
+      return next;
+    };
     if(activeZone==="cmdr"){
-      setCommanders(prev=>prev.map(c=>c.scryfallId===selectedCard.scryfallId?{...c,imageUri:img}:c));
+      setCommanders(prev=>prev.map(patch));
     }else{
       const setter=activeZone==="side"?setSideboard:activeZone==="token"?setTokenList:setCards;
-      setter(prev=>prev.map(c=>c.scryfallId===selectedCard.scryfallId?{...c,imageUri:img}:c));
+      setter(prev=>prev.map(patch));
     }
-    setSelectedCard(sc=>sc?{...sc,imageUri:img}:sc);
+    setSelectedCard(sc => {
+      if (!sc) return sc;
+      const next = { ...sc, imageUri: frontImg };
+      if (isDFC) {
+        if (backImg)  next.altImageUri = backImg;
+        if (newFaces) next.faces = newFaces;
+        next.isDoubleFaced = true;
+      }
+      return next;
+    });
   };
 
   const handleBatchImport=(results)=>{
@@ -11607,6 +11957,16 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                     No Image
                   </div>
                 )}
+                {/* v7.6.5.8: also show the back face for DFCs so users can
+                    confirm the back-face URL points where they expect. */}
+                {isDFCCard(selectedCard) && selectedCard.altImageUri && (
+                  <div style={{marginTop:6,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                    <div style={{fontSize:7,color:"#34d399",fontFamily:"Cinzel,serif",letterSpacing:".1em"}}>↕ BACK FACE</div>
+                    <img src={selectedCard.altImageUri} alt={`${selectedCard.name} back`}
+                      style={{width:90,height:126,borderRadius:5,objectFit:"cover",border:"1px solid #34d39940",
+                        boxShadow:"0 0 12px rgba(52,211,153,.18)"}}/>
+                  </div>
+                )}
                 <div style={{fontSize:10,color:T.accent,fontFamily:"Cinzel,serif",marginTop:6,fontWeight:600}}>{selectedCard.name}</div>
                 <div style={{fontSize:8,color: T.muted,fontFamily:"Cinzel,serif",marginTop:2}}>{selectedCard.typeLine}</div>
                 {selectedCard.manaCost&&<div style={{marginTop:4,display:"flex",justifyContent:"center"}}><ManaCost cost={selectedCard.manaCost}/></div>}
@@ -11640,29 +12000,84 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
                 })}
                 {!loadingPrints&&printings.length===0&&<div style={{fontSize:8,color:T.border,fontStyle:"italic",padding:4}}>No alternate printings found</div>}
               </div>
-              {/* Custom art URL input */}
-              <div style={{padding:"6px 8px",borderTop:`1px solid ${T.border}20`,flexShrink:0}}>
-                <div style={{fontSize:7,color: T.muted,fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:4}}>🔗 CUSTOM ART URL</div>
-                <div style={{display:"flex",gap:4}}>
-                  <input id="customArtInput"
-                    placeholder="Paste image URL… (Enter to apply)"
-                    style={{flex:1,background:T.bg,border:`1px solid ${T.border}30`,borderRadius:4,padding:"3px 6px",fontSize:9,color:T.text,outline:"none"}}
-                    onKeyDown={e=>{
-                      if(e.key!=="Enter")return;
-                      const img=e.target.value.trim();if(!img||!selectedCard)return;
-                      if(activeZone==="cmdr"){setCommanders(prev=>prev.map(c=>c.scryfallId===selectedCard.scryfallId?{...c,imageUri:img}:c));}
-                      else{const setter=activeZone==="side"?setSideboard:activeZone==="token"?setTokenList:setCards;setter(prev=>prev.map(c=>c.scryfallId===selectedCard.scryfallId?{...c,imageUri:img}:c));}
-                      setSelectedCard(sc=>sc?{...sc,imageUri:img}:sc);e.target.value="";
-                    }}/>
-                  <button onClick={()=>{
-                    const inp=document.getElementById("customArtInput");
-                    const img=inp?.value.trim();if(!img||!selectedCard)return;
-                    if(activeZone==="cmdr"){setCommanders(prev=>prev.map(c=>c.scryfallId===selectedCard.scryfallId?{...c,imageUri:img}:c));}
-                    else{const setter=activeZone==="side"?setSideboard:activeZone==="token"?setTokenList:setCards;setter(prev=>prev.map(c=>c.scryfallId===selectedCard.scryfallId?{...c,imageUri:img}:c));}
-                    setSelectedCard(sc=>sc?{...sc,imageUri:img}:sc);if(inp)inp.value="";
-                  }} style={{...btn(`${T.accent}18`,T.accent,{fontSize:9,border:`1px solid ${T.accent}40`,padding:"3px 8px",flexShrink:0})}} onMouseOver={hov} onMouseOut={uhov}>Apply</button>
-                </div>
-              </div>
+              {/* Custom art URL input
+                  v7.6.5.8: for DFCs we render TWO inputs — front and back —
+                  so users can override each face independently. Single-faced
+                  cards keep the original single-input layout. */}
+              {(() => {
+                const isDFC = isDFCCard(selectedCard);
+
+                // Helper: write a URL into the front (imageUri) or back
+                // (altImageUri) face of the selected card across whichever
+                // zone owns it.
+                const setFaceUrl = (face, url) => {
+                  if (!url || !selectedCard) return;
+                  const patch = c => {
+                    if (c.scryfallId !== selectedCard.scryfallId) return c;
+                    if (face === "front") return { ...c, imageUri: url };
+                    return { ...c, altImageUri: url, isDoubleFaced: true };
+                  };
+                  if (activeZone === "cmdr") {
+                    setCommanders(prev => prev.map(patch));
+                  } else {
+                    const setter = activeZone === "side" ? setSideboard
+                                  : activeZone === "token" ? setTokenList
+                                  : setCards;
+                    setter(prev => prev.map(patch));
+                  }
+                  setSelectedCard(sc => {
+                    if (!sc) return sc;
+                    if (face === "front") return { ...sc, imageUri: url };
+                    return { ...sc, altImageUri: url, isDoubleFaced: true };
+                  });
+                };
+
+                const FaceInput = ({ face, label, currentValue, defaultId }) => (
+                  <div style={{marginBottom: face==="front"&&isDFC ? 6 : 0}}>
+                    <div style={{fontSize:7,color:T.muted,fontFamily:"Cinzel,serif",letterSpacing:".08em",marginBottom:3}}>
+                      🔗 {label}
+                    </div>
+                    <div style={{display:"flex",gap:4}}>
+                      <input id={defaultId}
+                        defaultValue={currentValue||""}
+                        placeholder="Paste image URL… (Enter to apply)"
+                        style={{flex:1,background:T.bg,border:`1px solid ${T.border}30`,borderRadius:4,padding:"3px 6px",fontSize:9,color:T.text,outline:"none"}}
+                        onKeyDown={e=>{
+                          if(e.key!=="Enter")return;
+                          const img=e.target.value.trim();
+                          if(img) setFaceUrl(face, img);
+                        }}/>
+                      <button onClick={()=>{
+                        const inp=document.getElementById(defaultId);
+                        const img=inp?.value.trim();
+                        if(img) setFaceUrl(face, img);
+                      }}
+                        style={{...btn(`${T.accent}18`,T.accent,{fontSize:9,border:`1px solid ${T.accent}40`,padding:"3px 8px",flexShrink:0})}}
+                        onMouseOver={hov} onMouseOut={uhov}>Apply</button>
+                    </div>
+                  </div>
+                );
+
+                return (
+                  <div style={{padding:"6px 8px",borderTop:`1px solid ${T.border}20`,flexShrink:0}}>
+                    <FaceInput face="front"
+                      label={isDFC?"FRONT FACE URL":"CUSTOM ART URL"}
+                      currentValue={selectedCard.imageUri}
+                      defaultId="customArtInput"/>
+                    {isDFC && (
+                      <FaceInput face="back"
+                        label="BACK FACE URL"
+                        currentValue={selectedCard.altImageUri}
+                        defaultId="customArtInputBack"/>
+                    )}
+                    {isDFC && (
+                      <div style={{fontSize:7,color:T.muted,fontStyle:"italic",lineHeight:1.4,marginTop:4}}>
+                        Double-faced card — front + back update independently. Click an alternate printing above to change both at once.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -12302,6 +12717,16 @@ function MainMenu({decks,onNew,onEdit,onPlay,onRooms,onDelete,profile,onTheme,on
             </div>
           </button>
         )}
+        {/* v7.6.5.8: Discord community button. Opens in a new tab.
+            Discord brand color #5865F2 (Blurple). */}
+        <a href="https://discord.gg/2AQWbPNEk"
+           target="_blank" rel="noopener noreferrer"
+           title="Join the TCG Playsim Discord — matchmaking, voice channels, community"
+           style={{...btn("rgba(88,101,242,.12)","#7983f5",{
+             fontFamily:"Cinzel, serif",padding:"8px 14px",
+             border:"1px solid rgba(88,101,242,.35)",textDecoration:"none",
+             display:"inline-flex",alignItems:"center",gap:6}),fontSize:11}}
+           onMouseOver={hov} onMouseOut={uhov}>💬 Discord</a>
         {/* v7.6.5-fix: Patreon support button. Opens in a new tab; rel
             noopener+noreferrer so the linked page can't reach back into our
             window (window.opener) or read the referrer. ♥ is Unicode 1.1
@@ -14896,6 +15321,22 @@ export default function MTGPlayground({ authUser = null, initialProfile = null, 
     })();
     T.headerBg = theme.headerBg || ('linear-gradient(180deg,'+theme.panel+','+theme.bg+')');
     T.panelTex = theme.panelTex || theme.panel;
+    // v7.6.5.8: derive a contrasty input background from theme luminance.
+    // Light themes (Parchment Day) → translucent-on-white cream; dark
+    // themes → existing rgba(5,10,18,.8) glass. The threshold is a quick
+    // luma calc on theme.bg (Y = 0.3R+0.59G+0.11B). >150/255 = light.
+    T.inputBg = (() => {
+      if (theme.inputBg) return theme.inputBg; // explicit override wins
+      const h = (theme.bg || "#050a12").replace("#","");
+      const v = parseInt(h.length===3
+        ? h.split("").map(c=>c+c).join("")
+        : h.padEnd(6,"0").slice(0,6), 16);
+      const r=(v>>16)&255, g=(v>>8)&255, b=v&255;
+      const luma = 0.299*r + 0.587*g + 0.114*b;
+      return luma > 150
+        ? "rgba(255,255,255,.55)"   // light theme → translucent paper
+        : "rgba(5,10,18,.8)";        // dark theme → existing glass
+    })();
     document.body.style.background = theme.bg;
     document.documentElement.setAttribute('data-theme', theme.id);
     el.textContent = `

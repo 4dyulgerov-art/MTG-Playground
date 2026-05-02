@@ -1070,3 +1070,90 @@ Neither was the crash — just noisy and broken (presence counter never worked).
 - `src/Playground.jsx` — declaration order, PresenceCounter table names + columns
 - `src/App.jsx` — heartbeat table name + key column
 
+
+---
+
+## v7.6.5.8 — Big multi-fix pass
+
+A pile of bugs and feature requests, addressed methodically.
+
+### 1. Topdeck right-click — to BF / Grave / Exile / bottom
+
+Right-clicking the topdeck portrait and choosing "→ Battlefield", "→ Graveyard", "→ Exile", or "Move to Bottom" was producing text-only placeholders that read "Top of Deck" — F-search would show them as bald entries with no image. The bug: the right-click handler masked the card to `{name:"Top of Deck", imageUri:null, card_faces:null}` for display, then handed that mask object to handleCtx whose actions called moveCard on the placeholder.
+
+Fix: new `topdeckTo(toZone)` helper that always reads `player.library[0]` directly (the real card), with the same fly-to-target animation as Mill X. The right-click context now passes the real top card to handleCtx, and library-zone actions use `topdeckTo` instead of `mv`. Drop "Move to Top" from the menu — it's a no-op when the card already IS the top.
+
+### 2. Adventure / Room cards no longer treated as DFC
+
+Cards with the Adventure layout (Brazen Borrower) or Room layout (Lost Jitte) have `card_faces` in Scryfall data but represent split-on-front layouts, not two-sided cards. They were getting the green ↕ flip button and the L hotkey was trying to swap to a non-existent back face.
+
+Fix: `isDFCCard()` now checks Scryfall's `layout` field first ("adventure", "room", "split", "flip" → not DFC) and falls back to a type-line keyword check for stored deck cards. `buildDeckEntry` also persists the `layout` field now so future detections are reliable.
+
+### 3. Commander away-overlay dimmed
+
+The 55% black overlay on commanders that have left the command zone was too dark — the card art was almost invisible. Now 20% per spec.
+
+### 4. Parchment Day theme input contrast
+
+Input boxes were rendered with a hard-coded `rgba(5,10,18,.8)` background — fine on dark themes, but on Parchment Day's cream background it produced unreadable near-black boxes.
+
+Fix: `T.inputBg` is now derived from theme luminance at apply-time (Y > 150 → translucent white-cream; otherwise dark glass). The `iS` style proxy resolves `background` dynamically alongside `border` and `color`, so every input that uses `{...iS}` automatically gets the right contrast on every theme.
+
+### 5. Welcome inbox message overhauled
+
+New SQL migration `schema-patch-v7.6.5.8-welcome.sql`. Replaces `profiles_send_welcome()` with a richer message that points new users at:
+- The Manual + Code of Conduct (Help menu, top-right)
+- The Discord (matchmaking + voice + community): https://discord.gg/2AQWbPNEk
+- The in-app Lobby Chat for pickup games
+- The full format list (Standard / Commander / Oathbreaker / Modern / Pioneer / Pauper / Legacy / Dandân)
+
+Idempotent — safe to run multiple times.
+
+### 6. Discord button on main menu
+
+Added a `💬 Discord` link button next to Patreon in the top bar. Discord brand color (#5865F2 Blurple), opens https://discord.gg/2AQWbPNEk in a new tab with `rel="noopener noreferrer"`.
+
+### 7. Game-rooms deck picker shows deck thumbnails
+
+The "⚔ Choose Your Deck" popup that appears when you join a room was rendering decks as plain text buttons. Now renders them as a 2-column grid of mini deck-thumb tiles (commander art grid + name + count + format badge), matching the main menu's visual style. Empty-state divs span both columns.
+
+### 8. Deck import — overhauled, no more lost progress
+
+Two complaints:
+- 100-card imports don't all finish loading
+- If you leave the deckbuilder mid-import, in-flight resolutions die and never restart on re-entry
+
+Architecture fix: introduced module-level `deckResolver` singleton outside any component. It owns:
+- A pending queue of `{stubId, name, zone}` entries
+- A cache of resolved Scryfall cards (so re-importing the same name is free)
+- A subscriber map (multiple stubs of the same name share one fetch)
+- A 75-card-batch `/cards/collection` runner that survives component unmount
+
+`BatchImporter.handleInstantImport` no longer runs an inline async block — it just calls `deckResolver.enqueueMany(...)`. The DeckBuilder's mount-time effect scans the loaded deck for any `_pending` cards and re-enqueues them, so closing+reopening the deckbuilder mid-import resumes resolution. The resolver dedupes — anything already in flight is a no-op.
+
+Net effect: paste 100 cards → modal closes immediately → cards start filling in within ~1 second → if you navigate away and come back, anything still pending continues resolving.
+
+### 9. DFC alternate printings + dual URL boxes in deckbuilder
+
+Two issues:
+- `applyPrinting` only updated `imageUri` (front face). For DFCs the `altImageUri` (back face) kept pointing at the OLD printing. Choosing a full-art printing meant the front was full-art but the back was the old non-full-art version — they didn't match.
+- The custom URL box was a single input; couldn't override the back face independently.
+
+Fix:
+- `applyPrinting` detects DFC and updates BOTH faces — front, back (with `/front/` → `/back/` URL derivation fallback), and the `faces[]` metadata array.
+- The URL section now renders TWO inputs when the selected card is DFC: "FRONT FACE URL" + "BACK FACE URL", each with Apply button. Single-faced cards keep the single input.
+- The card preview also shows a smaller back-face thumbnail under the front when DFC, so you can verify what each face looks like at a glance.
+
+### Files touched
+- `src/Playground.jsx` — all of the above
+- `supabase/schema-patch-v7.6.5.8-welcome.sql` (new) — welcome message replacement
+
+### Run order
+Apply the new SQL migration in your Supabase SQL editor. The `notify pgrst, 'reload schema';` at the bottom clears cache.
+
+```sql
+\i supabase/schema-patch-v7.6.5.8-welcome.sql
+```
+
+Standard build & deploy for the code.
+
