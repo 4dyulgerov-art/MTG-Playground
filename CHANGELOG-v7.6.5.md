@@ -1157,3 +1157,30 @@ Apply the new SQL migration in your Supabase SQL editor. The `notify pgrst, 'rel
 
 Standard build & deploy for the code.
 
+
+---
+
+## v7.6.5.9 — Room cards: hover preview rotated 90°
+
+Room cards (Wilds of Eldraine "rooms" with sideways text) printed their rules text running vertically on the card face. The hover preview showed them in their normal portrait orientation, forcing the user to tilt their head to read.
+
+Fix: detect Room cards via Scryfall `layout==="room"` (with type-line "room" fallback for cards cached before we persisted layout) and rotate the hover preview wrapper 90° clockwise. The wrapper offset compensates for the bounding-box swap (rotated card is ~1.4×W wide, W tall) so the rotated preview still anchors near the bottom-left without clipping above the hand strip.
+
+Single-faced (non-Room) cards are unaffected.
+
+### Files touched
+- `src/Playground.jsx` only — the `CardPreview` component
+
+
+---
+
+## v7.6.5.9-hotfix — DeckBuilder crash on open
+
+The mount-time pending-stub re-enqueue effect I added in v7.6.5.8 referenced a
+`tokenList` variable that doesn't exist — the state was destructured as
+`const [tokens, setTokenList] = useState(...)` (only the setter is named
+`setTokenList`; the value itself is `tokens`). Crashed every DeckBuilder open
+with `ReferenceError: tokenList is not defined`.
+
+Fix: read `tokens` instead of `tokenList`. One-line typo, code-only.
+

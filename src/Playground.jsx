@@ -3828,12 +3828,41 @@ function CardPreview({card}){
   const isDFC=isDFCCard(card);
   // v7.6.5: bigger preview (was 190 → 260) to make hover-to-read viable.
   const PREV_W = 260;
+  // v7.6.5.9: Room cards print their text running sideways. Rotate the
+  // hover preview 90° CW so the user can read the rules text without
+  // tilting their head. Detection mirrors isDFCCard's exclusion logic:
+  // prefer Scryfall layout, fall back to type-line keyword for cards we
+  // cached pre-layout-persistence.
+  const layout = (card.layout||"").toLowerCase();
+  const tl     = (typeLine||"").toLowerCase();
+  const isRoom = layout==="room" || tl.includes("room");
+  // When rotated, the image's rendered bounding box is H×W (instead of W×H).
+  // For an MTG card, H ≈ W × 1.4. So the rotated card occupies ~1.4×W
+  // horizontally and W vertically. We give the wrapper enough room so the
+  // rotated card doesn't clip out of the visible viewport.
+  const PREV_H_APPROX = Math.round(PREV_W * 1.4);
   return(
-    <div className="fade-in" style={{position:"fixed",left:14,bottom:HAND_H+14,zIndex:50000,pointerEvents:"none"}}>
+    <div className="fade-in" style={{
+      position:"fixed",
+      // Rotated Rooms anchor a bit further from the edge — the rotated
+      // bounding-box is 1.4×W tall × W wide centered on the original.
+      // Give it the rotated height as bottom-padding so the top of the
+      // rotated card doesn't push above the hand strip.
+      left: isRoom ? 14 + Math.round((PREV_H_APPROX - PREV_W)/2) : 14,
+      bottom: HAND_H + 14 + (isRoom ? Math.round((PREV_H_APPROX - PREV_W)/2) : 0),
+      zIndex:50000, pointerEvents:"none"
+    }}>
       {img?(
-        <div style={{position:"relative"}}>
+        <div style={{
+          position:"relative",
+          // Rotate the image wrapper. Origin "center center" keeps the
+          // counters / gradient overlays correctly aligned around the art.
+          transform: isRoom ? "rotate(90deg)" : "none",
+          transformOrigin: "center center",
+          transition: "transform .18s ease",
+        }}>
           <img src={img} alt={name} style={{
-            width:PREV_W,borderRadius:14,
+            width:PREV_W,borderRadius:14,display:"block",
             boxShadow:"0 14px 56px rgba(0,0,0,.95),0 0 36px rgba(200,168,112,.18),0 0 0 1px rgba(200,168,112,.25)"
           }}/>
 
@@ -11486,6 +11515,8 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
   // have died with the old component, or the cards were saved to disk
   // mid-resolve and we're now reloading a partially-resolved deck.
   // The resolver dedupes — anything already in flight is a no-op.
+  // v7.6.5.9 fix: state variable is `tokens`, not `tokenList` (only the
+  // setter was renamed). Was crashing the deckbuilder on every mount.
   useEffect(()=>{
     const collect = (list, zone) => (list||[])
       .filter(c => c._pending && c.name && c.scryfallId?.startsWith("pending:"))
@@ -11493,13 +11524,13 @@ function DeckBuilder({deck,onSave,onBack,customCards=[]}){
     const items = [
       ...collect(cards, "main"),
       ...collect(sideboard, "side"),
-      ...collect(tokenList, "token"),
+      ...collect(tokens, "token"),
     ];
     if (items.length) {
       deckResolver.enqueueMany(items);
     }
-  // Run only when cards/sideboard/tokenList identity changes after a save+reload —
-  // not on every keystroke. The resolver dedupes anyway, so worst case it's a no-op.
+  // Run only when deck identity changes (mount or after a save+reload).
+  // The resolver dedupes anyway, so worst case it's a no-op.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[deck?.id]);
 
